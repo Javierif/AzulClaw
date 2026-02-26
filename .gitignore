@@ -1,0 +1,7 @@
+openclaw/
+BlueClaw/
+AzulClaw/azul_brain/.env.local
+*.env.local
+*.pyc
+__pycache__/
+azul_memory.db
