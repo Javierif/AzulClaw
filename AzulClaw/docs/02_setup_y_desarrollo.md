@@ -1,4 +1,4 @@
-# AzulClaw: Guía de Configuración y Desarrollo Local
+﻿# AzulClaw: Guía de Configuración y Desarrollo Local
 
 **Fecha de última revisión:** 22 de Febrero de 2026.
 **Objetivo:** Permitir a un nuevo desarrollador levantar el entorno de desarrollo de AzulClaw desde cero en Windows.
@@ -38,7 +38,7 @@ pip install botbuilder-core botbuilder-integration-aiohttp aiohttp
 pip install pyinstaller
 ```
 
-> **Nota:** En la Fase 4 se añadirán `semantic-kernel` y `azure-identity`.
+> **Nota:** En la Fase 4 se añadirán `agent-framework` y `azure-identity`.
 
 ---
 
@@ -54,7 +54,7 @@ AzulClaw/
 │   ├── mcp_client.py              # Cliente MCP (se conecta a AzulHands vía stdio)
 │   ├── bot/
 │   │   └── azul_bot.py            # Controlador de Bot Framework (ActivityHandler)
-│   ├── cortex/                    # [PENDIENTE] Semantic Kernel / IA
+│   ├── cortex/                    # [PENDIENTE] Microsoft Agent Framework / IA
 │   ├── memory/                    # [PENDIENTE] Memoria segura (JSON only)
 │   └── soul/                      # [PENDIENTE] Personalidad / System Prompts
 │
@@ -147,3 +147,4 @@ Actualmente el proyecto funciona en modo local sin credenciales. Para conectar c
 - **Serialización:** Usar únicamente `json` o `pydantic`. **Prohibido**: `pickle`, `eval()`, `exec()`, `yaml.unsafe_load()`.
 - **Acceso al disco:** NUNCA importar `os`, `shutil` o `subprocess` en `azul_brain/`. Todo acceso al sistema de archivos debe pasar por `mcp_client.py` -> `mcp_server.py` -> `path_validator.py`.
 - **Logging:** No usar emojis en `print()` (causa `UnicodeEncodeError` en terminales Windows cp1252). Usar prefijos como `[INFO]`, `[ERROR]`, `[REQ]`.
+

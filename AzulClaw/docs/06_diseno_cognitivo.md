@@ -1,4 +1,4 @@
-# AzulClaw: Documentacion del Diseño Cognitivo Completo
+﻿# AzulClaw: Documentacion del Diseño Cognitivo Completo
 
 **Fecha de ultima revision:** 23 de Febrero de 2026.
 **Origen:** Deliberaciones de BlueClaw (`001_arquitectura_hibrida.md`, `002_filosofia_cognitiva.md`, `003_estructura_proyecto.md`).
@@ -38,7 +38,7 @@ Para evitar que el usuario espere en silencio mientras la nube piensa:
 6. **S1 (Narrador):** "Vale, primero voy a leer main.py para ver que tenemos..."
 7. **S2 (Action):** Ejecuta la lectura real
 
-**Implementacion en Semantic Kernel:** Usar `IFunctionInvocationFilter` para interceptar llamadas a tools y alimentar al modelo local para que narre.
+**Implementacion en Microsoft Agent Framework:** Usar `Imiddleware de tool-calling` para interceptar llamadas a tools y alimentar al modelo local para que narre.
 
 ---
 
@@ -171,7 +171,7 @@ Truncador de inputs gigantes. Si un archivo tiene 100.000 lineas, no enviarlo en
 
 | Componente | Tecnologia | Libreria Python |
 |---|---|---|
-| Framework IA | Microsoft Semantic Kernel | `semantic-kernel` |
+| Framework IA | Microsoft Microsoft Agent Framework | `agent-framework` |
 | System 1 Local | Ollama API | `ollama` o `httpx` |
 | System 2 Cloud | Azure OpenAI | `azure-identity` |
 | Canales | Azure Bot Service | `botbuilder-core` |
@@ -182,3 +182,4 @@ Truncador de inputs gigantes. Si un archivo tiene 100.000 lineas, no enviarlo en
 | Navegacion Web | Playwright | `playwright` |
 | Terminal Interactiva | pywinpty | `pywinpty` |
 | Sandbox Local | MCP Protocol | `mcp` |
+

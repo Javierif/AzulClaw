@@ -1,4 +1,4 @@
-<mxfile host="app.diagrams.net" modified="2026-02-23T19:00:00.000Z" agent="AzulClaw" version="24.0.0" type="device">
+﻿<mxfile host="app.diagrams.net" modified="2026-02-23T19:00:00.000Z" agent="AzulClaw" version="24.0.0" type="device">
   <diagram id="azulclaw-v2" name="Arquitectura AzulClaw v2">
     <mxGraphModel dx="1550" dy="880" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1700" pageHeight="1200" math="0" shadow="1">
       <root>
@@ -134,7 +134,7 @@
           <mxGeometry x="445" y="350" width="120" height="80" as="geometry" />
         </mxCell>
 
-        <mxCell id="cortex_s2" value="&lt;b&gt;System 2&lt;/b&gt;&lt;br&gt;&lt;font size=&quot;1&quot;&gt;🧪 Potente (Cloud)&lt;br&gt;Semantic Kernel&lt;br&gt;reasoning.py&lt;br&gt;planner.py&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d1fae5;strokeColor=#6ee7b7;shadow=0;arcSize=10;fontSize=10;" vertex="1" parent="1">
+        <mxCell id="cortex_s2" value="&lt;b&gt;System 2&lt;/b&gt;&lt;br&gt;&lt;font size=&quot;1&quot;&gt;🧪 Potente (Cloud)&lt;br&gt;Microsoft Agent Framework&lt;br&gt;reasoning.py&lt;br&gt;planner.py&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d1fae5;strokeColor=#6ee7b7;shadow=0;arcSize=10;fontSize=10;" vertex="1" parent="1">
           <mxGeometry x="585" y="350" width="120" height="80" as="geometry" />
         </mxCell>
 
@@ -461,3 +461,4 @@
     </mxGraphModel>
   </diagram>
 </mxfile>
+

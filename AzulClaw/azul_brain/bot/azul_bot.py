@@ -2,17 +2,15 @@ from botbuilder.core import ActivityHandler, MessageFactory, TurnContext
 from botbuilder.schema import ChannelAccount
 import re
 
-from cortex.kernel_setup import create_kernel
-from memory.safe_memory import SafeMemory
-from soul.system_prompt import AZULCLAW_SYSTEM_PROMPT
-
+from ..cortex.kernel_setup import create_agent
+from ..memory.safe_memory import SafeMemory
+from ..soul.system_prompt import AZULCLAW_SYSTEM_PROMPT
 
 def _extract_result_text(result) -> str:
     value = getattr(result, "value", None)
     if isinstance(value, str):
         return value
     return str(result)
-
 
 def _build_history_block(history: list[dict]) -> str:
     if not history:
@@ -24,7 +22,6 @@ def _build_history_block(history: list[dict]) -> str:
         content = message.get("content", "")
         lines.append(f"[{role}] {content}")
     return "\n".join(lines)
-
 
 class AzulBot(ActivityHandler):
     """
@@ -94,13 +91,13 @@ class AzulBot(ActivityHandler):
 
         try:
             if self.kernel is None:
-                self.kernel = await create_kernel(self.mcp_client)
+                self.kernel = await create_agent(self.mcp_client)
             result = await self.kernel.invoke_prompt(prompt)
             reply_text = _extract_result_text(result)
         except Exception as error:
             reply_text = (
                 "No pude ejecutar la capa cognitiva aun. "
-                "Verifica dependencias de Semantic Kernel y variables AZURE_OPENAI_*.\n"
+                "Verifica dependencias y variables AZURE_OPENAI_*.\n"
                 f"Detalle tecnico: {error}"
             )
 

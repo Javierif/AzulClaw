@@ -1,4 +1,4 @@
-# AzulClaw: Referencia de Componentes (API Interna)
+﻿# AzulClaw: Referencia de Componentes (API Interna)
 
 **Fecha de última revisión:** 22 de Febrero de 2026.
 **Objetivo:** Documentar cada archivo del proyecto, su responsabilidad, sus dependencias y los puntos de extensión para futuros desarrolladores.
@@ -107,7 +107,7 @@
 | `call_tool(name, arguments)` | Ejecuta una herramienta en el servidor MCP | `CallToolResult` |
 | `cleanup()` | Cierra la conexión y mata el proceso hijo | `None` (async) |
 
-**Ejemplo de uso desde Semantic Kernel (Fase 4):**
+**Ejemplo de uso desde Microsoft Agent Framework (Fase 4):**
 ```python
 # Dentro del Plugin de SK
 tools = await mcp_client.list_available_tools()
@@ -136,7 +136,7 @@ contenido = result.content[0].text
 
 **Punto de extensión principal (Fase 4):**
 En `on_message_activity()`, donde actualmente hay un echo, se debe:
-1. Instanciar el `Kernel` de Semantic Kernel.
+1. Instanciar el `Kernel` de Microsoft Agent Framework.
 2. Pasar el mensaje del usuario como input.
 3. Registrar las herramientas MCP como plugins del Kernel.
 4. Ejecutar el planner y devolver la respuesta.
@@ -193,6 +193,7 @@ else:
 
 | Carpeta | Propósito | Fase |
 |---|---|---|
-| `azul_brain/cortex/` | Integración de Semantic Kernel, Plugins, Planners | Fase 4 |
+| `azul_brain/cortex/` | Integración de Microsoft Agent Framework, Plugins, Planners | Fase 4 |
 | `azul_brain/memory/` | Memoria conversacional segura (JSON/SQLite sin pickle) | Fase 4 |
 | `azul_brain/soul/` | System Prompts, personalidad del bot, delimitadores anti-injection | Fase 4 |
+

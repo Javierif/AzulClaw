@@ -1,4 +1,4 @@
-# AzulClaw: Documentación Arquitectónica
+﻿# AzulClaw: Documentación Arquitectónica
 
 **Fecha de última revisión:** 22 de Febrero de 2026.
 **Objetivo del Documento:** Servir de base para cualquier desarrollador que entre al proyecto `AzulClaw`, explicando el "Por qué" y el "Cómo" de las decisiones de diseño.
@@ -27,8 +27,8 @@ Lo hemos solucionado implementando el **Model Context Protocol (MCP)** desarroll
 
 ### Flujo de Datos Seguro:
 1.  Telegram -> `Azure Bot Service` -> HTTP POST a `localhost:3978/api/messages` (`main_launcher.py`).
-2.  `AzulBot` analiza el mensaje usando Semantic Kernel (Cerebro S2).
-3.  SK decide que necesita buscar un Excel. SK pide al `MCP Client` ejecutar la herramienta `list_workspace_files`.
+2.  `AzulBot` analiza el mensaje usando Microsoft Agent Framework (Cerebro S2).
+3.  Agent Framework decide que necesita buscar un Excel. Agent Framework pide al `MCP Client` ejecutar la herramienta `list_workspace_files`.
 4.  La petición viaja por *stdio* (IPC) hasta `mcp_server.py`.
 5.  `mcp_server.py` pasa la petición por `path_validator.py`.
 6.  Si la ruta es segura, se lee el disco y se devuelve el JSON a SK. 
@@ -47,7 +47,7 @@ AzulClaw/
 ├── azul_brain/                  # [EL CEREBRO S1/S2] Lógica Cognitiva 
 │   ├── bot/                     # Integración con Azure Bot Framework
 │   │   └── azul_bot.py          # Clase principal del Bot (ActivityHandler)
-│   ├── cortex/                  # Semantic Kernel / GPT-4 Planner
+│   ├── cortex/                  # Microsoft Agent Framework / GPT-4 Planner
 │   ├── memory/                  # Memoria Segura (No pickle, solo JSON)
 │   ├── main_launcher.py         # Punto de entrada de la APP (Escucha en 3978)
 │   └── mcp_client.py            # Adaptador de MCP en Python (Cliente STDIO)
@@ -63,6 +63,7 @@ La arquitectura de red (`main_launcher.py`) y la tubería de seguridad local (`m
 
 La siguiente tarea para el desarrollador que asuma el proyecto es conectar el Cerebro:
 
-1.  Integrar `microsoft/semantic-kernel` dentro del `ActivityHandler` de `azul_bot.py`.
-2.  Registrar dinámicamente las herramientas que expone `mcp_client.py` (`list_available_tools()`) como *Plugins* dentro del Semantic Kernel.
+1.  Integrar `microsoft/agent-framework` dentro del `ActivityHandler` de `azul_bot.py`.
+2.  Registrar dinámicamente las herramientas que expone `mcp_client.py` (`list_available_tools()`) como *Plugins* dentro del Microsoft Agent Framework.
 3.  Manejar la inyección de prompts seguros ("Threat Modeling") para evitar ataques indirectos.
+

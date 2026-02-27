@@ -37,8 +37,8 @@ from botbuilder.core import (
 )
 from botbuilder.schema import Activity
 
-from bot.azul_bot import AzulBot
-from mcp_client import AzulHandsClient
+from .bot.azul_bot import AzulBot
+from .mcp_client import AzulHandsClient
 
 APP_ID = os.environ.get("MicrosoftAppId", "")
 APP_PASSWORD = os.environ.get("MicrosoftAppPassword", "")

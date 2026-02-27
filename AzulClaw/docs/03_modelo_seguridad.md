@@ -1,4 +1,4 @@
-# AzulClaw: Modelo de Seguridad y Análisis de Amenazas
+﻿# AzulClaw: Modelo de Seguridad y Análisis de Amenazas
 
 **Fecha de última revisión:** 22 de Febrero de 2026.
 **Objetivo:** Documentar cada vector de ataque identificado, su nivel de riesgo y la mitigación implementada o pendiente.
@@ -19,7 +19,7 @@ Por ello, la seguridad no es una capa que se añade al final, sino la **columna 
 │                   (azul_brain)                       │
 │                                                     │
 │  ❌ NO tiene: os, shutil, subprocess, socket        │
-│  ✅ SÍ tiene: botbuilder, semantic-kernel, mcp-sdk  │
+│  ✅ SÍ tiene: botbuilder, agent-framework, mcp-sdk  │
 │                                                     │
 │  Solo puede comunicarse con el mundo exterior       │
 │  a través de:                                       │
@@ -126,7 +126,7 @@ Result: 🛑 PATH DENIED: Violación de Seguridad
    </USER_DATA>
    ```
 2. **Human-in-the-Loop:** Antes de ejecutar cualquier herramienta que modifique el disco (`move_safe_file`), el bot enviará un mensaje de confirmación al usuario vía Azure Bot Service con un botón "Aceptar / Rechazar".
-3. **Filtros en Semantic Kernel:** Usar los `FunctionInvocationFilter` de SK para interceptar y auditar cada llamada a herramienta antes de ejecutarla.
+3. **Filtros en Microsoft Agent Framework:** Usar los `middleware de tool-calling` de SK para interceptar y auditar cada llamada a herramienta antes de ejecutarla.
 
 ---
 
@@ -185,3 +185,4 @@ Antes de hacer merge de cualquier Pull Request, verificar:
 - [ ] ¿Se añade una nueva herramienta MCP? **→ Verificar que pasa por `path_validator.safe_resolve()`**
 - [ ] ¿Se añade acceso HTTP externo? **→ Verificar whitelist de dominios y bloqueo de IPs privadas**
 - [ ] ¿Se modifica el System Prompt? **→ Verificar que los delimitadores `<SYSTEM_INSTRUCTIONS>` / `<USER_DATA>` siguen intactos**
+

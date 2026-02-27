@@ -1,4 +1,4 @@
-# AzulClaw: Funcionalidades de Produccion (Inspiradas en OpenClaw)
+﻿# AzulClaw: Funcionalidades de Produccion (Inspiradas en OpenClaw)
 
 **Fecha de ultima revision:** 23 de Febrero de 2026.
 **Origen:** Analisis profundo de `openclaw/src/agents/` (387 archivos), `openclaw/src/gateway/` (169 archivos).
@@ -209,7 +209,7 @@ Tareas complejas se benefician de dividirse en sub-tareas ejecutadas en paralelo
 **Archivo a crear:** `azul_brain/cortex/subagent_manager.py`
 
 Funcionalidad:
-- Crear sub-tareas con Semantic Kernel invocando el kernel recursivamente
+- Crear sub-tareas con Microsoft Agent Framework invocando el kernel recursivamente
 - Limite de profundidad: maximo 3 niveles de anidacion
 - Timeout por sub-agente: maximo 5 minutos
 
@@ -276,3 +276,4 @@ Escrituras concurrentes al mismo archivo pueden corromper datos. Cierres inesper
 - `azul_brain/memory/repair.py` — Reparador de memoria corrupta al arrancar
 
 ### Prioridad: MEDIA (necesario cuando haya multiples sesiones concurrentes)
+

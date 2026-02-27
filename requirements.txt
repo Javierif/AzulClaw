@@ -1,0 +1,7 @@
+aiohttp
+botbuilder-core
+botbuilder-schema
+colorama
+mcp
+python-dotenv
+agent-framework

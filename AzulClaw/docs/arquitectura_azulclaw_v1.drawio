@@ -1,4 +1,4 @@
-<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36" version="29.5.2">
+﻿<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36" version="29.5.2">
   <diagram id="azulclaw-arch" name="Arquitectura AzulClaw">
     <mxGraphModel dx="1737" dy="1037" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1200" math="0" shadow="0">
       <root>
@@ -37,7 +37,7 @@
         <mxCell id="cortex_fast" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#86efac;strokeColor=#22c55e;fontSize=10;" value="&lt;b&gt;System 1 (Fast)&lt;/b&gt;&lt;br&gt;&lt;font size=&quot;1&quot;&gt;Ollama Local&lt;br&gt;triage.py / chatter.py&lt;/font&gt;" vertex="1">
           <mxGeometry height="65" width="120" x="385" y="362" as="geometry" />
         </mxCell>
-        <mxCell id="cortex_slow" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#86efac;strokeColor=#22c55e;fontSize=10;" value="&lt;b&gt;System 2 (Slow)&lt;/b&gt;&lt;br&gt;&lt;font size=&quot;1&quot;&gt;Azure OpenAI&lt;br&gt;Semantic Kernel&lt;/font&gt;" vertex="1">
+        <mxCell id="cortex_slow" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#86efac;strokeColor=#22c55e;fontSize=10;" value="&lt;b&gt;System 2 (Slow)&lt;/b&gt;&lt;br&gt;&lt;font size=&quot;1&quot;&gt;Azure OpenAI&lt;br&gt;Microsoft Agent Framework&lt;/font&gt;" vertex="1">
           <mxGeometry height="65" width="120" x="525" y="362" as="geometry" />
         </mxCell>
         <mxCell id="cortex_plugin" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#86efac;strokeColor=#22c55e;fontSize=10;" value="&lt;b&gt;MCP Plugin&lt;/b&gt;&lt;br&gt;&lt;font size=&quot;1&quot;&gt;mcp_plugin.py&lt;br&gt;Conecta Tools ↔ SK&lt;/font&gt;" vertex="1">
@@ -228,3 +228,4 @@
     </mxGraphModel>
   </diagram>
 </mxfile>
+

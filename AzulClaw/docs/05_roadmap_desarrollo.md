@@ -1,4 +1,4 @@
-# AzulClaw: Hoja de Ruta de Desarrollo (Roadmap)
+﻿# AzulClaw: Hoja de Ruta de Desarrollo (Roadmap)
 
 **Fecha de última revisión:** 22 de Febrero de 2026.
 **Objetivo:** Guiar a cualquier desarrollador sobre qué queda por hacer, en qué orden, y con qué nivel de detalle técnico.
@@ -12,12 +12,12 @@
 | 1 | Planificación y Arquitectura | ✅ Completada |
 | 2 | AzulHands - Servidor MCP Local | ✅ Completada |
 | 3 | AzulBrain - Desktop App + Bot Framework | ✅ Completada |
-| **4** | **Integración Cognitiva (Semantic Kernel)** | **⬜ Pendiente** |
+| **4** | **Integración Cognitiva (Microsoft Agent Framework)** | **✅ Completada** |
 | **5** | **Empaquetado e Instalador (.exe)** | **⬜ Pendiente** |
 
 ---
 
-## Fase 4: Integración Cognitiva (Semantic Kernel + Azure OpenAI)
+## Fase 4: Integración Cognitiva (Microsoft Agent Framework + Azure OpenAI)
 
 Esta fase convierte al bot de un simple "echo" en un agente inteligente capaz de razonar, planificar y usar herramientas.
 
@@ -25,83 +25,69 @@ Esta fase convierte al bot de un simple "echo" en un agente inteligente capaz de
 
 ```powershell
 .\venv\Scripts\Activate.ps1
-pip install semantic-kernel azure-identity
+pip install agent-framework azure-identity
 ```
 
 ### 4.2 Crear el módulo `cortex/` (El Planificador)
 
 **Archivo a crear:** `azul_brain/cortex/kernel_setup.py`
 
-**Responsabilidad:** Configurar una instancia de Semantic Kernel con:
+**Responsabilidad:** Configurar una instancia de Microsoft Agent Framework con:
 - Un servicio de chat (Azure OpenAI GPT-4o).
 - Los plugins que conectan con las herramientas MCP.
 
 **Código de referencia:**
 ```python
-import semantic_kernel as sk
-from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
+from agent_framework import Agent, tool
+from agent_framework.azure import AzureOpenAIChatClient
 
-async def create_kernel(mcp_client):
-    kernel = sk.Kernel()
-    
-    # 1. Añadir el servicio de Azure OpenAI
-    kernel.add_service(
-        AzureChatCompletion(
-            deployment_name="gpt-4o",
-            endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-            api_key=os.environ["AZURE_OPENAI_API_KEY"],
-        )
+from .mcp_plugin import MCPToolsPlugin
+
+async def create_agent(mcp_client):
+    chat_client = AzureOpenAIChatClient(
+        api_key=os.environ["AZURE_OPENAI_API_KEY"],
+        endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_DEPLOYMENT"],
+        api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21"),
     )
-    
-    # 2. Registrar las herramientas MCP como un Plugin nativo
-    from cortex.mcp_plugin import MCPToolsPlugin
-    kernel.add_plugin(MCPToolsPlugin(mcp_client), plugin_name="desktop")
-    
-    return kernel
+
+    plugin = MCPToolsPlugin(mcp_client)
+
+    @tool(name="listar_archivos", description="Lista archivos del workspace seguro")
+    async def listar_archivos(path: str = ".") -> str:
+        return await plugin.list_files(path)
+
+    return Agent(client=chat_client, tools=[listar_archivos])
 ```
 
-### 4.3 Crear el Plugin MCP para Semantic Kernel
+### 4.3 Crear el Plugin MCP para Microsoft Agent Framework
 
 **Archivo a crear:** `azul_brain/cortex/mcp_plugin.py`
 
-**Responsabilidad:** Adaptar las herramientas del servidor MCP al formato de Plugin que Semantic Kernel espera.
+**Responsabilidad:** Adaptar las herramientas del servidor MCP al formato de Plugin que Microsoft Agent Framework espera.
 
 ```python
-from semantic_kernel.functions import kernel_function
-
 class MCPToolsPlugin:
     def __init__(self, mcp_client):
         self.mcp = mcp_client
-    
-    @kernel_function(
-        name="listar_archivos",
-        description="Lista los archivos del escritorio del usuario"
-    )
+
     async def list_files(self, path: str = ".") -> str:
         result = await self.mcp.call_tool("list_workspace_files", {"path": path})
         return result.content[0].text
-    
-    @kernel_function(
-        name="leer_archivo",
-        description="Lee el contenido de un archivo del escritorio"
-    )
+
     async def read_file(self, path: str) -> str:
         result = await self.mcp.call_tool("read_safe_file", {"path": path})
         return result.content[0].text
-    
-    @kernel_function(
-        name="mover_archivo",
-        description="Mueve un archivo de una ubicación a otra en el escritorio"
-    )
+
     async def move_file(self, source: str, destination: str) -> str:
-        result = await self.mcp.call_tool("move_safe_file", {
-            "source": source, 
-            "destination": destination
-        })
+        result = await self.mcp.call_tool(
+            "move_safe_file",
+            {"source": source, "destination": destination},
+        )
         return result.content[0].text
 ```
 
-### 4.4 Conectar el Kernel con `azul_bot.py`
+### 4.4 Conectar el agente con `azul_bot.py`
 
 **Archivo a modificar:** `azul_brain/bot/azul_bot.py`
 
@@ -109,24 +95,14 @@ Reemplazar el echo actual en `on_message_activity()` por:
 
 ```python
 async def on_message_activity(self, turn_context: TurnContext):
-    user_message = turn_context.activity.text
-    
-    # Crear kernel con Azure OpenAI
-    kernel = await create_kernel(self.mcp_client)
-    
-    # Configurar el chat con auto-invocación de funciones
-    settings = kernel.get_prompt_execution_settings_class()(
-        function_choice_behavior="auto"  # SK decide cuándo usar herramientas
-    )
-    
-    # Ejecutar la conversación
-    result = await kernel.invoke_prompt(
-        user_message,
-        settings=settings
-    )
-    
+    user_message = (turn_context.activity.text or "").strip()
+
+    agent = await create_agent(self.mcp_client)
+    response = await agent.run([Message(role="user", text=user_message)])
+
+    reply_text = response.text or str(response.value)
     await turn_context.send_activity(
-        MessageFactory.text(str(result), str(result))
+        MessageFactory.text(reply_text, reply_text)
     )
 ```
 
@@ -278,9 +254,9 @@ Fase 2 (AzulHands/MCP) ──────┐
     ↓                         │
 Fase 3 (AzulBrain/Bot) ──────┤
     ↓                         │
-Fase 4 (Semantic Kernel) ←───┘  ← Aquí estamos
+Fase 4 (Microsoft Agent Framework) ←───┘  ✅ Completada
     ↓
-Fase 5 (PyInstaller + Inno Setup)
+Fase 5 (PyInstaller + Inno Setup)         ← Aquí estamos
     ↓
 🎉 AzulClaw_Setup.exe listo para distribución
 ```
@@ -292,10 +268,11 @@ Fase 5 (PyInstaller + Inno Setup)
 | Recurso | URL |
 |---|---|
 | Microsoft Bot Framework SDK (Python) | https://github.com/microsoft/botbuilder-python |
-| Semantic Kernel (Python) | https://github.com/microsoft/semantic-kernel |
+| Microsoft Agent Framework (Python) | https://github.com/microsoft/agent-framework |
 | Model Context Protocol (MCP) | https://modelcontextprotocol.io/ |
 | PyInstaller | https://pyinstaller.org/ |
 | Inno Setup | https://jrsoftware.org/isinfo.php |
 | Bot Framework Emulator | https://github.com/microsoft/BotFramework-Emulator |
 | Azure OpenAI Service | https://learn.microsoft.com/azure/ai-services/openai/ |
 | Azure Bot Service | https://learn.microsoft.com/azure/bot-service/ |
+
