@@ -1,12 +1,14 @@
+"""Memoria conversacional de corto plazo basada en SQLite local."""
+
 import os
 import sqlite3
 from pathlib import Path
 
-
 class SafeMemory:
-    """Conversation memory persisted in SQLite using plain text fields."""
+    """Gestiona historial conversacional estructurado por usuario."""
 
     def __init__(self, db_path: str | None = None):
+        """Inicializa la base SQLite y asegura el esquema mínimo requerido."""
         default_db = Path(__file__).resolve().parent / "azul_memory.db"
         resolved_db = Path(db_path) if db_path else default_db
         resolved_db.parent.mkdir(parents=True, exist_ok=True)
@@ -28,9 +30,11 @@ class SafeMemory:
 
     @classmethod
     def from_env(cls):
+        """Crea instancia leyendo ruta opcional desde AZUL_MEMORY_DB_PATH."""
         return cls(os.environ.get("AZUL_MEMORY_DB_PATH"))
 
     def add_message(self, user_id: str, role: str, content: str) -> None:
+        """Guarda un mensaje (usuario o asistente) en la tabla de conversaciones."""
         self.conn.execute(
             "INSERT INTO conversations (user_id, role, content) VALUES (?, ?, ?)",
             (user_id, role, content),
@@ -38,6 +42,7 @@ class SafeMemory:
         self.conn.commit()
 
     def get_history(self, user_id: str, limit: int = 20) -> list[dict]:
+        """Recupera historial reciente de un usuario en orden cronológico."""
         bounded_limit = max(1, min(limit, 100))
         cursor = self.conn.execute(
             """

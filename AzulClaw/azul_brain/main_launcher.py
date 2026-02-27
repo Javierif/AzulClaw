@@ -1,3 +1,5 @@
+"""Punto de entrada HTTP de AzulClaw y ciclo de vida del proceso principal."""
+
 import asyncio
 import os
 import sys
@@ -5,8 +7,8 @@ import traceback
 
 ENV_LOCAL_FILENAME = ".env.local"
 
-
 def _load_env_file(filename: str = ENV_LOCAL_FILENAME) -> None:
+    """Carga variables desde .env.local sin sobrescribir variables ya definidas."""
     base_path = os.path.dirname(os.path.abspath(__file__))
     env_path = os.path.join(base_path, filename)
     if not os.path.exists(env_path):
@@ -25,7 +27,6 @@ def _load_env_file(filename: str = ENV_LOCAL_FILENAME) -> None:
             if not key or key in os.environ:
                 continue
             os.environ[key] = value
-
 
 _load_env_file()
 
@@ -47,8 +48,8 @@ PORT = int(os.environ.get("PORT", "3978"))
 SETTINGS = BotFrameworkAdapterSettings(APP_ID, APP_PASSWORD)
 ADAPTER = BotFrameworkAdapter(SETTINGS)
 
-
 async def on_error(context: TurnContext, error: Exception):
+    """Manejador global de errores en turnos de Bot Framework."""
     print(f"\n [Error Capturado del Sistema Cognitivo]: {error}", file=sys.stderr)
     traceback.print_exc()
     await context.send_activity(
@@ -56,11 +57,10 @@ async def on_error(context: TurnContext, error: Exception):
     )
     await context.send_activity(f"Exception: {error}")
 
-
 ADAPTER.on_turn_error = on_error
 
-
 async def init_azulclaw() -> web.Application:
+    """Inicializa app HTTP, cliente MCP y bot."""
     print("[INIT] Despertando el Cerebro de AzulClaw...")
 
     base_path = os.path.dirname(os.path.abspath(__file__))
@@ -82,12 +82,8 @@ async def init_azulclaw() -> web.Application:
     app.router.add_post("/api/messages", messages_handler)
     return app
 
-
-async def _handle_activity(adapter, activity, auth_header, bot_turn):
-    return await adapter.process_activity(activity, auth_header, bot_turn)
-
-
 async def messages_handler(req: web.Request) -> web.Response:
+    """Endpoint de mensajes de Azure Bot Service."""
     bot = req.app["bot"]
     adapter = req.app["adapter"]
 
@@ -98,14 +94,14 @@ async def messages_handler(req: web.Request) -> web.Response:
 
     activity = Activity().deserialize(body)
     auth_header = req.headers.get("Authorization", "")
-    response = await _handle_activity(adapter, activity, auth_header, bot.on_turn)
+    response = await adapter.process_activity(activity, auth_header, bot.on_turn)
 
     if response:
         return web.json_response(data=response.body, status=response.status)
     return web.Response(status=201)
 
-
 async def main():
+    """Arranca el servidor HTTP y mantiene el proceso en ejecución."""
     app = await init_azulclaw()
     runner = web.AppRunner(app)
 
@@ -135,7 +131,6 @@ async def main():
             except Exception as cleanup_error:
                 print(f"[WARN] Error al cerrar MCP Client: {cleanup_error}")
         await runner.cleanup()
-
 
 if __name__ == "__main__":
     try:
