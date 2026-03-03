@@ -5,6 +5,17 @@ import os
 import sys
 import traceback
 
+from aiohttp import web
+from botbuilder.core import (
+    BotFrameworkAdapter,
+    BotFrameworkAdapterSettings,
+    TurnContext,
+)
+from botbuilder.schema import Activity
+
+from .bot.azul_bot import AzulBot
+from .mcp_client import AzulHandsClient
+
 ENV_LOCAL_FILENAME = ".env.local"
 
 def _load_env_file(filename: str = ENV_LOCAL_FILENAME) -> None:
@@ -29,17 +40,6 @@ def _load_env_file(filename: str = ENV_LOCAL_FILENAME) -> None:
             os.environ[key] = value
 
 _load_env_file()
-
-from aiohttp import web
-from botbuilder.core import (
-    BotFrameworkAdapter,
-    BotFrameworkAdapterSettings,
-    TurnContext,
-)
-from botbuilder.schema import Activity
-
-from .bot.azul_bot import AzulBot
-from .mcp_client import AzulHandsClient
 
 APP_ID = os.environ.get("MicrosoftAppId", "")
 APP_PASSWORD = os.environ.get("MicrosoftAppPassword", "")
