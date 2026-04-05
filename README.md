@@ -1,7 +1,7 @@
 # 🧠 AzulClaw — Cerebro Cognitivo Local
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Javierif/AzulClaw/main/AzulClaw/docs/arquitectura_azulclaw.drawio" alt="AzulClaw" width="420">
+  <img width="600" height="400" alt="Gemini_Generated_Image_l284qhl284qhl284" src="https://github.com/user-attachments/assets/c73da31c-f0e1-416e-9da7-ee5e30650857" />
 </p>
 
 <p align="center">
