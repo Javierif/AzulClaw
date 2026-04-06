@@ -1,5 +1,7 @@
 """ActivityHandler principal de AzulClaw con memoria híbrida y Agent Framework."""
 
+import logging
+
 from botbuilder.core import ActivityHandler, MessageFactory, TurnContext
 from botbuilder.schema import ChannelAccount
 
@@ -9,6 +11,7 @@ from ..memory.safe_memory import SafeMemory
 from ..memory.vector_store import VectorMemoryStore
 from ..soul.system_prompt import AZULCLAW_SYSTEM_PROMPT
 
+LOGGER = logging.getLogger(__name__)
 
 def _extract_result_text(result) -> str:
     """Normaliza la respuesta del adapter de agente a texto serializable."""
@@ -16,7 +19,6 @@ def _extract_result_text(result) -> str:
     if isinstance(value, str):
         return value
     return str(result)
-
 
 def _build_history_block(history: list[dict]) -> str:
     """Serializa historial conversacional en un bloque compacto para prompt."""
@@ -29,7 +31,6 @@ def _build_history_block(history: list[dict]) -> str:
         content = message.get("content", "")
         lines.append(f"[{role}] {content}")
     return "\n".join(lines)
-
 
 def _build_retrieval_block(memories: list[dict]) -> str:
     """Serializa recuerdos semánticos recuperados para contexto del agente."""
@@ -44,7 +45,6 @@ def _build_retrieval_block(memories: list[dict]) -> str:
         similarity = memory.get("similarity", 0.0)
         lines.append(f"[{role} | source={source} | sim={similarity:.3f}] {content}")
     return "\n".join(lines)
-
 
 def _should_skip_vectorization(text: str) -> bool:
     """Evita indexar texto potencialmente sensible en memoria vectorial local."""
@@ -61,25 +61,23 @@ def _should_skip_vectorization(text: str) -> bool:
     )
     return any(marker in low for marker in sensitive_markers)
 
-
-class AzulBot(ActivityHandler):
-    """Controlador del bot: orquesta contexto, inferencia, tools y persistencia."""
+class ConversationOrchestrator:
+    """Orquesta memoria, recuperación semántica e invocación del agente."""
 
     def __init__(self, mcp_client):
-        """Inicializa cliente MCP, memorias y stack opcional de embeddings."""
+        """Inicializa componentes de memoria y referencia del cliente MCP."""
         self.mcp_client = mcp_client
         self.kernel = None
         self.memory = SafeMemory.from_env()
 
-        # La memoria vectorial es opcional: si falla, el bot sigue operativo.
         self.embedding_service = None
         self.vector_memory = None
         try:
             self.embedding_service = EmbeddingService.from_env()
             self.vector_memory = VectorMemoryStore.from_env()
-            print("[Memory] Vector memory habilitada.")
+            LOGGER.info("[Memory] Vector memory habilitada.")
         except Exception as error:
-            print(f"[Memory] Vector memory deshabilitada: {error}")
+            LOGGER.warning("[Memory] Vector memory deshabilitada: %s", error)
 
     async def _persist_with_vector_memory(self, user_id: str, role: str, content: str) -> None:
         """Persiste en memoria corta y, si procede, indexa en memoria vectorial."""
@@ -103,8 +101,7 @@ class AzulBot(ActivityHandler):
                     source="chat",
                 )
         except Exception as error:
-            # La indexación nunca debe bloquear el flujo principal del bot.
-            print(f"[Memory] Error indexando memoria vectorial: {error}")
+            LOGGER.warning("[Memory] Error indexando memoria vectorial: %s", error)
 
     async def _retrieve_semantic_memories(self, user_id: str, query_text: str) -> list[dict]:
         """Recupera recuerdos semánticos relevantes para enriquecer el prompt."""
@@ -123,8 +120,52 @@ class AzulBot(ActivityHandler):
                 candidate_pool=150,
             )
         except Exception as error:
-            print(f"[Memory] Error recuperando memoria vectorial: {error}")
+            LOGGER.warning("[Memory] Error recuperando memoria vectorial: %s", error)
             return []
+
+    async def _invoke_agent(self, prompt: str) -> str:
+        """Invoca el agente cognitivo con inicialización lazy del kernel."""
+        try:
+            if self.kernel is None:
+                self.kernel = await create_agent(self.mcp_client)
+            result = await self.kernel.invoke_prompt(prompt)
+            return _extract_result_text(result)
+        except Exception as error:
+            return (
+                "No pude ejecutar la capa cognitiva aun. "
+                "Verifica dependencias y variables AZURE_OPENAI_*.\n"
+                f"Detalle tecnico: {error}"
+            )
+
+    async def process_user_message(self, user_id: str, user_message: str) -> str:
+        """Construye contexto, ejecuta inferencia y persiste conversación."""
+        history = self.memory.get_history(user_id, limit=12)
+        semantic_memories = await self._retrieve_semantic_memories(user_id, user_message)
+
+        prompt = (
+            f"{AZULCLAW_SYSTEM_PROMPT}\n\n"
+            f"<CONVERSATION_HISTORY>\n{_build_history_block(history)}\n</CONVERSATION_HISTORY>\n\n"
+            f"<SEMANTIC_MEMORY>\n{_build_retrieval_block(semantic_memories)}\n</SEMANTIC_MEMORY>\n\n"
+            f"<USER_MESSAGE>\n{user_message}\n</USER_MESSAGE>"
+        )
+
+        LOGGER.info(
+            "[Brain] Mensaje recibido. Razonamiento con MCP Client conectado: %s",
+            self.mcp_client is not None,
+        )
+        reply_text = await self._invoke_agent(prompt)
+
+        await self._persist_with_vector_memory(user_id, "user", user_message)
+        await self._persist_with_vector_memory(user_id, "assistant", reply_text)
+
+        return reply_text
+
+class AzulBot(ActivityHandler):
+    """Controlador del bot que delega la lógica cognitiva al orquestador."""
+
+    def __init__(self, mcp_client):
+        """Inicializa orquestador de conversación para el bot."""
+        self.orchestrator = ConversationOrchestrator(mcp_client)
 
     async def on_message_activity(self, turn_context: TurnContext):
         """Gestiona un mensaje entrante y produce una respuesta del agente."""
@@ -141,36 +182,7 @@ class AzulBot(ActivityHandler):
             )
             return
 
-        # El contexto se obtiene antes de guardar el mensaje actual para evitar sesgo recursivo.
-        history = self.memory.get_history(user_id, limit=12)
-        semantic_memories = await self._retrieve_semantic_memories(user_id, user_message)
-
-        prompt = (
-            f"{AZULCLAW_SYSTEM_PROMPT}\n\n"
-            f"<CONVERSATION_HISTORY>\n{_build_history_block(history)}\n</CONVERSATION_HISTORY>\n\n"
-            f"<SEMANTIC_MEMORY>\n{_build_retrieval_block(semantic_memories)}\n</SEMANTIC_MEMORY>\n\n"
-            f"<USER_MESSAGE>\n{user_message}\n</USER_MESSAGE>"
-        )
-
-        print(
-            "[Brain] Mensaje recibido. Preparando razonamiento con MCP Client conectado: "
-            f"{self.mcp_client is not None}"
-        )
-
-        try:
-            if self.kernel is None:
-                self.kernel = await create_agent(self.mcp_client)
-            result = await self.kernel.invoke_prompt(prompt)
-            reply_text = _extract_result_text(result)
-        except Exception as error:
-            reply_text = (
-                "No pude ejecutar la capa cognitiva aun. "
-                "Verifica dependencias y variables AZURE_OPENAI_*.\n"
-                f"Detalle tecnico: {error}"
-            )
-
-        await self._persist_with_vector_memory(user_id, "user", user_message)
-        await self._persist_with_vector_memory(user_id, "assistant", reply_text)
+        reply_text = await self.orchestrator.process_user_message(user_id, user_message)
         await turn_context.send_activity(MessageFactory.text(reply_text, reply_text))
 
     async def on_members_added_activity(

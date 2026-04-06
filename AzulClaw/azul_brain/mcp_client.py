@@ -1,15 +1,21 @@
 """Cliente MCP para conectar AzulBrain con AzulHands mediante STDIO."""
 
 import contextlib
+import logging
 import sys
+from pathlib import Path
 from typing import Any
 
-import colorama
-from colorama import Fore, Style
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-colorama.init()
+LOGGER = logging.getLogger(__name__)
+
+
+def _format_tool_names(tools: list[Any]) -> str:
+    """Devuelve un listado legible con los nombres de tools MCP publicados."""
+    names = [getattr(tool, "name", str(tool)) for tool in tools]
+    return ", ".join(names) if names else "sin tools"
 
 class AzulHandsClient:
     """
@@ -31,11 +37,7 @@ class AzulHandsClient:
 
     async def connect(self):
         """Inicia transporte STDIO, crea sesión MCP y ejecuta initialize()."""
-        print(
-            Fore.BLUE
-            + "[INFO] Conectando el Cerebro con AzulHands (MCP Server)..."
-            + Style.RESET_ALL
-        )
+        LOGGER.info("Conectando el Cerebro con AzulHands (MCP Server)...")
         try:
             stdio_transport = await self._exit_stack.enter_async_context(
                 stdio_client(self.server_parameters)
@@ -45,17 +47,11 @@ class AzulHandsClient:
                 ClientSession(self.read_stream, self.write_stream)
             )
             await self.session.initialize()
-            print(
-                Fore.GREEN
-                + "[OK] Conexión MCP Establecida. AzulClaw ahora tiene 'Manos'."
-                + Style.RESET_ALL
+            LOGGER.info(
+                "Conexión MCP establecida. AzulClaw ahora tiene acceso a herramientas."
             )
         except Exception as error:
-            print(
-                Fore.RED
-                + f"[ERROR] Error al conectar con AzulHands: {error}"
-                + Style.RESET_ALL
-            )
+            LOGGER.error("Error al conectar con AzulHands: %s", error)
             raise
 
     async def list_available_tools(self) -> list[Any]:
@@ -71,15 +67,41 @@ class AzulHandsClient:
         if not self.session:
             raise RuntimeError("No hay sesión MCP activa.")
 
-        print(
-            Fore.MAGENTA
-            + f"[REQ] Cerebro pide ejecutar: {tool_name} con {arguments}"
-            + Style.RESET_ALL
-        )
+        LOGGER.info("Ejecutando tool MCP '%s' con argumentos %s", tool_name, arguments)
         result = await self.session.call_tool(tool_name, arguments)
         return result
 
     async def cleanup(self):
         """Cierra sesión y recursos de transporte del proceso MCP hijo."""
-        print("Cerrando conexión MCP y deteniendo AzulHands...")
+        LOGGER.info("Cerrando conexión MCP y deteniendo AzulHands...")
         await self._exit_stack.aclose()
+
+
+async def _run_smoke_test() -> None:
+    """Ejecuta una comprobación mínima del servidor MCP local."""
+    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+
+    server_script_path = Path(__file__).resolve().parents[1] / "azul_hands_mcp" / "mcp_server.py"
+    client = AzulHandsClient(str(server_script_path))
+
+    try:
+        await client.connect()
+        tools = await client.list_available_tools()
+        LOGGER.info("Tools MCP disponibles: %s", _format_tool_names(tools))
+
+        workspace_listing = await client.call_tool("list_workspace_files", {"path": "."})
+        LOGGER.info("Respuesta de list_workspace_files: %s", workspace_listing)
+
+        denied_result = await client.call_tool(
+            "read_safe_file",
+            {"path": "../../../../../Windows/System32/drivers/etc/hosts"},
+        )
+        LOGGER.info("Bloqueo de path traversal: %s", denied_result)
+    finally:
+        await client.cleanup()
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    asyncio.run(_run_smoke_test())

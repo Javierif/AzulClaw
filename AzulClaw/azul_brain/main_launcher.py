@@ -1,97 +1,38 @@
 """Punto de entrada HTTP de AzulClaw y ciclo de vida del proceso principal."""
 
 import asyncio
-import os
+import logging
 import sys
-import traceback
+from pathlib import Path
 
 from aiohttp import web
-from botbuilder.core import (
-    BotFrameworkAdapter,
-    BotFrameworkAdapterSettings,
-    TurnContext,
-)
 from botbuilder.schema import Activity
 
-from .bot.azul_bot import AzulBot
-from .mcp_client import AzulHandsClient
+if __package__ in (None, ""):
+    # Permite ejecutar el archivo directamente sin perder imports de paquete.
+    project_root = Path(__file__).resolve().parents[2]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
 
-ENV_LOCAL_FILENAME = ".env.local"
+    from AzulClaw.azul_brain.bootstrap import build_adapter, build_mcp_client
+    from AzulClaw.azul_brain.bot.azul_bot import AzulBot
+    from AzulClaw.azul_brain.config import HOST, load_runtime_config
+else:
+    from .bootstrap import build_adapter, build_mcp_client
+    from .bot.azul_bot import AzulBot
+    from .config import HOST, load_runtime_config
 
-def _load_env_file(filename: str = ENV_LOCAL_FILENAME) -> None:
-    """Carga variables desde .env.local sin sobrescribir variables ya definidas."""
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    env_path = os.path.join(base_path, filename)
-    if not os.path.exists(env_path):
-        return
-
-    with open(env_path, encoding="utf-8") as env_file:
-        for raw_line in env_file:
-            stripped_line = raw_line.strip()
-            if not stripped_line or stripped_line.startswith("#"):
-                continue
-            if "=" not in stripped_line:
-                continue
-            key, value = stripped_line.split("=", 1)
-            key = key.strip()
-            value = value.strip()
-            if not key or key in os.environ:
-                continue
-            os.environ[key] = value
-
-_load_env_file()
-
-APP_ID = os.environ.get("MicrosoftAppId", "")
-APP_PASSWORD = os.environ.get("MicrosoftAppPassword", "")
-PORT = int(os.environ.get("PORT", "3978"))
-
-SETTINGS = BotFrameworkAdapterSettings(APP_ID, APP_PASSWORD)
-ADAPTER = BotFrameworkAdapter(SETTINGS)
-
-async def on_error(context: TurnContext, error: Exception):
-    """Manejador global de errores en turnos de Bot Framework."""
-    print(f"\n [Error Capturado del Sistema Cognitivo]: {error}", file=sys.stderr)
-    traceback.print_exc()
-    await context.send_activity(
-        "El cerebro de AzulClaw ha encontrado un error. Reiniciando subsistemas."
-    )
-    await context.send_activity(f"Exception: {error}")
-
-ADAPTER.on_turn_error = on_error
-
-async def init_azulclaw() -> web.Application:
-    """Inicializa app HTTP, cliente MCP y bot."""
-    print("[INIT] Despertando el Cerebro de AzulClaw...")
-
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    mcp_script_path = os.path.join(base_path, "..", "azul_hands_mcp", "mcp_server.py")
-    mcp_client = AzulHandsClient(mcp_script_path)
-
-    try:
-        await mcp_client.connect()
-    except Exception as error:
-        print(
-            "[ERROR] Fallo Critico: No se pudo conectar las Manos (MCP Server). "
-            f"El Bot sera de solo lectura. {error}"
-        )
-
-    app = web.Application()
-    app["bot"] = AzulBot(mcp_client)
-    app["adapter"] = ADAPTER
-    app["mcp_client"] = mcp_client
-    app.router.add_post("/api/messages", messages_handler)
-    return app
+LOGGER = logging.getLogger(__name__)
 
 async def messages_handler(req: web.Request) -> web.Response:
     """Endpoint de mensajes de Azure Bot Service."""
     bot = req.app["bot"]
     adapter = req.app["adapter"]
 
-    if "application/json" in req.headers.get("Content-Type", ""):
-        body = await req.json()
-    else:
+    if "application/json" not in req.headers.get("Content-Type", ""):
         return web.Response(status=415)
 
+    body = await req.json()
     activity = Activity().deserialize(body)
     auth_header = req.headers.get("Authorization", "")
     response = await adapter.process_activity(activity, auth_header, bot.on_turn)
@@ -100,26 +41,59 @@ async def messages_handler(req: web.Request) -> web.Response:
         return web.json_response(data=response.body, status=response.status)
     return web.Response(status=201)
 
-async def main():
+async def create_app() -> web.Application:
+    """Inicializa app HTTP, cliente MCP y bot."""
+    LOGGER.info("Despertando el Cerebro de AzulClaw...")
+
+    base_path = Path(__file__).resolve().parent
+    runtime_config = load_runtime_config(base_path)
+
+    adapter = build_adapter(runtime_config.app_id, runtime_config.app_password)
+    mcp_client = build_mcp_client(base_path)
+
+    try:
+        await mcp_client.connect()
+    except Exception as error:
+        LOGGER.error(
+            "Fallo critico: No se pudo conectar las Manos (MCP Server). "
+            "El Bot sera de solo lectura. %s",
+            error,
+        )
+
+    app = web.Application()
+    app["bot"] = AzulBot(mcp_client)
+    app["adapter"] = adapter
+    app["mcp_client"] = mcp_client
+    app.router.add_post("/api/messages", messages_handler)
+    return app
+
+async def main() -> None:
     """Arranca el servidor HTTP y mantiene el proceso en ejecución."""
-    app = await init_azulclaw()
+    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+
+    base_path = Path(__file__).resolve().parent
+    runtime_config = load_runtime_config(base_path)
+    port = runtime_config.port
+
+    app = await create_app()
     runner = web.AppRunner(app)
 
     try:
         await runner.setup()
-        site = web.TCPSite(runner, host="localhost", port=PORT)
+        site = web.TCPSite(runner, host=HOST, port=port)
         await site.start()
-        print(
-            "[INFO] Servidor local HTTP escuchando a Azure Bot en "
-            f"http://localhost:{PORT}/api/messages"
+        LOGGER.info(
+            "Servidor local HTTP escuchando a Azure Bot en http://%s:%s/api/messages",
+            HOST,
+            port,
         )
-
         await asyncio.Event().wait()
     except OSError as error:
         if getattr(error, "winerror", None) == 10048:
-            print(
-                f"[ERROR] El puerto {PORT} ya esta en uso. "
-                "Cierra la otra instancia de AzulClaw o cambia la variable PORT."
+            LOGGER.error(
+                "El puerto %s ya esta en uso. Cierra la otra instancia de AzulClaw o "
+                "cambia la variable PORT.",
+                port,
             )
             return
         raise
@@ -129,13 +103,13 @@ async def main():
             try:
                 await mcp_client.cleanup()
             except Exception as cleanup_error:
-                print(f"[WARN] Error al cerrar MCP Client: {cleanup_error}")
+                LOGGER.warning("Error al cerrar MCP Client: %s", cleanup_error)
         await runner.cleanup()
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("[INFO] AzulClaw detenido por usuario.")
+        LOGGER.info("AzulClaw detenido por usuario.")
     except Exception as error:
-        print(f"Error mortal: {error}")
+        LOGGER.error("Error mortal: %s", error)

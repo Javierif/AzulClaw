@@ -1,6 +1,6 @@
 ﻿# AzulClaw: Guía de Configuración y Desarrollo Local
 
-**Fecha de última revisión:** 22 de Febrero de 2026.
+**Fecha de última revisión:** 6 de Abril de 2026.
 **Objetivo:** Permitir a un nuevo desarrollador levantar el entorno de desarrollo de AzulClaw desde cero en Windows.
 
 ---
@@ -27,18 +27,16 @@ cd AzulClaw
 
 ### 2.2 Crear y activar el entorno virtual
 ```powershell
-python -m venv venv
-.\venv\Scripts\Activate.ps1
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 ```
 
 ### 2.3 Instalar dependencias
 ```powershell
-pip install mcp pydantic colorama
-pip install botbuilder-core botbuilder-integration-aiohttp aiohttp
-pip install pyinstaller
+pip install -r requirements.txt
 ```
 
-> **Nota:** En la Fase 4 se añadirán `agent-framework` y `azure-identity`.
+> **Nota:** El proyecto ya usa `agent-framework`. Si añades nuevas dependencias, actualiza también `requirements.txt`.
 
 ---
 
@@ -77,16 +75,21 @@ AzulClaw/
 Desde la raíz del proyecto, con el venv activado:
 
 ```powershell
-.\venv\Scripts\python.exe azul_brain\main_launcher.py
+.\.venv\Scripts\python.exe -m AzulClaw.azul_brain.main_launcher
 ```
 
-**Salida esperada:**
+También sigue siendo compatible ejecutar el archivo directamente:
+
+```powershell
+.\.venv\Scripts\python.exe AzulClaw\azul_brain\main_launcher.py
 ```
-[INIT] Despertando el Cerebro de AzulClaw...
+
+**Salida esperada aproximada:**
+```
+[INFO] Despertando el Cerebro de AzulClaw...
 [INFO] Conectando el Cerebro con AzulHands (MCP Server)...
-[OK] Conexión MCP Establecida. AzulClaw ahora tiene 'Manos'.
+[INFO] Conexión MCP establecida. AzulClaw ahora tiene acceso a herramientas.
 [INFO] Servidor local HTTP escuchando a Azure Bot en http://localhost:3978/api/messages
-======== Running on http://localhost:3978 ========
 ```
 
 Esto hace dos cosas simultáneamente:
@@ -98,14 +101,14 @@ Esto hace dos cosas simultáneamente:
 1. Abrir **Bot Framework Emulator**.
 2. Crear una nueva conexión con la URL: `http://localhost:3978/api/messages`.
 3. Dejar en blanco `Microsoft App ID` y `Microsoft App Password` (modo local).
-4. Enviar un mensaje de texto. Deberías recibir un eco: `"AzulBrain ha recibido tu mensaje: '...'"`.
+4. Enviar un mensaje de texto. Deberías recibir una respuesta generada por el agente; si faltan credenciales `AZURE_OPENAI_*`, el bot devolverá un mensaje de error controlado.
 
 ### 4.3 Probar el Servidor MCP de forma independiente
 
 Si necesitas depurar las "Manos" sin el Cerebro:
 
 ```powershell
-.\venv\Scripts\python.exe azul_brain\mcp_client.py
+.\.venv\Scripts\python.exe AzulClaw\azul_brain\mcp_client.py
 ```
 
 Este script ejecuta un *smoke test* que:
@@ -134,10 +137,10 @@ Actualmente el proyecto funciona en modo local sin credenciales. Para conectar c
 
 | Comando | Descripción |
 |---|---|
-| `.\venv\Scripts\python.exe azul_brain\main_launcher.py` | Levantar el bot completo |
-| `.\venv\Scripts\python.exe azul_brain\mcp_client.py` | Test aislado del MCP |
+| `.\.venv\Scripts\python.exe -m AzulClaw.azul_brain.main_launcher` | Levantar el bot completo |
+| `.\.venv\Scripts\python.exe AzulClaw\azul_brain\mcp_client.py` | Test aislado del MCP |
 | `pip freeze > requirements.txt` | Exportar dependencias actuales |
-| `pyinstaller --onefile azul_brain\main_launcher.py` | Compilar a `.exe` (Fase 5) |
+| `pyinstaller --onefile AzulClaw\azul_brain\main_launcher.py` | Compilar a `.exe` (Fase 5) |
 
 ---
 
