@@ -1,6 +1,9 @@
-# AzulClaw
+# 🧠 AzulClaw — Cerebro Cognitivo Local
 
-AzulClaw es un asistente personal local con backend cognitivo en Python y una futura app desktop dedicada.
+<p align="center">
+  <img width="600" height="400" alt="Gemini_Generated_Image_l284qhl284qhl284" src="https://github.com/user-attachments/assets/c73da31c-f0e1-416e-9da7-ee5e30650857" />
+</p>
+
 
 ## Estructura principal
 
