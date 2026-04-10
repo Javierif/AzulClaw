@@ -14,9 +14,9 @@ if __package__ in (None, ""):
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
 
-    from AzulClaw.azul_brain.bootstrap import build_adapter, build_mcp_client
-    from AzulClaw.azul_brain.bot.azul_bot import AzulBot
-    from AzulClaw.azul_brain.config import HOST, load_runtime_config
+    from azul_backend.azul_brain.bootstrap import build_adapter, build_mcp_client
+    from azul_backend.azul_brain.bot.azul_bot import AzulBot
+    from azul_backend.azul_brain.config import HOST, load_runtime_config
 else:
     from .bootstrap import build_adapter, build_mcp_client
     from .bot.azul_bot import AzulBot

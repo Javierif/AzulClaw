@@ -1,0 +1,11 @@
+{
+  "name": "azul_desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Desktop shell for AzulClaw",
+  "scripts": {
+    "dev": "echo Desktop shell scaffold created. Pending Tauri bootstrap.",
+    "build": "echo Pending Tauri bootstrap.",
+    "lint": "echo Pending frontend tooling."
+  }
+}

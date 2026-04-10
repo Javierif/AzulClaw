@@ -1,97 +1,44 @@
-# 🧠 AzulClaw — Cerebro Cognitivo Local
+# AzulClaw
 
-<p align="center">
-  <img width="600" height="400" alt="Gemini_Generated_Image_l284qhl284qhl284" src="https://github.com/user-attachments/assets/c73da31c-f0e1-416e-9da7-ee5e30650857" />
-</p>
+AzulClaw es un asistente personal local con backend cognitivo en Python y una futura app desktop dedicada.
 
-<p align="center">
-  <strong>AzulClaw</strong> es el "cerebro" de un asistente personal local: procesa razonamiento, conecta con servicios de IA (Azure OpenAI) y orquesta las "manos" (MCP server) que actúan sobre un workspace seguro.
-</p>
+## Estructura principal
 
-<p align="center">
-  <a href="https://github.com/Javierif/AzulClaw/actions"><img src="https://img.shields.io/github/actions/workflow/status/Javierif/AzulClaw/ci.yml?branch=main&style=for-the-badge" alt="CI status"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-check-blue.svg?style=for-the-badge" alt="License"></a>
-</p>
+- `azul_backend/`: backend Python del agente, memoria, integraciones y MCP.
+- `azul_desktop/`: shell de la aplicacion de escritorio.
+- `docs/`: documentacion tecnica, UX y arquitectura.
+- `scripts/`: utilidades de setup y desarrollo.
+- `memory/`: almacenamiento local de desarrollo si aplica.
 
-Descripción
------------
-AzulClaw agrupa la lógica cognitiva del agente: recibe mensajes vía Bot Framework, construye prompts para el motor de IA (Azure OpenAI), mantiene memoria conversacional local y se comunica con un MCP server que proporciona acceso controlado al sistema host (las "manos").
+## Arranque rapido del backend
 
-Estructura principal
---------------------
-- azul_brain/: código del cerebro (bots, kernel, memoria, cliente MCP).
-- azul_hands_mcp/: servidor MCP que ejecuta herramientas seguras sobre el workspace.
-- docs/: documentación del proyecto y diseño arquitectural.
+1. Crear y activar el entorno virtual.
+2. Instalar dependencias con `pip install -r requirements.txt`.
+3. Crear `azul_backend/azul_brain/.env.local` si necesitas configuracion local.
+4. Arrancar desde la raiz del repo:
 
-Requisitos
-----------
-- Python 3.10+
-- Dependencias del proyecto (revisa requirements.txt o el docs/02_setup_y_desarrollo.md)
-- Credenciales de Azure y Microsoft (ver sección Environment / Secrets)
-
-Variables de entorno (ejemplo)
-------------------------------
-Crear `azul_brain/.env.local` (no subir al repo — ya está en .gitignore). Variables principales:
-
-- MicrosoftAppId=
-- MicrosoftAppPassword=
-- PORT=3978
-- AZURE_OPENAI_ENDPOINT=
-- AZURE_OPENAI_API_KEY=
-- AZURE_OPENAI_DEPLOYMENT=gpt-4o
-- AZUL_MEMORY_DB_PATH=memory/azul_memory.db
-
-Instalación y arranque rápido
------------------------------
-1. Crear virtualenv e instalar dependencias:
 ```bash
-python -m venv .venv
-.venv\\Scripts\\activate    # Windows
-# o: source .venv/bin/activate   # macOS / Linux
-pip install -r requirements.txt
+python -m azul_backend.azul_brain.main_launcher
 ```
 
-2. Rellenar `azul_brain/.env.local` con tus secretos locales.
+## Carpetas importantes
 
-3. Lanzar el servidor (desde la carpeta raíz del repo):
-```bash
-python -m AzulClaw.azul_brain.main_launcher
-```
-Por defecto escucha en el puerto definido en `PORT` (3978 si no lo cambias).
+- Backend principal: `azul_backend/azul_brain/`
+- MCP sandbox: `azul_backend/azul_hands_mcp/`
+- Documentacion: `docs/`
+- Desktop scaffold: `azul_desktop/`
 
-Depuración local
-----------------
-- Si pruebas con curl o el Bot Framework Emulator, asegúrate de usar distintos `from.id` para no contaminar historial.  
-- Para limpiar memoria de pruebas:
-```bash
-# Usar sqlite3 o un pequeño script Python para borrar rows de memory/azul_memory.db
-```
+## Seguridad
 
-Desarrollo
-----------
-- El código del núcleo está en `azul_brain/`.  
-- `cortex/` contiene la configuración del Kernel y plugins MCP.  
-- Sigue las guías en `docs/02_setup_y_desarrollo.md` para flujo de desarrollo y tests.
+- No subir `.env.local` ni credenciales.
+- El acceso a ficheros debe pasar por el MCP sandbox y su validador de rutas.
+- El workspace de AzulClaw debe permanecer aislado del resto del sistema.
 
-Seguridad y privacidad
-----------------------
-- Nunca subir `.env.local` ni credenciales. `.gitignore` ya incluye `AzulClaw/azul_brain/.env.local`.
-- El MCP server se diseña para exponer herramientas limitadas; revisa `azul_hands_mcp/path_validator.py` y `docs/03_modelo_seguridad.md`.
+## Documentacion clave
 
-Contribuir
-----------
-Lee `docs/02_setup_y_desarrollo.md` y `docs/05_roadmap_desarrollo.md`. Abre issues y PRs en GitHub siguiendo las convenciones del proyecto.
-
-Recursos
---------
-- Documentación del proyecto: `AzulClaw/docs/`
-- Diseño arquitectónico: `AzulClaw/docs/arquitectura_azulclaw.drawio`
-- MCP server: `azul_hands_mcp/`
-
-Licencia
---------
-Revisa el archivo `LICENSE` en el repo para los términos del proyecto.
-
-Contacto
--------
-Repositorio: https://github.com/Javierif/AzulClaw
+- Arquitectura: `docs/01_arquitectura.md`
+- Setup y desarrollo: `docs/02_setup_y_desarrollo.md`
+- Modelo de seguridad: `docs/03_modelo_seguridad.md`
+- Diseño desktop: `docs/08_diseno_interfaz_desktop.md`
+- Wireframes: `docs/09_wireframes_baja_fidelidad_desktop.md`
+- Estructura del repo: `docs/10_arquitectura_desktop_y_estructura_repo.md`

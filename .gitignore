@@ -1,6 +1,6 @@
 openclaw/
 BlueClaw/
-AzulClaw/azul_brain/.env.local
+azul_backend/azul_brain/.env.local
 *.env.local
 *.pyc
 __pycache__/

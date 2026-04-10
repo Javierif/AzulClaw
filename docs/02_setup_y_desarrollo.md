@@ -47,18 +47,20 @@ AzulClaw/
 ├── venv/                          # Entorno virtual (NO subir a Git)
 ├── docs/                          # Esta documentación
 │
-├── azul_brain/                    # PROCESO PRINCIPAL (El Cerebro)
-│   ├── main_launcher.py           # Entry Point de la App (aiohttp en :3978)
-│   ├── mcp_client.py              # Cliente MCP (se conecta a AzulHands vía stdio)
-│   ├── bot/
-│   │   └── azul_bot.py            # Controlador de Bot Framework (ActivityHandler)
-│   ├── cortex/                    # [PENDIENTE] Microsoft Agent Framework / IA
-│   ├── memory/                    # [PENDIENTE] Memoria segura (JSON only)
-│   └── soul/                      # [PENDIENTE] Personalidad / System Prompts
+├── azul_backend/
+│   ├── azul_brain/                # PROCESO PRINCIPAL (El Cerebro)
+│   │   ├── main_launcher.py       # Entry Point de la App (aiohttp en :3978)
+│   │   ├── mcp_client.py          # Cliente MCP (se conecta a AzulHands vía stdio)
+│   │   ├── bot/
+│   │   │   └── azul_bot.py        # Controlador de Bot Framework (ActivityHandler)
+│   │   ├── cortex/                # Microsoft Agent Framework / IA
+│   │   ├── memory/                # Memoria local
+│   │   └── soul/                  # Personalidad / System Prompts
+│   └── azul_hands_mcp/            # PROCESO HIJO (Las Manos - Sandbox MCP)
+│       ├── mcp_server.py          # Servidor MCP que expone Tools al Cerebro
+│       └── path_validator.py      # Seguridad contra Path Traversal
 │
-├── azul_hands_mcp/                # PROCESO HIJO (Las Manos - Sandbox MCP)
-│   ├── mcp_server.py              # Servidor MCP que expone Tools al Cerebro
-│   └── path_validator.py          # Módulo de Seguridad contra Path Traversal
+├── azul_desktop/                  # App de escritorio en construccion
 │
 ├── blueclaw/                      # Propuesta original de diseño cognitivo (referencia)
 │   └── deliberaciones/            # Documentos de diseño System 1/System 2
@@ -75,13 +77,13 @@ AzulClaw/
 Desde la raíz del proyecto, con el venv activado:
 
 ```powershell
-.\.venv\Scripts\python.exe -m AzulClaw.azul_brain.main_launcher
+.\.venv\Scripts\python.exe -m azul_backend.azul_brain.main_launcher
 ```
 
 También sigue siendo compatible ejecutar el archivo directamente:
 
 ```powershell
-.\.venv\Scripts\python.exe AzulClaw\azul_brain\main_launcher.py
+.\.venv\Scripts\python.exe azul_backend\azul_brain\main_launcher.py
 ```
 
 **Salida esperada aproximada:**
@@ -108,7 +110,7 @@ Esto hace dos cosas simultáneamente:
 Si necesitas depurar las "Manos" sin el Cerebro:
 
 ```powershell
-.\.venv\Scripts\python.exe AzulClaw\azul_brain\mcp_client.py
+.\.venv\Scripts\python.exe azul_backend\azul_brain\mcp_client.py
 ```
 
 Este script ejecuta un *smoke test* que:
@@ -137,10 +139,10 @@ Actualmente el proyecto funciona en modo local sin credenciales. Para conectar c
 
 | Comando | Descripción |
 |---|---|
-| `.\.venv\Scripts\python.exe -m AzulClaw.azul_brain.main_launcher` | Levantar el bot completo |
-| `.\.venv\Scripts\python.exe AzulClaw\azul_brain\mcp_client.py` | Test aislado del MCP |
+| `.\.venv\Scripts\python.exe -m azul_backend.azul_brain.main_launcher` | Levantar el bot completo |
+| `.\.venv\Scripts\python.exe azul_backend\azul_brain\mcp_client.py` | Test aislado del MCP |
 | `pip freeze > requirements.txt` | Exportar dependencias actuales |
-| `pyinstaller --onefile AzulClaw\azul_brain\main_launcher.py` | Compilar a `.exe` (Fase 5) |
+| `pyinstaller --onefile azul_backend\azul_brain\main_launcher.py` | Compilar a `.exe` (Fase 5) |
 
 ---
 

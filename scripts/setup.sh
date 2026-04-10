@@ -37,9 +37,9 @@ else
 fi
 
 echo "Instalación completada. Activa el entorno y ejecuta el launcher:"
-echo "  POSIX: source .venv/bin/activate && python -m AzulClaw.azul_brain.main_launcher"
-echo "  Windows CMD: .venv\\Scripts\\activate && python -m AzulClaw.azul_brain.main_launcher"
-echo "  Windows PowerShell: . .venv\\Scripts\\Activate.ps1; python -m AzulClaw.azul_brain.main_launcher"
+echo "  POSIX: source .venv/bin/activate && python -m azul_backend.azul_brain.main_launcher"
+echo "  Windows CMD: .venv\\Scripts\\activate && python -m azul_backend.azul_brain.main_launcher"
+echo "  Windows PowerShell: . .venv\\Scripts\\Activate.ps1; python -m azul_backend.azul_brain.main_launcher"
 
 # Notas para Windows nativo (CMD / PowerShell):
 : <<'WINDOWS_NOTES'
