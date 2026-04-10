@@ -1,5 +1,11 @@
-export function bootstrapDesktopApp() {
-  return "Azul Desktop scaffold";
-}
+import React from "react";
+import ReactDOM from "react-dom/client";
 
-console.log(bootstrapDesktopApp());
+import { DesktopApp } from "./app/DesktopApp";
+import "./styles/global.css";
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <DesktopApp />
+  </React.StrictMode>,
+);

@@ -1,6 +1,6 @@
 # AzulClaw: Arquitectura Desktop y Estructura del Repositorio
 
-**Fecha de ultima revision:** 9 de Abril de 2026.  
+**Fecha de ultima revision:** 10 de Abril de 2026.  
 **Objetivo:** Definir una estructura simple y clara del repositorio para facilitar onboarding, mantenimiento y evolucion del producto desktop de AzulClaw siguiendo KISS.
 
 ---
@@ -16,7 +16,7 @@
 ## 2. Estructura actual recomendada
 
 ```text
-AzulClaw/
+repo-root/
 ├── azul_backend/           # Backend Python
 ├── azul_desktop/           # App desktop
 ├── docs/                   # Documentacion
@@ -151,11 +151,10 @@ Conviene introducir mas adelante una capa `api/` en `azul_backend/azul_brain/` p
 
 ## 8. Siguientes pasos
 
-1. Limpiar cualquier resto de la ruta antigua `AzulClaw/`.
-2. Definir el contrato inicial desktop <-> backend:
+1. Definir el contrato inicial desktop <-> backend:
    - chat
    - procesos
    - memoria
    - workspace
-3. Bootstrap real de `azul_desktop/` con Tauri.
-4. Añadir un README corto de onboarding para nuevos desarrolladores.
+2. Bootstrap real de `azul_desktop/` con Tauri.
+3. Añadir un README corto de onboarding para nuevos desarrolladores.

@@ -3,12 +3,20 @@
 import asyncio
 import os
 import shutil
+import sys
+from pathlib import Path
 
 import mcp.types as types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-from path_validator import PathValidator, SecurityError
+if __package__ in (None, ""):
+    package_root = Path(__file__).resolve().parent
+    if str(package_root) not in sys.path:
+        sys.path.insert(0, str(package_root))
+    from path_validator import PathValidator, SecurityError
+else:
+    from .path_validator import PathValidator, SecurityError
 
 # Servidor MCP registrado para canal STDIO.
 app = Server("azul-hands-mcp")

@@ -6,3 +6,20 @@ azul_backend/azul_brain/.env.local
 __pycache__/
 azul_memory.db
 memory/
+
+# Desktop frontend
+azul_desktop/node_modules/
+azul_desktop/dist/
+
+# Tauri / Rust build artifacts
+azul_desktop/src-tauri/target/
+azul_desktop/src-tauri/gen/
+*.o
+*.obj
+*.bin
+*.pdb
+*.rlib
+*.rmeta
+
+# Local runtime logs
+memory/runtime-logs/

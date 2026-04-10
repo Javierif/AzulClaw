@@ -1,28 +1,35 @@
 # Azul Desktop
 
-Shell de la aplicacion de escritorio de AzulClaw.
+Base de la aplicacion de escritorio de AzulClaw.
 
-## Objetivo
+## Stack previsto
 
-Esta carpeta alojara la app desktop que consume el backend Python local y presenta:
+- Tauri
+- Vite
+- React
+- TypeScript
 
-- Hatching
-- Chat principal
-- Skills
-- Processes
-- Memory
-- Workspace
+## Estado actual
 
-## Estructura inicial
+El scaffold ya incluye:
 
-- `src/app/`: shell principal
-- `src/features/`: modulos de producto
-- `src/components/`: componentes compartidos
-- `src/layouts/`: layouts de alto nivel
-- `src/lib/`: clientes y utilidades
-- `src/styles/`: estilos y tokens visuales
-- `src-tauri/`: capa nativa Tauri
+- estructura de frontend real
+- shell visual inicial
+- configuracion de Vite
+- estructura `src-tauri/`
+- archivos base de Tauri
 
-## Estado
+## Pendiente para ejecutarlo
 
-Esqueleto inicial. Todavia no hay bootstrap funcional de Tauri.
+Hace falta instalar:
+
+- dependencias de `npm`
+- toolchain de Rust
+- Tauri CLI si no se usa via dependencia local
+
+## Scripts previstos
+
+- `npm run dev`
+- `npm run build`
+- `npm run tauri:dev`
+- `npm run tauri:build`

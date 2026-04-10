@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AzulClaw",
+  "version": "0.1.0",
+  "identifier": "com.azulclaw.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "AzulClaw",
+        "width": 1480,
+        "height": 940,
+        "minWidth": 1180,
+        "minHeight": 760,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all",
+    "icon": []
+  }
+}

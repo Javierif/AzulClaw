@@ -39,22 +39,23 @@ Lo hemos solucionado implementando el **Model Context Protocol (MCP)** desarroll
 ## 3. Estructura de Directorios del Código Base
 
 ```text
-AzulClaw/
+repo-root/
 ├── docs/                        # Documentación técnica
 │   ├── 01_arquitectura.md
 │   └── 02_setup_y_desarrollo.md
 │
-├── azul_brain/                  # [EL CEREBRO S1/S2] Lógica Cognitiva 
-│   ├── bot/                     # Integración con Azure Bot Framework
-│   │   └── azul_bot.py          # Clase principal del Bot (ActivityHandler)
-│   ├── cortex/                  # Microsoft Agent Framework / GPT-4 Planner
-│   ├── memory/                  # Memoria Segura (No pickle, solo JSON)
-│   ├── main_launcher.py         # Punto de entrada de la APP (Escucha en 3978)
-│   └── mcp_client.py            # Adaptador de MCP en Python (Cliente STDIO)
-│
-└── azul_hands_mcp/              # [LAS MANOS] Servidor Local MCP (Jaula)
-    ├── mcp_server.py            # Expone las "Tools" físicas (Solo Lectura/Escritura validada)
-    └── path_validator.py        # Algoritmo de prevención de Path Traversal
+├── azul_backend/
+│   ├── azul_brain/              # [EL CEREBRO S1/S2] Lógica Cognitiva
+│   │   ├── bot/                 # Integración con Azure Bot Framework
+│   │   │   └── azul_bot.py      # Clase principal del Bot (ActivityHandler)
+│   │   ├── cortex/              # Microsoft Agent Framework / GPT-4 Planner
+│   │   ├── memory/              # Memoria Segura (No pickle, solo JSON)
+│   │   ├── main_launcher.py     # Punto de entrada de la APP (Escucha en 3978)
+│   │   └── mcp_client.py        # Adaptador de MCP en Python (Cliente STDIO)
+│   │
+│   └── azul_hands_mcp/          # [LAS MANOS] Servidor Local MCP (Jaula)
+│       ├── mcp_server.py        # Expone las "Tools" físicas (Solo Lectura/Escritura validada)
+│       └── path_validator.py    # Algoritmo de prevención de Path Traversal
 ```
 
 ## 4. Próxima Fase (Pendiente de Desarrollo): Fase 4

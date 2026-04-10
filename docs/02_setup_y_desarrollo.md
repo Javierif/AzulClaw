@@ -43,8 +43,8 @@ pip install -r requirements.txt
 ## 3. Estructura del Proyecto (Archivos Clave)
 
 ```
-AzulClaw/
-├── venv/                          # Entorno virtual (NO subir a Git)
+repo-root/
+├── .venv/                         # Entorno virtual (NO subir a Git)
 ├── docs/                          # Esta documentación
 │
 ├── azul_backend/
