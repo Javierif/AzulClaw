@@ -187,6 +187,18 @@ async def desktop_runtime_put_handler(req: web.Request) -> web.Response:
     )
 
 
+async def desktop_runtime_heartbeat_run_handler(req: web.Request) -> web.Response:
+    """Ejecuta el heartbeat manualmente y devuelve el estado actualizado."""
+    await req.app["scheduler"].run_heartbeat_now()
+    return web.json_response(
+        summarize_runtime(
+            req.app["runtime_manager"],
+            req.app["scheduler"],
+            req.app["process_registry"],
+        )
+    )
+
+
 async def desktop_jobs_get_handler(req: web.Request) -> web.Response:
     """Lista jobs programados del runtime."""
     return web.json_response({"items": summarize_jobs(req.app["runtime_store"])})
@@ -231,6 +243,7 @@ def register_desktop_routes(app: web.Application) -> None:
     app.router.add_put("/api/desktop/hatching", desktop_hatching_put_handler)
     app.router.add_get("/api/desktop/runtime", desktop_runtime_get_handler)
     app.router.add_put("/api/desktop/runtime", desktop_runtime_put_handler)
+    app.router.add_post("/api/desktop/runtime/heartbeat/run", desktop_runtime_heartbeat_run_handler)
     app.router.add_get("/api/desktop/jobs", desktop_jobs_get_handler)
     app.router.add_post("/api/desktop/jobs", desktop_jobs_post_handler)
     app.router.add_post("/api/desktop/jobs/{job_id}/run", desktop_job_run_handler)

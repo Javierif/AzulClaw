@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from ..api.hatching_store import HatchingStore
 from .store import RuntimeStore, ScheduledJob, parse_iso_datetime, to_iso_z, utc_now
+
+LOGGER = logging.getLogger(__name__)
 
 
 class RuntimeScheduler:
@@ -27,13 +30,16 @@ class RuntimeScheduler:
         self.running_job_ids: set[str] = set()
         self.last_heartbeat_at: str = ""
         self.last_heartbeat_result: str = ""
+        self.last_heartbeat_error: str = ""
         self.next_heartbeat_at: str = ""
+        self.last_scheduler_error: str = ""
 
     async def start(self) -> None:
         """Arranca el loop de scheduler."""
         if self.worker_task is not None and not self.worker_task.done():
             return
         self.stop_event.clear()
+        self.last_scheduler_error = ""
         self.worker_task = asyncio.create_task(self._run_loop(), name="azul-runtime-scheduler")
 
     async def stop(self) -> None:
@@ -60,9 +66,12 @@ class RuntimeScheduler:
                 "next_run_at": self.next_heartbeat_at,
                 "last_run_at": self.last_heartbeat_at,
                 "last_result": self.last_heartbeat_result,
+                "last_error": self.last_heartbeat_error,
                 "workspace_root": workspace_root,
                 "heartbeat_file": str(Path(workspace_root) / "HEARTBEAT.md"),
             },
+            "scheduler_running": self.worker_task is not None and not self.worker_task.done(),
+            "scheduler_last_error": self.last_scheduler_error,
             "jobs_total": len(self.store.load_jobs()),
             "jobs_running": len(self.running_job_ids),
         }
@@ -74,9 +83,20 @@ class RuntimeScheduler:
             raise ValueError("job not found")
         return await self._execute_job(job, reason="manual")
 
+    async def run_heartbeat_now(self) -> dict[str, Any]:
+        """Ejecuta el heartbeat inmediatamente, aunque no toque por horario."""
+        return await self._execute_heartbeat(reason="manual", reschedule=False)
+
     async def _run_loop(self) -> None:
         while not self.stop_event.is_set():
-            await self._tick()
+            try:
+                await self._tick()
+                self.last_scheduler_error = ""
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                self.last_scheduler_error = str(error).strip() or error.__class__.__name__
+                LOGGER.exception("Fallo en el loop del scheduler: %s", error)
             try:
                 await asyncio.wait_for(self.stop_event.wait(), timeout=5)
             except asyncio.TimeoutError:
@@ -107,41 +127,98 @@ class RuntimeScheduler:
         if next_due is None or next_due > now:
             return
 
-        heartbeat_text = self._load_heartbeat_text()
-        self.next_heartbeat_at = to_iso_z(now + timedelta(seconds=settings.heartbeat_interval_seconds))
-        if not heartbeat_text:
-            self.last_heartbeat_at = to_iso_z(now)
-            self.last_heartbeat_result = "HEARTBEAT_SKIP"
-            return
+        await self._execute_heartbeat(reason="scheduled", reschedule=True)
 
-        response = await self.orchestrator.process_message(
-            user_id="heartbeat-system",
-            user_message=f"{settings.heartbeat_prompt}\n\nChecklist activa:\n{heartbeat_text}",
-            lane="fast",
-            source="heartbeat",
-            store_memory=False,
-            title="Heartbeat del workspace",
-        )
-        self.last_heartbeat_at = to_iso_z(now)
-        self.last_heartbeat_result = response[:160]
+    async def _execute_heartbeat(self, *, reason: str, reschedule: bool) -> dict[str, Any]:
+        settings = self.orchestrator.runtime_manager.load_settings()
+        run_time = utc_now()
+        run_at = to_iso_z(run_time)
+
+        if not settings.heartbeat_enabled:
+            self.next_heartbeat_at = ""
+        if reschedule and settings.heartbeat_enabled:
+            self.next_heartbeat_at = to_iso_z(
+                run_time + timedelta(seconds=settings.heartbeat_interval_seconds)
+            )
+
+        try:
+            heartbeat_text = self._load_heartbeat_text()
+            if not heartbeat_text:
+                self.last_heartbeat_at = run_at
+                self.last_heartbeat_result = "HEARTBEAT_SKIP"
+                self.last_heartbeat_error = ""
+                return {
+                    "ok": True,
+                    "reason": reason,
+                    "run_at": run_at,
+                    "result": self.last_heartbeat_result,
+                    "next_run_at": self.next_heartbeat_at,
+                }
+
+            response = await self.orchestrator.process_message(
+                user_id="heartbeat-system",
+                user_message=f"{settings.heartbeat_prompt}\n\nChecklist activa:\n{heartbeat_text}",
+                lane="fast",
+                source="heartbeat",
+                store_memory=False,
+                title="Heartbeat del workspace",
+            )
+            self.last_heartbeat_at = run_at
+            self.last_heartbeat_result = response[:160]
+            self.last_heartbeat_error = ""
+            return {
+                "ok": True,
+                "reason": reason,
+                "run_at": run_at,
+                "result": self.last_heartbeat_result,
+                "next_run_at": self.next_heartbeat_at,
+            }
+        except Exception as error:
+            error_text = str(error).strip() or error.__class__.__name__
+            self.last_heartbeat_at = run_at
+            self.last_heartbeat_result = "HEARTBEAT_ERROR"
+            self.last_heartbeat_error = error_text
+            LOGGER.exception("Fallo ejecutando heartbeat (%s): %s", reason, error)
+            return {
+                "ok": False,
+                "reason": reason,
+                "run_at": run_at,
+                "result": self.last_heartbeat_result,
+                "error": error_text,
+                "next_run_at": self.next_heartbeat_at,
+            }
 
     async def _execute_job(self, job: ScheduledJob, *, reason: str) -> dict[str, Any]:
+        run_time = utc_now()
         try:
-            response = await self.orchestrator.process_message(
-                user_id=f"cron:{job.id}",
-                user_message=job.prompt,
-                lane=job.lane,
-                source="cron",
-                store_memory=False,
-                title=f"Job programado: {job.name}",
-            )
-            updated = self.store.mark_job_run(job.id, utc_now())
-            return {
+            try:
+                response = await self.orchestrator.process_message(
+                    user_id=f"cron:{job.id}",
+                    user_message=job.prompt,
+                    lane=job.lane,
+                    source="cron",
+                    store_memory=False,
+                    title=f"Job programado: {job.name}",
+                )
+                ok = True
+                error_text = ""
+            except Exception as error:
+                ok = False
+                error_text = str(error).strip() or error.__class__.__name__
+                response = f"JOB_ERROR: {error_text}"
+                LOGGER.exception("Fallo ejecutando job %s (%s): %s", job.id, reason, error)
+
+            updated = self.store.mark_job_run(job.id, run_time)
+            result = {
                 "job_id": job.id,
                 "reason": reason,
+                "ok": ok,
                 "response": response,
                 "next_run_at": updated.next_run_at if updated else "",
             }
+            if error_text:
+                result["error"] = error_text
+            return result
         finally:
             self.running_job_ids.discard(job.id)
 

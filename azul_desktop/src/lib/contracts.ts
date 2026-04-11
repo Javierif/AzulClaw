@@ -3,6 +3,7 @@ export type AppView =
   | "hatching"
   | "skills"
   | "processes"
+  | "heartbeats"
   | "runtime"
   | "memory"
   | "workspace"
@@ -118,6 +119,7 @@ export interface RuntimeHeartbeatStatus {
   next_run_at: string;
   last_run_at: string;
   last_result: string;
+  last_error: string;
   workspace_root: string;
   heartbeat_file: string;
 }
@@ -126,6 +128,8 @@ export interface RuntimeOverview {
   default_lane: "auto" | "fast" | "slow";
   models: RuntimeModelStatus[];
   heartbeat: RuntimeHeartbeatStatus;
+  scheduler_running: boolean;
+  scheduler_last_error: string;
   jobs_total: number;
   jobs_running: number;
   processes_visible: number;

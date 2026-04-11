@@ -116,6 +116,8 @@ def summarize_runtime(runtime_manager, scheduler, process_registry) -> dict:
         "default_lane": settings.default_lane,
         "models": runtime_manager.list_model_status(),
         "heartbeat": scheduler_status["heartbeat"],
+        "scheduler_running": scheduler_status["scheduler_running"],
+        "scheduler_last_error": scheduler_status["scheduler_last_error"],
         "jobs_total": scheduler_status["jobs_total"],
         "jobs_running": scheduler_status["jobs_running"],
         "processes_visible": len(process_registry.list_processes()),

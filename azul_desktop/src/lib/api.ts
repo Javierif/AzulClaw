@@ -233,6 +233,16 @@ export async function saveRuntime(payload: {
   }
 }
 
+export async function runHeartbeat(): Promise<RuntimeOverview> {
+  try {
+    return await fetchJson<RuntimeOverview>("/api/desktop/runtime/heartbeat/run", {
+      method: "POST",
+    });
+  } catch {
+    return runtimeOverview;
+  }
+}
+
 export async function loadJobs(): Promise<ScheduledJob[]> {
   try {
     const data = await fetchJson<{ items: ScheduledJob[] }>("/api/desktop/jobs");

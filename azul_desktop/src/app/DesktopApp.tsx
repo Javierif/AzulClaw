@@ -5,10 +5,10 @@ import babyMascot from "../../../img/hatching_azulclaw.png";
 
 import { Sidebar } from "../components/Sidebar";
 import { ChatShell } from "../features/chat/ChatShell";
+import { HeartbeatsShell } from "../features/heartbeats/HeartbeatsShell";
 import { HatchingShell } from "../features/hatching/HatchingShell";
 import { MemoryShell } from "../features/memory/MemoryShell";
 import { ProcessesShell } from "../features/processes/ProcessesShell";
-import { RuntimeShell } from "../features/runtime/RuntimeShell";
 import { SettingsShell } from "../features/settings/SettingsShell";
 import { SkillsShell } from "../features/skills/SkillsShell";
 import { WorkspaceShell } from "../features/workspace/WorkspaceShell";
@@ -24,8 +24,8 @@ function renderView(view: AppView, profile: HatchingProfile, setProfile: (p: Hat
       return <SkillsShell />;
     case "processes":
       return <ProcessesShell />;
-    case "runtime":
-      return <RuntimeShell />;
+    case "heartbeats":
+      return <HeartbeatsShell />;
     case "memory":
       return <MemoryShell />;
     case "workspace":
