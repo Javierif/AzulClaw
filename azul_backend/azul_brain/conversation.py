@@ -160,6 +160,7 @@ class ConversationOrchestrator:
                     f"Technical detail: {error}"
                 ),
                 lane=lane,
+            )
 
     async def invoke_messages_stream(
         self,
