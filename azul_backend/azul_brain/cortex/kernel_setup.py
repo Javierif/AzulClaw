@@ -137,6 +137,7 @@ def _build_tools(mcp_client):
     return [list_files, read_file, move_file]
 
 
+<<<<<<< HEAD
 async def create_agent(mcp_client, model_profile=None):
     """Creates the agent with the appropriate client and MCP tools."""
     provider = getattr(model_profile, "provider", "azure")
@@ -200,6 +201,29 @@ async def create_agent(mcp_client, model_profile=None):
                 deployment_name=deployment_name,
                 api_version=api_version,
             )
+=======
+async def create_agent(mcp_client):
+    """Creates the agent with an Azure OpenAI client and MCP tools."""
+    endpoint = _require_env("AZURE_OPENAI_ENDPOINT")
+    api_key = _require_env("AZURE_OPENAI_API_KEY")
+    deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o").strip()
+    api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21").strip()
+
+    if _USE_AZURE_CLIENT:
+        chat_client = _ChatClientClass(
+            api_key=api_key,
+            endpoint=endpoint,
+            deployment_name=deployment_name,
+            api_version=api_version,
+        )
+    else:
+        chat_client = _ChatClientClass(
+            model=deployment_name,
+            api_key=api_key,
+            azure_endpoint=endpoint,
+            api_version=api_version,
+        )
+>>>>>>> f60bc20 (fix: add missing modules and resolve startup errors)
 
     agent = Agent(
         client=chat_client,

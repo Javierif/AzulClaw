@@ -6,6 +6,8 @@ azul_backend/azul_brain/.env.local
 __pycache__/
 azul_memory.db
 memory/
+!azul_backend/azul_brain/memory/
+!azul_desktop/src/features/memory/
 
 # Desktop frontend
 azul_desktop/node_modules/
