@@ -29,7 +29,7 @@ python -m azul_backend.azul_brain.main_launcher
 - Backend principal: `azul_backend/azul_brain/`
 - MCP sandbox: `azul_backend/azul_hands_mcp/`
 - Documentacion: `docs/`
-- Desktop scaffold: `azul_desktop/`
+- App nativa (Frontend Tauri): `azul_desktop/` (revisa su [README propio](azul_desktop/README.md) para lanzar la app visual)
 
 ## Seguridad
 

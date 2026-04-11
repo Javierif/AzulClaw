@@ -1,38 +1,359 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { sendDesktopMessage } from "../../lib/api";
-import { chatMessages } from "../../lib/mock-data";
+import { sendDesktopMessageStream } from "../../lib/api";
+import type { ChatExchange, ThinkingProgress } from "../../lib/contracts";
+import { chatMessages, defaultChatRuntime } from "../../lib/mock-data";
+
+type ChatMessageItem = ChatExchange & {
+  kind: "text" | "thinking";
+  progress?: ThinkingProgress;
+};
+
+function toUiMessages(items: ChatExchange[]): ChatMessageItem[] {
+  return items.map((item) => ({ ...item, kind: "text" }));
+}
+
+function phaseStatusLabel(status: "pending" | "active" | "done") {
+  if (status === "done") {
+    return "Completado";
+  }
+  if (status === "active") {
+    return "En curso";
+  }
+  return "Pendiente";
+}
+
+function ThinkingCard({ message }: { message: ChatMessageItem }) {
+  const progress = message.progress;
+  const [expanded, setExpanded] = useState(true);
+  const [openPhases, setOpenPhases] = useState<string[]>(() =>
+    progress ? progress.phases.filter((phase) => phase.status === "active").map((phase) => phase.id) : [],
+  );
+
+  useEffect(() => {
+    if (!progress) {
+      return;
+    }
+    setOpenPhases((current) => {
+      const next = new Set(current);
+      for (const phase of progress.phases) {
+        if (phase.status === "active") {
+          next.add(phase.id);
+        }
+      }
+      return Array.from(next);
+    });
+  }, [progress]);
+
+  if (!progress) {
+    return null;
+  }
+
+  const statusText =
+    progress.active_count > 0
+      ? `${progress.active_count} subtareas abiertas`
+      : "proceso completado";
+
+  return (
+    <article className="message-bubble message-assistant message-thinking">
+      <div className="thinking-card">
+        <div className="thinking-topline">
+          <span className="message-role">AzulClaw</span>
+          <span className="thinking-badge">{progress.badge}</span>
+        </div>
+
+        <div className="thinking-header">
+          <div>
+            <h3>{message.content || progress.title}</h3>
+            <p>{progress.title}</p>
+          </div>
+          <button
+            type="button"
+            className="thinking-toggle"
+            onClick={() => setExpanded((current) => !current)}
+          >
+            {expanded ? "Ocultar" : "Expandir"}
+          </button>
+        </div>
+
+        <div className="thinking-meta">
+          <span className={`thinking-spinner ${progress.active_count === 0 ? "thinking-spinner-done" : ""}`} />
+          <span>{statusText}</span>
+        </div>
+
+        {expanded ? (
+          <div className="thinking-phase-list">
+            {progress.phases.map((phase) => {
+              const isOpen = openPhases.includes(phase.id);
+              return (
+                <section key={phase.id} className={`thinking-phase thinking-phase-${phase.status}`}>
+                  <button
+                    type="button"
+                    className="thinking-phase-header"
+                    onClick={() =>
+                      setOpenPhases((current) =>
+                        current.includes(phase.id)
+                          ? current.filter((item) => item !== phase.id)
+                          : [...current, phase.id],
+                      )
+                    }
+                  >
+                    <div className="thinking-phase-title">
+                      <span className={`thinking-status-dot thinking-status-${phase.status}`} />
+                      <strong>{phase.label}</strong>
+                    </div>
+                    <div className="thinking-phase-meta">
+                      <span>{phaseStatusLabel(phase.status)}</span>
+                      <span>{isOpen ? "-" : "+"}</span>
+                    </div>
+                  </button>
+
+                  {isOpen ? (
+                    <ul className="thinking-step-list">
+                      {phase.steps.map((step) => (
+                        <li key={step.id} className={`thinking-step thinking-step-${step.status}`}>
+                          <span className={`thinking-step-check thinking-step-check-${step.status}`} />
+                          <span>{step.label}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </section>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    </article>
+  );
+}
 
 export function ChatShell() {
-  const [messages, setMessages] = useState(chatMessages);
+  const [messages, setMessages] = useState<ChatMessageItem[]>(() => toUiMessages(chatMessages));
   const [draft, setDraft] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [runtime, setRuntime] = useState(defaultChatRuntime);
+  const streamMessageIdRef = useRef("");
+  const streamBufferRef = useRef("");
+  const streamPumpRef = useRef<number | null>(null);
+
+  function ensureStreamPump() {
+    if (streamPumpRef.current !== null) {
+      return;
+    }
+    streamPumpRef.current = window.setInterval(() => {
+      const messageId = streamMessageIdRef.current;
+      if (!messageId || !streamBufferRef.current) {
+        return;
+      }
+      const slice = streamBufferRef.current.slice(0, 12);
+      streamBufferRef.current = streamBufferRef.current.slice(12);
+      setMessages((current) => {
+        const existing = current.find((item) => item.id === messageId);
+        if (existing) {
+          return current.map((item) =>
+            item.id === messageId ? { ...item, content: `${item.content}${slice}` } : item,
+          );
+        }
+        return [...current, { id: messageId, role: "assistant", content: slice, kind: "text" }];
+      });
+      if (!streamBufferRef.current && streamPumpRef.current !== null) {
+        window.clearInterval(streamPumpRef.current);
+        streamPumpRef.current = null;
+      }
+    }, 30);
+  }
+
+  function flushStreamBuffer() {
+    const messageId = streamMessageIdRef.current;
+    const pending = streamBufferRef.current;
+    if (messageId && pending) {
+      setMessages((current) => {
+        const existing = current.find((item) => item.id === messageId);
+        if (existing) {
+          return current.map((item) =>
+            item.id === messageId ? { ...item, content: `${item.content}${pending}` } : item,
+          );
+        }
+        return [...current, { id: messageId, role: "assistant", content: pending, kind: "text" }];
+      });
+    }
+    streamBufferRef.current = "";
+    if (streamPumpRef.current !== null) {
+      window.clearInterval(streamPumpRef.current);
+      streamPumpRef.current = null;
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (streamPumpRef.current !== null) {
+        window.clearInterval(streamPumpRef.current);
+      }
+    };
+  }, []);
 
   async function handleSend() {
-    const trimmed = draft.trim()
+    const trimmed = draft.trim();
     if (!trimmed || isSending) {
       return;
     }
 
     setIsSending(true);
-    const nextUserMessage = {
-      id: `user-${Date.now()}`,
-      role: "user" as const,
+    const now = Date.now();
+    const nextUserMessage: ChatMessageItem = {
+      id: `user-${now}`,
+      role: "user",
       content: trimmed,
+      kind: "text",
     };
-    setMessages((current) => [...current, nextUserMessage]);
-    setDraft("");
-
-    const response = await sendDesktopMessage(trimmed);
+    const commentaryMessageId = `assistant-commentary-${now + 1}`;
+    const assistantMessageId = `assistant-final-${now + 2}`;
+    streamMessageIdRef.current = assistantMessageId;
+    streamBufferRef.current = "";
     setMessages((current) => [
       ...current,
+      nextUserMessage,
       {
-        id: `assistant-${Date.now()}`,
+        id: commentaryMessageId,
         role: "assistant",
-        content: response.reply,
+        content: "Activando la primera respuesta visible...",
+        kind: "text",
       },
     ]);
-    setIsSending(false);
+    setDraft("");
+
+    try {
+      const response = await sendDesktopMessageStream(trimmed, (event) => {
+        if (event.type === "commentary" && event.text) {
+          setMessages((current) => {
+            const existing = current.find((item) => item.id === commentaryMessageId);
+            if (existing) {
+              return current.map((item) =>
+                item.id === commentaryMessageId ? { ...item, content: event.text || item.content } : item,
+              );
+            }
+            return [
+              ...current,
+              {
+                id: commentaryMessageId,
+                role: "assistant",
+                content: event.text || "",
+                kind: "text",
+              },
+            ];
+          });
+        }
+
+        if (event.type === "progress" && event.progress) {
+          const progress = event.progress;
+          setMessages((current) => {
+            const existing = current.find((item) => item.id === commentaryMessageId);
+            if (existing) {
+              return current.map((item) =>
+                item.id === commentaryMessageId
+                  ? {
+                      ...item,
+                      kind: "thinking",
+                      content: progress.summary || item.content,
+                      progress,
+                    }
+                  : item,
+              );
+            }
+            return [
+              ...current,
+              {
+                id: commentaryMessageId,
+                role: "assistant",
+                content: progress.summary,
+                kind: "thinking",
+                progress,
+              },
+            ];
+          });
+        }
+
+        if (event.type === "delta") {
+          streamBufferRef.current += event.text || "";
+          ensureStreamPump();
+        }
+
+        if (event.type === "done" && event.runtime) {
+          flushStreamBuffer();
+          setRuntime(event.runtime);
+          setMessages((current) => {
+            const existing = current.find((item) => item.id === assistantMessageId);
+            if (existing) {
+              return current.map((item) =>
+                item.id === assistantMessageId
+                  ? { ...item, content: event.reply || item.content }
+                  : item,
+              );
+            }
+            return [
+              ...current,
+              {
+                id: assistantMessageId,
+                role: "assistant",
+                content: event.reply || "",
+                kind: "text",
+              },
+            ];
+          });
+        }
+
+        if (event.type === "error") {
+          flushStreamBuffer();
+          setMessages((current) => {
+            const existing = current.find((item) => item.id === assistantMessageId);
+            if (existing) {
+              return current.map((item) =>
+                item.id === assistantMessageId
+                  ? { ...item, content: event.message || "No pude completar la respuesta." }
+                  : item,
+              );
+            }
+            return [
+              ...current,
+              {
+                id: assistantMessageId,
+                role: "assistant",
+                content: event.message || "No pude completar la respuesta.",
+                kind: "text",
+              },
+            ];
+          });
+        }
+      });
+
+      setRuntime(response.runtime);
+      if (response.reply) {
+        flushStreamBuffer();
+        setMessages((current) => {
+          const existing = current.find((item) => item.id === assistantMessageId);
+          if (existing) {
+            return current.map((item) =>
+              item.id === assistantMessageId
+                ? { ...item, content: response.reply || item.content }
+                : item,
+            );
+          }
+          return [
+            ...current,
+            {
+              id: assistantMessageId,
+              role: "assistant",
+              content: response.reply,
+              kind: "text",
+            },
+          ];
+        });
+      }
+    } finally {
+      flushStreamBuffer();
+      setIsSending(false);
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -48,30 +369,29 @@ export function ChatShell() {
         <div className="chat-header">
           <div>
             <p className="eyebrow">Main Session</p>
-            <h2>Conversación principal</h2>
+            <h2>Conversacion principal</h2>
           </div>
           <div className="action-row">
-            <button type="button" className="ghost-button">
-              Add skill
-            </button>
-            <button type="button" className="ghost-button">
-              New task
-            </button>
+            <span className="status-pill">Triage interno</span>
           </div>
         </div>
 
         <div className="message-list">
-          {messages.map((message) => (
-            <article
-              key={message.id}
-              className={`message-bubble message-${message.role}`}
-            >
-              <span className="message-role">
-                {message.role === "user" ? "You" : "AzulClaw"}
-              </span>
-              <p>{message.content}</p>
-            </article>
-          ))}
+          {messages.map((message) =>
+            message.kind === "thinking" && message.role === "assistant" ? (
+              <ThinkingCard key={message.id} message={message} />
+            ) : (
+              <article
+                key={message.id}
+                className={`message-bubble message-${message.role}`}
+              >
+                <span className="message-role">
+                  {message.role === "user" ? "You" : "AzulClaw"}
+                </span>
+                <p>{message.content}</p>
+              </article>
+            ),
+          )}
         </div>
 
         <div className="composer">
@@ -79,7 +399,7 @@ export function ChatShell() {
             <label className="composer-field">
               <span className="sr-only">Message AzulClaw</span>
               <textarea
-                placeholder="Escribe un mensaje... (Enter para enviar, Shift+Enter para nueva línea)"
+                placeholder="Escribe un mensaje... (Enter para enviar, Shift+Enter para nueva linea)"
                 rows={1}
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
@@ -89,27 +409,39 @@ export function ChatShell() {
             <div className="composer-bottom">
               <div className="composer-actions">
                 <button type="button" className="ghost-button-mini" title="Adjuntar un archivo local" aria-label="Adjuntar archivo">
-                  📎 Archivo
+                  Archivo
                 </button>
-                <button type="button" className="ghost-button-mini" title="Buscar en las preferencias del agente" aria-label="Añadir Memoria">
-                  🧠 Memoria
+                <button type="button" className="ghost-button-mini" title="Buscar en las preferencias del agente" aria-label="Anadir Memoria">
+                  Memoria
                 </button>
-                <button type="button" className="ghost-button-mini" title="Buscar un documento del Workspace" aria-label="Añadir del Workspace">
-                  🗂️ Workspace
+                <button type="button" className="ghost-button-mini" title="Buscar un documento del Workspace" aria-label="Anadir del Workspace">
+                  Workspace
                 </button>
               </div>
-              <button 
-                type="button" 
-                className="composer-send-btn" 
-                onClick={() => void handleSend()} 
+              <button
+                type="button"
+                className={`composer-send-btn ${isSending ? "composer-send-btn-loading" : ""}`}
+                onClick={() => void handleSend()}
                 disabled={isSending || !draft.trim()}
+                aria-busy={isSending}
               >
-                {isSending ? "..." : "Enviar ➔"}
+                {isSending ? (
+                  <>
+                    <span className="composer-send-label">Enviando</span>
+                    <span className="composer-send-loader" aria-hidden="true">
+                      <span className="composer-send-loader-dot" />
+                      <span className="composer-send-loader-dot" />
+                      <span className="composer-send-loader-dot" />
+                    </span>
+                  </>
+                ) : (
+                  "Enviar"
+                )}
               </button>
             </div>
           </div>
           <div className="composer-footer">
-            <span className="hint-text">AzulClaw puede cometer errores. Considera verificar la información importante.</span>
+            <span className="hint-text">AzulClaw puede cometer errores. Considera verificar la informacion importante.</span>
           </div>
         </div>
       </div>
@@ -124,9 +456,10 @@ export function ChatShell() {
           <h3>Estado actual</h3>
           <ul className="context-list">
             {[
-              "Leyendo archivos del sandbox",
-              "Resumiendo notas recientes",
-              "Esperando futuras aprobaciones sensibles",
+              `Ruta elegida: ${runtime.lane || "sin dato"}`,
+              `Motivo de triage: ${runtime.triage_reason || "sin dato"}`,
+              `Ultimo modelo: ${runtime.model_label || "sin dato"}`,
+              `Proceso: ${runtime.process_id || "sin dato"}`,
             ].map((item) => (
               <li key={item}>{item}</li>
             ))}

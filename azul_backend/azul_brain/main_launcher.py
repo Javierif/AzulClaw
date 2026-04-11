@@ -18,14 +18,42 @@ if __package__ in (None, ""):
     from azul_backend.azul_brain.bot.azul_bot import AzulBot
     from azul_backend.azul_brain.config import HOST, load_runtime_config
     from azul_backend.azul_brain.conversation import ConversationOrchestrator
+    from azul_backend.azul_brain.runtime.agent_runtime import AgentRuntimeManager
+    from azul_backend.azul_brain.runtime.process_registry import ProcessRegistry
+    from azul_backend.azul_brain.runtime.scheduler import RuntimeScheduler
+    from azul_backend.azul_brain.runtime.store import RuntimeStore
 else:
     from .api.routes import register_desktop_routes
     from .bootstrap import build_adapter, build_mcp_client
     from .bot.azul_bot import AzulBot
     from .config import HOST, load_runtime_config
     from .conversation import ConversationOrchestrator
+    from .runtime.agent_runtime import AgentRuntimeManager
+    from .runtime.process_registry import ProcessRegistry
+    from .runtime.scheduler import RuntimeScheduler
+    from .runtime.store import RuntimeStore
 
 LOGGER = logging.getLogger(__name__)
+CORS_ALLOWED_METHODS = "GET,POST,PUT,DELETE,OPTIONS"
+CORS_ALLOWED_HEADERS = "Content-Type,Authorization"
+
+
+def apply_cors_headers(req: web.Request, response: web.StreamResponse) -> None:
+    """Aplica CORS tambien a respuestas en streaming y errores del framework."""
+    origin = req.headers.get("Origin", "").strip()
+    requested_headers = req.headers.get("Access-Control-Request-Headers", "").strip()
+
+    response.headers["Access-Control-Allow-Origin"] = origin or "*"
+    response.headers["Access-Control-Allow-Methods"] = CORS_ALLOWED_METHODS
+    response.headers["Access-Control-Allow-Headers"] = requested_headers or CORS_ALLOWED_HEADERS
+    response.headers["Access-Control-Max-Age"] = "600"
+    if origin:
+        response.headers["Vary"] = "Origin"
+
+
+async def cors_on_prepare(req: web.Request, response: web.StreamResponse) -> None:
+    """Inyecta CORS justo antes de enviar cabeceras, incluso en StreamResponse."""
+    apply_cors_headers(req, response)
 
 
 @web.middleware
@@ -33,13 +61,9 @@ async def cors_middleware(req: web.Request, handler):
     """Aplica cabeceras CORS simples para la desktop app en desarrollo."""
     if req.method == "OPTIONS":
         response = web.Response(status=204)
-    else:
-        response = await handler(req)
-
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization"
-    return response
+        apply_cors_headers(req, response)
+        return response
+    return await handler(req)
 
 
 async def messages_handler(req: web.Request) -> web.Response:
@@ -79,13 +103,27 @@ async def create_app() -> web.Application:
             error,
         )
 
-    orchestrator = ConversationOrchestrator(mcp_client)
+    runtime_store = RuntimeStore()
+    process_registry = ProcessRegistry(runtime_store)
+    runtime_manager = AgentRuntimeManager(
+        mcp_client=mcp_client,
+        store=runtime_store,
+        process_registry=process_registry,
+    )
+    orchestrator = ConversationOrchestrator(mcp_client, runtime_manager)
+    scheduler = RuntimeScheduler(store=runtime_store, orchestrator=orchestrator)
+    await scheduler.start()
 
     app = web.Application(middlewares=[cors_middleware])
+    app.on_response_prepare.append(cors_on_prepare)
     app["bot"] = AzulBot(orchestrator)
     app["adapter"] = adapter
     app["mcp_client"] = mcp_client
     app["orchestrator"] = orchestrator
+    app["runtime_store"] = runtime_store
+    app["process_registry"] = process_registry
+    app["runtime_manager"] = runtime_manager
+    app["scheduler"] = scheduler
     app.router.add_post("/api/messages", messages_handler)
     register_desktop_routes(app)
     return app
@@ -128,6 +166,12 @@ async def main() -> None:
                 await mcp_client.cleanup()
             except Exception as cleanup_error:
                 LOGGER.warning("Error al cerrar MCP Client: %s", cleanup_error)
+        scheduler = app.get("scheduler")
+        if scheduler is not None:
+            try:
+                await scheduler.stop()
+            except Exception as scheduler_error:
+                LOGGER.warning("Error al detener scheduler: %s", scheduler_error)
         await runner.cleanup()
 
 

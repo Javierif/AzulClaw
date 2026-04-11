@@ -1,8 +1,11 @@
 import type {
   ChatExchange,
+  ChatRuntimeMeta,
   HatchingProfile,
   MemoryRecord,
   ProcessSummary,
+  RuntimeOverview,
+  ScheduledJob,
   WorkspaceEntry,
 } from "./contracts";
 
@@ -26,21 +29,35 @@ export const processItems: ProcessSummary[] = [
     title: "Revisar documentos de Projects",
     status: "running",
     skill: "Workspace",
+    kind: "agent-run",
+    lane: "slow",
     startedAt: "12:04",
+    updatedAt: "12:05",
+    detail: "Leyendo documentos del workspace y preparando contexto.",
+    modelLabel: "Cerebro lento",
   },
   {
     id: "p2",
     title: "Clasificar notas en Inbox",
     status: "waiting",
     skill: "Workspace",
+    kind: "agent-run",
+    lane: "fast",
     startedAt: "11:51",
+    updatedAt: "11:51",
+    detail: "Pendiente de nueva ejecucion del scheduler.",
   },
   {
     id: "p3",
     title: "Resumen semanal",
     status: "done",
     skill: "Memory",
+    kind: "agent-run",
+    lane: "slow",
     startedAt: "10:30",
+    updatedAt: "10:32",
+    detail: "Ultimo resumen completado y persistido.",
+    modelLabel: "Cerebro lento",
   },
 ];
 
@@ -89,3 +106,74 @@ export const defaultHatchingProfile: HatchingProfile = {
   skills: ["Email", "Telegram", "Workspace", "Memory"],
   skill_configs: {},
 };
+
+export const defaultChatRuntime: ChatRuntimeMeta = {
+  lane: "auto",
+  model_id: "slow",
+  model_label: "Cerebro lento",
+  process_id: "local-fallback",
+};
+
+export const runtimeOverview: RuntimeOverview = {
+  default_lane: "auto",
+  models: [
+    {
+      id: "fast",
+      label: "Cerebro rapido",
+      lane: "fast",
+      provider: "azure",
+      deployment: "gpt-4o-mini",
+      enabled: true,
+      streaming_enabled: true,
+      available: true,
+      cooldown_until: "",
+      last_error: "",
+      description: "Turnos rapidos, heartbeats y tareas ligeras.",
+      probe_detail: "Configuracion Azure lista",
+    },
+    {
+      id: "slow",
+      label: "Cerebro lento",
+      lane: "slow",
+      provider: "azure",
+      deployment: "gpt-4o",
+      enabled: true,
+      streaming_enabled: false,
+      available: true,
+      cooldown_until: "",
+      last_error: "",
+      description: "Tareas deliberadas y con mas contexto.",
+      probe_detail: "Configuracion Azure lista",
+    },
+  ],
+  heartbeat: {
+    enabled: true,
+    interval_seconds: 900,
+    prompt: "Heartbeat del sistema.",
+    next_run_at: "",
+    last_run_at: "",
+    last_result: "",
+    workspace_root: "C:\\Users\\javie\\Desktop\\AzulWorkspace",
+    heartbeat_file: "C:\\Users\\javie\\Desktop\\AzulWorkspace\\HEARTBEAT.md",
+  },
+  jobs_total: 1,
+  jobs_running: 0,
+  processes_visible: processItems.length,
+};
+
+export const scheduledJobs: ScheduledJob[] = [
+  {
+    id: "job-demo",
+    name: "Resumen operativo",
+    prompt: "Revisa el workspace y resume bloqueos activos.",
+    lane: "slow",
+    schedule_kind: "every",
+    run_at: "",
+    interval_seconds: 3600,
+    enabled: true,
+    created_at: "",
+    updated_at: "",
+    last_run_at: "",
+    next_run_at: "",
+  },
+];

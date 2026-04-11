@@ -1,6 +1,6 @@
 ﻿# AzulClaw: Documentacion del Diseño Cognitivo Completo
 
-**Fecha de ultima revision:** 23 de Febrero de 2026.
+**Fecha de ultima revision:** 11 de Abril de 2026.
 **Origen:** Deliberaciones de BlueClaw (`001_arquitectura_hibrida.md`, `002_filosofia_cognitiva.md`, `003_estructura_proyecto.md`).
 **Objetivo:** Documentar TODOS los conceptos cognitivos del diseño original que un desarrollador debe implementar.
 
@@ -39,6 +39,14 @@ Para evitar que el usuario espere en silencio mientras la nube piensa:
 7. **S2 (Action):** Ejecuta la lectura real
 
 **Implementacion en Microsoft Agent Framework:** Usar `Imiddleware de tool-calling` para interceptar llamadas a tools y alimentar al modelo local para que narre.
+
+### Estado implementado en desktop (Abril 2026)
+
+- La app desktop consume `POST /api/desktop/chat/stream` y recibe eventos NDJSON con este contrato: `start`, `commentary`, `progress`, `delta`, `done`, `error`.
+- El `triage` decide la ruta `fast` o `slow` antes de arrancar la respuesta visible.
+- Si la ruta es `slow`, el modelo `fast` genera la primera narracion visible y un blueprint resumido de fases. Despues, el modelo `slow` produce la respuesta final por streaming.
+- Si la ruta es `fast`, el modelo `fast` tambien genera la primera burbuja visible antes del streaming principal de la respuesta. El texto heuristico local queda solo como fallback si ese prompt visible falla o devuelve salida invalida.
+- La UI ya muestra una tarjeta de progreso resumido para la ruta `slow`, pero todavia no intercepta cada tool-call individual del agente. Hoy la narracion visible esta a nivel de fases y estado general.
 
 ---
 

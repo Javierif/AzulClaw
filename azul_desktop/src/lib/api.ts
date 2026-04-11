@@ -1,22 +1,29 @@
 import type {
   ChatExchange,
+  ChatStreamEvent,
+  ChatRuntimeMeta,
   HatchingProfile,
   MemoryRecord,
   ProcessSummary,
+  RuntimeOverview,
+  ScheduledJob,
   WorkspaceEntry,
 } from "./contracts";
 import {
   chatMessages,
+  defaultChatRuntime,
   defaultHatchingProfile,
   memoryItems,
   processItems,
+  runtimeOverview,
+  scheduledJobs,
   workspaceEntries,
 } from "./mock-data";
 
-const DEFAULT_API_BASE = "http://localhost:3978";
+const DEFAULT_API_BASE = import.meta.env.DEV ? "" : "http://localhost:3978";
 
 function getApiBase() {
-  return (import.meta.env.VITE_AZUL_API_BASE || DEFAULT_API_BASE).replace(/\/$/, "");
+  return (import.meta.env.VITE_AZUL_API_BASE ?? DEFAULT_API_BASE).replace(/\/$/, "");
 }
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -30,9 +37,9 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
 export async function sendDesktopMessage(
   message: string,
   userId = "desktop-user",
-): Promise<{ reply: string; history: ChatExchange[] }> {
+): Promise<{ reply: string; history: ChatExchange[]; runtime: ChatRuntimeMeta }> {
   try {
-    const data = await fetchJson<{ reply: string; history: ChatExchange[] }>(
+    const data = await fetchJson<{ reply: string; history: ChatExchange[]; runtime: ChatRuntimeMeta }>(
       "/api/desktop/chat",
       {
         method: "POST",
@@ -46,14 +53,99 @@ export async function sendDesktopMessage(
       reply:
         "No he podido contactar con el backend real. Mantengo el shell visual activo con datos de fallback.",
       history: chatMessages,
+      runtime: defaultChatRuntime,
     };
+  }
+}
+
+export async function sendDesktopMessageStream(
+  message: string,
+  onEvent: (event: ChatStreamEvent) => void,
+  userId = "desktop-user",
+): Promise<{ reply: string; history: ChatExchange[]; runtime: ChatRuntimeMeta }> {
+  let receivedContent = false;
+  let finalReply = "";
+  let finalHistory = chatMessages;
+  let finalRuntime = defaultChatRuntime;
+
+  try {
+    const response = await fetch(`${getApiBase()}/api/desktop/chat/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, message }),
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) {
+          continue;
+        }
+        const event = JSON.parse(line) as ChatStreamEvent;
+        onEvent(event);
+        if (event.type === "commentary" || event.type === "progress" || event.type === "delta" || event.type === "done") {
+          receivedContent = true;
+        }
+        if (event.type === "done") {
+          finalReply = event.reply || "";
+          finalHistory = event.history || finalHistory;
+          finalRuntime = event.runtime || finalRuntime;
+        }
+        if (event.type === "error") {
+          throw new Error(event.message || "Streaming failed");
+        }
+      }
+    }
+
+    if (buffer.trim()) {
+      const event = JSON.parse(buffer.trim()) as ChatStreamEvent;
+      onEvent(event);
+      if (event.type === "commentary" || event.type === "progress" || event.type === "delta" || event.type === "done") {
+        receivedContent = true;
+      }
+      if (event.type === "done") {
+        finalReply = event.reply || "";
+        finalHistory = event.history || finalHistory;
+        finalRuntime = event.runtime || finalRuntime;
+      }
+      if (event.type === "error") {
+        throw new Error(event.message || "Streaming failed");
+      }
+    }
+
+    return { reply: finalReply, history: finalHistory, runtime: finalRuntime };
+  } catch {
+    if (receivedContent) {
+      return { reply: finalReply, history: finalHistory, runtime: finalRuntime };
+    }
+    return sendDesktopMessage(message, userId);
   }
 }
 
 export async function loadProcesses(): Promise<ProcessSummary[]> {
   try {
     const data = await fetchJson<{ items: ProcessSummary[] }>("/api/desktop/processes");
-    return data.items;
+    return data.items.map((item) => ({
+      ...item,
+      startedAt: (item as unknown as { started_at?: string }).started_at || item.startedAt,
+      updatedAt: (item as unknown as { updated_at?: string }).updated_at || item.updatedAt,
+      modelLabel: (item as unknown as { model_label?: string }).model_label || item.modelLabel,
+    }));
   } catch {
     return processItems;
   }
@@ -90,6 +182,14 @@ export async function loadHatching(): Promise<HatchingProfile> {
   try {
     return await fetchJson<HatchingProfile>("/api/desktop/hatching");
   } catch {
+    const local = localStorage.getItem("azul_mock_profile");
+    if (local) {
+      try {
+        return JSON.parse(local) as HatchingProfile;
+      } catch (e) {
+        /* ignore */
+      }
+    }
     return defaultHatchingProfile;
   }
 }
@@ -102,6 +202,69 @@ export async function saveHatching(profile: HatchingProfile): Promise<HatchingPr
       body: JSON.stringify(profile),
     });
   } catch {
+    localStorage.setItem("azul_mock_profile", JSON.stringify(profile));
     return profile;
   }
+}
+
+export async function loadRuntime(): Promise<RuntimeOverview> {
+  try {
+    return await fetchJson<RuntimeOverview>("/api/desktop/runtime");
+  } catch {
+    return runtimeOverview;
+  }
+}
+
+export async function saveRuntime(payload: {
+  heartbeat_enabled?: boolean;
+  heartbeat_interval_seconds?: number;
+  heartbeat_prompt?: string;
+  default_lane?: "auto" | "fast" | "slow";
+  models?: Array<{ id: string; streaming_enabled?: boolean; enabled?: boolean; deployment?: string }>;
+}): Promise<RuntimeOverview> {
+  try {
+    return await fetchJson<RuntimeOverview>("/api/desktop/runtime", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    return runtimeOverview;
+  }
+}
+
+export async function loadJobs(): Promise<ScheduledJob[]> {
+  try {
+    const data = await fetchJson<{ items: ScheduledJob[] }>("/api/desktop/jobs");
+    return data.items;
+  } catch {
+    return scheduledJobs;
+  }
+}
+
+export async function saveJob(payload: {
+  name: string;
+  prompt: string;
+  lane: "auto" | "fast" | "slow";
+  schedule_kind: "at" | "every";
+  interval_seconds?: number;
+  run_at?: string;
+}): Promise<ScheduledJob> {
+  return fetchJson<ScheduledJob>("/api/desktop/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function runJob(jobId: string): Promise<void> {
+  await fetchJson(`/api/desktop/jobs/${encodeURIComponent(jobId)}/run`, {
+    method: "POST",
+  });
+}
+
+export async function deleteJob(jobId: string): Promise<void> {
+  await fetchJson(`/api/desktop/jobs/${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
+  });
 }

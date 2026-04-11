@@ -1,6 +1,6 @@
 # AzulClaw: Arquitectura Desktop y Estructura del Repositorio
 
-**Fecha de ultima revision:** 10 de Abril de 2026.  
+**Fecha de ultima revision:** 11 de Abril de 2026.  
 **Objetivo:** Definir una estructura simple y clara del repositorio para facilitar onboarding, mantenimiento y evolucion del producto desktop de AzulClaw siguiendo KISS.
 
 ---
@@ -75,6 +75,41 @@ repo-root/
 ### Regla principal
 La UI no contiene la logica cognitiva critica.  
 La inteligencia y el control viven en el backend.
+
+### Flujo real del chat desktop
+
+```text
+[Usuario]
+   |
+   v
+[React / Tauri]
+   |
+   v
+POST /api/desktop/chat/stream
+   |
+   v
+[aiohttp + ConversationOrchestrator]
+   |
+   +--> commentary inicial del fast
+   +--> progress resumido (solo ruta slow)
+   +--> delta de la respuesta final
+   +--> done con runtime metadata
+```
+
+### Contrato de streaming actual
+
+- `start`: confirma apertura del stream.
+- `commentary`: primera burbuja visible y mensajes ligeros de narracion.
+- `progress`: estado resumido de fases para la ruta `slow`.
+- `delta`: tokens o fragmentos de la respuesta final.
+- `done`: cierre del turno con `reply`, `history` y metadata de runtime.
+- `error`: error serializado sin romper el contrato del frontend.
+
+### Notas operativas de desarrollo
+
+- En desarrollo web, `Vite` proxifica `/api` hacia `http://localhost:3978`, evitando depender de CORS para el flujo normal de UI.
+- El backend mantiene CORS explicito para `OPTIONS` y para `StreamResponse` usando `on_response_prepare`, porque el streaming no hereda bien las cabeceras si se aplican demasiado tarde.
+- El frontend cae a `POST /api/desktop/chat` solo como fallback si el stream no puede abrirse o se corta antes de devolver contenido util.
 
 ---
 

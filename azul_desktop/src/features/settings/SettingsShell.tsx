@@ -18,7 +18,7 @@ export function SettingsShell() {
           <section className="subcard">
             <p className="eyebrow">Models</p>
             <h3>Local + Cloud</h3>
-            <p>Configurar proveedores y estrategia de fallback.</p>
+            <p>La configuracion activa de modelos y fallback vive ahora en Runtime.</p>
           </section>
           <section className="subcard">
             <p className="eyebrow">Security</p>

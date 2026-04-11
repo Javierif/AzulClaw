@@ -11,7 +11,10 @@ from .hatching_store import HatchingProfile, HatchingStore
 
 def get_workspace_root() -> Path:
     """Devuelve la raiz del workspace sandbox de AzulClaw."""
-    return Path.home() / "Desktop" / "AzulWorkspace"
+    profile = HatchingStore().load()
+    workspace_root = Path(profile.workspace_root)
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    return workspace_root
 
 
 def build_workspace_validator() -> PathValidator:
@@ -54,34 +57,25 @@ def list_workspace_entries(relative_path: str = ".") -> dict:
     }
 
 
-def summarize_processes() -> list[dict]:
-    """Devuelve procesos base para la desktop app mientras no exista event bus real."""
-    return [
-        {
-            "id": "workspace-scan",
-            "title": "Exploracion del sandbox",
-            "status": "running",
-            "skill": "Workspace",
-            "started_at": "now",
-            "detail": "Inspeccionando contenido reciente dentro de AzulWorkspace.",
-        },
-        {
-            "id": "memory-sync",
-            "title": "Sincronizacion de memoria local",
-            "status": "done",
-            "skill": "Memory",
-            "started_at": "recent",
-            "detail": "Persistencia de historial y recuerdos recientes completada.",
-        },
-        {
-            "id": "approval-gate",
-            "title": "Aprobaciones sensibles",
-            "status": "waiting",
-            "skill": "Security",
-            "started_at": "idle",
-            "detail": "Esperando confirmacion del usuario para acciones de mayor riesgo.",
-        },
-    ]
+def summarize_processes(process_registry) -> list[dict]:
+    """Devuelve procesos reales del runtime para la desktop app."""
+    items = []
+    for item in process_registry.list_processes():
+        items.append(
+            {
+                "id": item["id"],
+                "title": item["title"],
+                "status": item["status"],
+                "skill": item["source"],
+                "kind": item["kind"],
+                "lane": item["lane"],
+                "started_at": item["started_at"],
+                "updated_at": item["updated_at"],
+                "model_label": item.get("model_label", ""),
+                "detail": item["detail"],
+            }
+        )
+    return items
 
 
 def summarize_memory(orchestrator, user_id: str) -> list[dict]:
@@ -112,6 +106,43 @@ def summarize_memory(orchestrator, user_id: str) -> list[dict]:
         )
 
     return records
+
+
+def summarize_runtime(runtime_manager, scheduler, process_registry) -> dict:
+    """Devuelve estado agregado de modelos, scheduler y heartbeats."""
+    settings = runtime_manager.load_settings()
+    scheduler_status = scheduler.get_status()
+    return {
+        "default_lane": settings.default_lane,
+        "models": runtime_manager.list_model_status(),
+        "heartbeat": scheduler_status["heartbeat"],
+        "jobs_total": scheduler_status["jobs_total"],
+        "jobs_running": scheduler_status["jobs_running"],
+        "processes_visible": len(process_registry.list_processes()),
+    }
+
+
+def summarize_jobs(store) -> list[dict]:
+    """Lista jobs programados para la desktop app."""
+    items = []
+    for job in store.load_jobs():
+        items.append(
+            {
+                "id": job.id,
+                "name": job.name,
+                "prompt": job.prompt,
+                "lane": job.lane,
+                "schedule_kind": job.schedule_kind,
+                "run_at": job.run_at,
+                "interval_seconds": job.interval_seconds,
+                "enabled": job.enabled,
+                "created_at": job.created_at,
+                "updated_at": job.updated_at,
+                "last_run_at": job.last_run_at,
+                "next_run_at": job.next_run_at,
+            }
+        )
+    return items
 
 
 def load_hatching_profile() -> dict:

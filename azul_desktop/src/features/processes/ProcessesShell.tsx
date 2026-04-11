@@ -5,6 +5,7 @@ import { processItems } from "../../lib/mock-data";
 
 export function ProcessesShell() {
   const [items, setItems] = useState(processItems);
+  const selected = items[0];
 
   useEffect(() => {
     let isMounted = true;
@@ -41,7 +42,7 @@ export function ProcessesShell() {
               <article key={item.id} className="list-row">
                 <div>
                   <strong>{item.title}</strong>
-                  <p>{item.skill}</p>
+                  <p>{item.skill} · {item.kind}</p>
                 </div>
                 <div className="list-row-meta">
                   <span className={`status-tag status-${item.status}`}>{item.status}</span>
@@ -53,16 +54,17 @@ export function ProcessesShell() {
 
           <div className="subcard">
             <p className="eyebrow">Detalle</p>
-            <h3>Revisar documentos de Projects</h3>
-            <p>Estado: running</p>
-            <p>Skill: Workspace</p>
-            <p>Ultimo paso: lectura de archivos y preparacion de resumen.</p>
+            <h3>{selected?.title || "Sin procesos"}</h3>
+            <p>Estado: {selected?.status || "idle"}</p>
+            <p>Origen: {selected?.skill || "runtime"}</p>
+            <p>Cerebro: {selected?.lane || "auto"} {selected?.modelLabel ? `· ${selected.modelLabel}` : ""}</p>
+            <p>Detalle: {selected?.detail || "Esperando nuevas ejecuciones."}</p>
             <div className="action-row">
               <button type="button" className="ghost-button">
-                Pause
+                Refresh
               </button>
               <button type="button" className="primary-button">
-                Approve
+                Runtime
               </button>
             </div>
           </div>

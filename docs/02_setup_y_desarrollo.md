@@ -1,6 +1,6 @@
 ﻿# AzulClaw: Guía de Configuración y Desarrollo Local
 
-**Fecha de última revisión:** 6 de Abril de 2026.
+**Fecha de ultima revision:** 11 de Abril de 2026.
 **Objetivo:** Permitir a un nuevo desarrollador levantar el entorno de desarrollo de AzulClaw desde cero en Windows.
 
 ---
@@ -98,14 +98,41 @@ Esto hace dos cosas simultáneamente:
 1. **Levanta el Servidor HTTP** en el puerto 3978 (escuchando mensajes de Azure Bot Service).
 2. **Arranca el proceso hijo AzulHands** (MCP Server) para dar acceso seguro al disco.
 
-### 4.2 Probar con Bot Framework Emulator
+### 4.2 Arrancar la UI desktop en modo web
+
+En otra terminal, desde `azul_desktop/`:
+
+```powershell
+npm install
+npm run dev
+```
+
+Notas importantes:
+- La UI de desarrollo vive en `http://localhost:1420`.
+- `Vite` proxifica todas las rutas `/api` al backend local `http://localhost:3978`.
+- El flujo de chat principal usa `POST /api/desktop/chat/stream` y espera NDJSON incremental.
+
+### 4.3 Arrancar la app desktop nativa (Tauri)
+
+Tambien puedes abrir la shell desktop real:
+
+```powershell
+cd azul_desktop
+npm run tauri:dev
+```
+
+Notas importantes:
+- Tauri sigue hablando con el backend Python local en `:3978`.
+- El backend ya inyecta CORS tambien en respuestas de streaming (`StreamResponse`) y en `OPTIONS`, util cuando la UI no entra por el proxy de Vite.
+
+### 4.4 Probar con Bot Framework Emulator
 
 1. Abrir **Bot Framework Emulator**.
 2. Crear una nueva conexión con la URL: `http://localhost:3978/api/messages`.
 3. Dejar en blanco `Microsoft App ID` y `Microsoft App Password` (modo local).
 4. Enviar un mensaje de texto. Deberías recibir una respuesta generada por el agente; si faltan credenciales `AZURE_OPENAI_*`, el bot devolverá un mensaje de error controlado.
 
-### 4.3 Probar el Servidor MCP de forma independiente
+### 4.5 Probar el Servidor MCP de forma independiente
 
 Si necesitas depurar las "Manos" sin el Cerebro:
 
@@ -140,6 +167,8 @@ Actualmente el proyecto funciona en modo local sin credenciales. Para conectar c
 | Comando | Descripción |
 |---|---|
 | `.\.venv\Scripts\python.exe -m azul_backend.azul_brain.main_launcher` | Levantar el bot completo |
+| `cd azul_desktop && npm run dev` | Levantar la UI desktop web en `:1420` |
+| `cd azul_desktop && npm run tauri:dev` | Levantar la app desktop nativa |
 | `.\.venv\Scripts\python.exe azul_backend\azul_brain\mcp_client.py` | Test aislado del MCP |
 | `pip freeze > requirements.txt` | Exportar dependencias actuales |
 | `pyinstaller --onefile azul_backend\azul_brain\main_launcher.py` | Compilar a `.exe` (Fase 5) |

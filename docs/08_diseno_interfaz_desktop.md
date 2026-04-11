@@ -1,6 +1,6 @@
 # AzulClaw: Diseno de Interfaz Desktop y Wireframes
 
-**Fecha de ultima revision:** 7 de Abril de 2026.  
+**Fecha de ultima revision:** 11 de Abril de 2026.  
 **Objetivo:** Consolidar la vision de producto para la aplicacion de escritorio de AzulClaw, definir sus wireframes principales y dejar fijada la idea de un escritorio-sandbox propio para el agente.
 
 ---
@@ -302,6 +302,14 @@ Activar una skill debe sentirse como "darle una nueva capacidad" al agente.
 
 **Principio clave:**
 El usuario nunca debe perder visibilidad de lo que AzulClaw esta haciendo.
+
+### Comportamiento conversacional implementado (Abril 2026)
+
+- La primera burbuja visible del chat la redacta el cerebro `fast` tanto si la ruta final es `fast` como si es `slow`.
+- Si la ruta es `slow`, la UI muestra una tarjeta de progreso con fases resumidas, badge de lane y resumen de estado mientras llega la respuesta final.
+- La respuesta final entra en streaming incremental y se renderiza aparte de la burbuja inicial de commentary.
+- El boton de enviar ya no muestra `"..."`; usa un estado de loading persistente mas claro para indicar envio en curso.
+- El panel lateral de contexto expone metadata de runtime: lane elegida, motivo de triage, modelo y `process_id`.
 
 ---
 

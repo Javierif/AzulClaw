@@ -28,8 +28,8 @@ class AzulBot(ActivityHandler):
             )
             return
 
-        reply_text = await self.orchestrator.process_user_message(user_id, user_message)
-        await turn_context.send_activity(MessageFactory.text(reply_text, reply_text))
+        reply = await self.orchestrator.process_user_message(user_id, user_message)
+        await turn_context.send_activity(MessageFactory.text(reply.text, reply.text))
 
     async def on_members_added_activity(
         self, members_added: list[ChannelAccount], turn_context: TurnContext

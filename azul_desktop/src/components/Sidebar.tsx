@@ -8,6 +8,7 @@ const navItems: { label: string; view: AppView }[] = [
   { label: "Hatching", view: "hatching" },
   { label: "Skills", view: "skills" },
   { label: "Processes", view: "processes" },
+  { label: "Runtime", view: "runtime" },
   { label: "Memory", view: "memory" },
   { label: "Workspace", view: "workspace" },
   { label: "Settings", view: "settings" },

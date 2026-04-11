@@ -3,6 +3,7 @@ export type AppView =
   | "hatching"
   | "skills"
   | "processes"
+  | "runtime"
   | "memory"
   | "workspace"
   | "settings";
@@ -18,7 +19,12 @@ export interface ProcessSummary {
   title: string;
   status: "running" | "waiting" | "done" | "failed";
   skill: string;
+  kind: string;
+  lane: string;
   startedAt: string;
+  updatedAt?: string;
+  detail?: string;
+  modelLabel?: string;
 }
 
 export interface MemoryRecord {
@@ -35,6 +41,45 @@ export interface ChatExchange {
   content: string;
 }
 
+export interface ThinkingStep {
+  id: string;
+  label: string;
+  status: "pending" | "active" | "done";
+}
+
+export interface ThinkingPhase {
+  id: string;
+  label: string;
+  status: "pending" | "active" | "done";
+  steps: ThinkingStep[];
+}
+
+export interface ThinkingProgress {
+  title: string;
+  summary: string;
+  badge: string;
+  active_count: number;
+  phases: ThinkingPhase[];
+}
+
+export interface ChatRuntimeMeta {
+  lane: string;
+  model_id: string;
+  model_label: string;
+  process_id: string;
+  triage_reason?: string;
+}
+
+export interface ChatStreamEvent {
+  type: "start" | "commentary" | "progress" | "delta" | "done" | "error";
+  text?: string;
+  reply?: string;
+  history?: ChatExchange[];
+  runtime?: ChatRuntimeMeta;
+  message?: string;
+  progress?: ThinkingProgress;
+}
+
 export interface HatchingProfile {
   name: string;
   role: string;
@@ -49,4 +94,54 @@ export interface HatchingProfile {
   completed_at: string;
   skills: string[];
   skill_configs: Record<string, Record<string, string>>;
+}
+
+export interface RuntimeModelStatus {
+  id: string;
+  label: string;
+  lane: "fast" | "slow";
+  provider: "azure" | "openai";
+  deployment: string;
+  enabled: boolean;
+  streaming_enabled: boolean;
+  available: boolean;
+  cooldown_until: string;
+  last_error: string;
+  description: string;
+  probe_detail: string;
+}
+
+export interface RuntimeHeartbeatStatus {
+  enabled: boolean;
+  interval_seconds: number;
+  prompt: string;
+  next_run_at: string;
+  last_run_at: string;
+  last_result: string;
+  workspace_root: string;
+  heartbeat_file: string;
+}
+
+export interface RuntimeOverview {
+  default_lane: "auto" | "fast" | "slow";
+  models: RuntimeModelStatus[];
+  heartbeat: RuntimeHeartbeatStatus;
+  jobs_total: number;
+  jobs_running: number;
+  processes_visible: number;
+}
+
+export interface ScheduledJob {
+  id: string;
+  name: string;
+  prompt: string;
+  lane: "auto" | "fast" | "slow";
+  schedule_kind: "at" | "every";
+  run_at: string;
+  interval_seconds: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  last_run_at: string;
+  next_run_at: string;
 }
