@@ -1,4 +1,4 @@
-"""ActivityHandler principal de AzulClaw."""
+"""Main AzulClaw ActivityHandler."""
 
 from botbuilder.core import ActivityHandler, MessageFactory, TurnContext
 from botbuilder.schema import ChannelAccount
@@ -7,14 +7,14 @@ from ..conversation import ConversationOrchestrator
 
 
 class AzulBot(ActivityHandler):
-    """Controlador del bot que delega la logica cognitiva al orquestador."""
+    """Bot controller that delegates cognitive logic to the orchestrator."""
 
     def __init__(self, orchestrator: ConversationOrchestrator):
-        """Inicializa el bot con un orquestador reutilizable."""
+        """Initialises the bot with a reusable orchestrator."""
         self.orchestrator = orchestrator
 
     async def on_message_activity(self, turn_context: TurnContext):
-        """Gestiona un mensaje entrante y produce una respuesta del agente."""
+        """Handles an incoming message and produces an agent response."""
         user_message = (turn_context.activity.text or "").strip()
         user_id = (
             turn_context.activity.from_property.id
@@ -24,7 +24,7 @@ class AzulBot(ActivityHandler):
 
         if not user_message:
             await turn_context.send_activity(
-                MessageFactory.text("No recibi texto en el mensaje.")
+                MessageFactory.text("No text received in the message.")
             )
             return
 
@@ -34,12 +34,12 @@ class AzulBot(ActivityHandler):
     async def on_members_added_activity(
         self, members_added: list[ChannelAccount], turn_context: TurnContext
     ):
-        """Envia mensaje de bienvenida a nuevos miembros de la conversacion."""
+        """Sends a welcome message to new conversation members."""
         for member in members_added:
             if member.id != turn_context.activity.recipient.id:
                 welcome_msg = (
-                    "Hola. Soy AzulClaw. Mi cerebro esta conectado a Azure y "
-                    "mis manos al workspace seguro local."
+                    "Hi. I'm AzulClaw. My brain is connected to Azure and "
+                    "my hands to your secure local workspace."
                 )
                 await turn_context.send_activity(
                     MessageFactory.text(welcome_msg, welcome_msg)

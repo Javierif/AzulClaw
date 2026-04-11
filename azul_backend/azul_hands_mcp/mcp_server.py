@@ -1,4 +1,4 @@
-"""Servidor MCP de AzulHands con herramientas de filesystem en workspace seguro."""
+"""AzulHands MCP server with secure workspace filesystem tools."""
 
 import asyncio
 import os
@@ -18,19 +18,19 @@ if __package__ in (None, ""):
 else:
     from .path_validator import PathValidator, SecurityError
 
-# Servidor MCP registrado para canal STDIO.
+# MCP server registered on the STDIO channel.
 app = Server("azul-hands-mcp")
 
-# Workspace seguro (jaula) para operaciones de archivos.
+# Secure workspace (sandbox) for file operations.
 USER_HOME = os.path.expanduser("~")
 WORKSPACE_DIR = os.path.join(USER_HOME, "Desktop", "AzulWorkspace")
 
-# Validador de rutas para bloqueo de path traversal.
+# Path validator for blocking path traversal attempts.
 validator = PathValidator(WORKSPACE_DIR)
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
-    """Router principal que ejecuta herramientas seguras por nombre."""
+    """Main router that executes safe tools by name."""
     if name == "list_workspace_files":
         relative_path = arguments.get("path", "")
         try:
@@ -39,14 +39,14 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 return [
                     types.TextContent(
                         type="text",
-                        text=f"Error: El directorio {relative_path} no existe o no es una carpeta.",
+                        text=f"Error: directory {relative_path} does not exist or is not a folder.",
                     )
                 ]
 
             files = os.listdir(safe_dir)
             return [
                 types.TextContent(
-                    type="text", text=f"Archivos en {safe_dir}:\n" + "\n".join(files)
+                    type="text", text=f"Files in {safe_dir}:\n" + "\n".join(files)
                 )
             ]
         except SecurityError as error:
@@ -59,7 +59,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             if not safe_file.exists() or not safe_file.is_file():
                 return [
                     types.TextContent(
-                        type="text", text=f"Error: El archivo {file_path} no existe."
+                        type="text", text=f"Error: file {file_path} does not exist."
                     )
                 ]
 
@@ -80,7 +80,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 return [
                     types.TextContent(
                         type="text",
-                        text=f"Error: El archivo de origen {source_path} no existe.",
+                        text=f"Error: source file {source_path} does not exist.",
                     )
                 ]
 
@@ -89,8 +89,8 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 types.TextContent(
                     type="text",
                     text=(
-                        f"✅ Archivo movido con éxito de {safe_source.name} "
-                        f"a {safe_dest.parent.name}."
+                        f"✅ File successfully moved from {safe_source.name} "
+                        f"to {safe_dest.parent.name}."
                     ),
                 )
             ]
@@ -98,7 +98,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             return [
                 types.TextContent(
                     type="text",
-                    text=f"🛑 PATH DENIED (Operación Destructiva Abortada): {error}",
+                    text=f"🛑 PATH DENIED (Destructive Operation Aborted): {error}",
                 )
             ]
 
@@ -106,17 +106,17 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
 @app.list_tools()
 async def list_tools() -> list[types.Tool]:
-    """Publica metadata de herramientas disponibles para el agente."""
+    """Publishes metadata of available tools for the agent."""
     return [
         types.Tool(
             name="list_workspace_files",
-            description="Lista los archivos dentro de la carpeta segura (Workspace) del usuario.",
+            description="Lists files inside the user's secure workspace folder.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Ruta relativa dentro del workspace a listar.",
+                        "description": "Relative path within the workspace to list.",
                     }
                 },
                 "required": [],
@@ -124,28 +124,28 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="read_safe_file",
-            description="Lee un archivo para analizar su contenido (solo dentro del Workspace).",
+            description="Reads a file to analyze its contents (only within the Workspace).",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Ruta del archivo a leer."}
+                    "path": {"type": "string", "description": "Path of the file to read."}
                 },
                 "required": ["path"],
             },
         ),
         types.Tool(
             name="move_safe_file",
-            description="Mueve o renombra archivos dentro del Workspace local (organización de escritorio).",
+            description="Moves or renames files within the local Workspace (desktop organisation).",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "source": {
                         "type": "string",
-                        "description": "Ruta del documento a mover.",
+                        "description": "Path of the file to move.",
                     },
                     "destination": {
                         "type": "string",
-                        "description": "Ruta a donde debe ser movido.",
+                        "description": "Destination path to move the file to.",
                     },
                 },
                 "required": ["source", "destination"],
@@ -154,8 +154,8 @@ async def list_tools() -> list[types.Tool]:
     ]
 
 async def main():
-    """Arranca el servidor MCP por STDIO para comunicación con AzulBrain."""
-    print(f"[Info] AzulHands MCP Server Iniciado mediante STDIO (Locked en: {WORKSPACE_DIR})")
+    """Starts the MCP server over STDIO for communication with AzulBrain."""
+    print(f"[Info] AzulHands MCP Server started via STDIO (locked to: {WORKSPACE_DIR})")
     async with stdio_server() as (read_stream, write_stream):
         await app.run(read_stream, write_stream, app.create_initialization_options())
 

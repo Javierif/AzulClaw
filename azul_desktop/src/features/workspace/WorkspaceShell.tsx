@@ -28,7 +28,7 @@ export function WorkspaceShell() {
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Workspace</p>
-            <h2>Sandbox operativo de AzulClaw</h2>
+            <h2>AzulClaw operative sandbox</h2>
           </div>
           <div className="action-row">
             <button type="button" className="ghost-button">
@@ -41,9 +41,9 @@ export function WorkspaceShell() {
         </div>
 
         <div className="workspace-banner">
-          <strong>Ruta activa</strong>
+          <strong>Active path</strong>
           <code>{workspaceRoot}</code>
-          <span>AzulClaw solo puede leer y escribir dentro de esta jaula.</span>
+          <span>AzulClaw can only read and write within this sandbox.</span>
         </div>
 
         <div className="list-detail-grid">
@@ -65,8 +65,8 @@ export function WorkspaceShell() {
             <p className="eyebrow">Preview</p>
             <h3>/Generated/weekly-summary.md</h3>
             <p>
-              Resumen semanal preparado por AzulClaw a partir de notas movidas
-              desde Inbox y Projects.
+              Weekly summary prepared by AzulClaw from notes moved from Inbox
+              and Projects.
             </p>
           </div>
         </div>

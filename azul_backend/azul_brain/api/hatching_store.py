@@ -1,4 +1,4 @@
-"""Persistencia local del estado de Hatching."""
+"""Local persistence for the Hatching state."""
 
 from __future__ import annotations
 
@@ -10,14 +10,14 @@ from datetime import datetime
 
 @dataclass
 class HatchingProfile:
-    """Configuracion base del agente definida en Hatching."""
+    """Base agent configuration defined during Hatching."""
 
     name: str = "AzulClaw"
-    role: str = "Companero tecnico local"
-    mission: str = "Ayudarte sin perder seguridad ni contexto."
-    tone: str = "Directo"
-    style: str = "Explicativo"
-    autonomy: str = "Autonomo moderado"
+    role: str = "Local technical companion"
+    mission: str = "Help you without losing safety or context."
+    tone: str = "Direct"
+    style: str = "Explanatory"
+    autonomy: str = "Moderately autonomous"
     archetype: str = "Companion"
     workspace_root: str = field(
         default_factory=lambda: str(Path.home() / "Desktop" / "AzulWorkspace")
@@ -36,14 +36,14 @@ def _default_profile_path() -> Path:
 
 
 class HatchingStore:
-    """Lee y escribe el perfil de Hatching en disco local."""
+    """Reads and writes the Hatching profile to local disk."""
 
     def __init__(self, profile_path: Path | None = None):
         self.profile_path = profile_path or _default_profile_path()
         self.profile_path.parent.mkdir(parents=True, exist_ok=True)
 
     def load(self) -> HatchingProfile:
-        """Carga el perfil o devuelve uno por defecto si no existe."""
+        """Loads the profile or returns a default one if it does not exist."""
         if not self.profile_path.exists():
             return HatchingProfile()
 
@@ -51,7 +51,7 @@ class HatchingStore:
         return HatchingProfile(**data)
 
     def save(self, profile: HatchingProfile) -> HatchingProfile:
-        """Persiste el perfil y devuelve la version almacenada."""
+        """Persists the profile and returns the stored version."""
         if profile.is_hatched and not profile.completed_at:
             profile.completed_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
         self.profile_path.write_text(

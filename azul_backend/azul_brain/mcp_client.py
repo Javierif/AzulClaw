@@ -1,4 +1,4 @@
-"""Cliente MCP para conectar AzulBrain con AzulHands mediante STDIO."""
+"""MCP client for connecting AzulBrain to AzulHands via STDIO."""
 
 import contextlib
 import logging
@@ -13,18 +13,18 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _format_tool_names(tools: list[Any]) -> str:
-    """Devuelve un listado legible con los nombres de tools MCP publicados."""
+    """Returns a readable list of published MCP tool names."""
     names = [getattr(tool, "name", str(tool)) for tool in tools]
-    return ", ".join(names) if names else "sin tools"
+    return ", ".join(names) if names else "no tools"
 
 class AzulHandsClient:
     """
-    Cliente MCP que abre un proceso hijo de AzulHands y expone operaciones remotas
-    de herramientas de filesystem seguro.
+    MCP client that spawns an AzulHands child process and exposes remote
+    secure filesystem tool operations.
     """
 
     def __init__(self, server_script_path: str):
-        """Configura parámetros de arranque del servidor MCP hijo."""
+        """Configures startup parameters for the MCP child server."""
         self.server_parameters = StdioServerParameters(
             command=sys.executable,
             args=[server_script_path],
@@ -36,8 +36,8 @@ class AzulHandsClient:
         self.write_stream = None
 
     async def connect(self):
-        """Inicia transporte STDIO, crea sesión MCP y ejecuta initialize()."""
-        LOGGER.info("Conectando el Cerebro con AzulHands (MCP Server)...")
+        """Starts the STDIO transport, creates an MCP session, and runs initialize()."""
+        LOGGER.info("Connecting AzulBrain to AzulHands (MCP Server)...")
         try:
             stdio_transport = await self._exit_stack.enter_async_context(
                 stdio_client(self.server_parameters)
@@ -48,37 +48,37 @@ class AzulHandsClient:
             )
             await self.session.initialize()
             LOGGER.info(
-                "Conexión MCP establecida. AzulClaw ahora tiene acceso a herramientas."
+                "MCP connection established. AzulClaw now has access to tools."
             )
         except Exception as error:
-            LOGGER.error("Error al conectar con AzulHands: %s", error)
+            LOGGER.error("Error connecting to AzulHands: %s", error)
             raise
 
     async def list_available_tools(self) -> list[Any]:
-        """Recupera el catálogo de herramientas que publica el servidor MCP."""
+        """Retrieves the tool catalogue published by the MCP server."""
         if not self.session:
-            raise RuntimeError("No hay sesión MCP activa.")
+            raise RuntimeError("No active MCP session.")
 
         response = await self.session.list_tools()
         return response.tools
 
     async def call_tool(self, tool_name: str, arguments: dict) -> Any:
-        """Invoca una herramienta MCP remota con argumentos serializables."""
+        """Invokes a remote MCP tool with serialisable arguments."""
         if not self.session:
-            raise RuntimeError("No hay sesión MCP activa.")
+            raise RuntimeError("No active MCP session.")
 
-        LOGGER.info("Ejecutando tool MCP '%s' con argumentos %s", tool_name, arguments)
+        LOGGER.info("Executing MCP tool '%s' with arguments %s", tool_name, arguments)
         result = await self.session.call_tool(tool_name, arguments)
         return result
 
     async def cleanup(self):
-        """Cierra sesión y recursos de transporte del proceso MCP hijo."""
-        LOGGER.info("Cerrando conexión MCP y deteniendo AzulHands...")
+        """Closes the session and transport resources of the MCP child process."""
+        LOGGER.info("Closing MCP connection and stopping AzulHands...")
         await self._exit_stack.aclose()
 
 
 async def _run_smoke_test() -> None:
-    """Ejecuta una comprobación mínima del servidor MCP local."""
+    """Runs a minimal smoke test against the local MCP server."""
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
     server_script_path = Path(__file__).resolve().parents[1] / "azul_hands_mcp" / "mcp_server.py"
