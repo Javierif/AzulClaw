@@ -209,7 +209,7 @@ class ConversationOrchestrator:
     async def generate_fast_visible_plan(self, user_message: str, *, reason: str) -> tuple[str, dict]:
         """Asks the fast brain for the first visible narration and a summarised plan."""
         prompt_messages = [
-            Message(role=item["role"], text=item["text"])
+            Message(role=item["role"], contents=item["text"])
             for item in prompt_for_fast_visible_plan(user_message, reason=reason)
         ]
         try:
@@ -255,7 +255,7 @@ class ConversationOrchestrator:
     ) -> str:
         """Asks the fast brain for the first visible bubble for any route."""
         prompt_messages = [
-            Message(role=item["role"], text=item["text"])
+            Message(role=item["role"], contents=item["text"])
             for item in prompt_for_fast_visible_commentary(user_message, reason=reason, lane=lane)
         ]
         try:
@@ -302,7 +302,7 @@ class ConversationOrchestrator:
                 continue
             content = str(item.get("content", "")).strip()
             if content:
-                messages.append(Message(role=role, text=content))
+                messages.append(Message(role=role, contents=content))
 
         if semantic_memories:
             memory_lines: list[str] = []
@@ -318,11 +318,11 @@ class ConversationOrchestrator:
                 messages.append(
                     Message(
                         role="assistant",
-                        text="Retrieved context for this conversation:\n" + "\n".join(memory_lines),
+                        contents="Retrieved context for this conversation:\n" + "\n".join(memory_lines),
                     )
                 )
 
-        messages.append(Message(role="user", text=user_message))
+        messages.append(Message(role="user", contents=user_message))
         return messages
 
     def resolve_route(self, user_message: str, requested_lane: str = "auto") -> TriageDecision:
