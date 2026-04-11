@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import adultMascot from "../../../img/azulclaw.png";
 import babyMascot from "../../../img/hatching_azulclaw.png";
@@ -16,7 +16,45 @@ import { loadHatching } from "../lib/api";
 import type { AppView, HatchingProfile } from "../lib/contracts";
 import { defaultHatchingProfile } from "../lib/mock-data";
 
-function renderView(view: AppView, profile: HatchingProfile, setProfile: (p: HatchingProfile) => void) {
+const THINKING_SENTENCES = [
+  "Connecting the dots...",
+  "Pulling the threads together.",
+  "Reading between the lines.",
+  "On it. Give me a moment.",
+  "Thinking this through carefully.",
+  "Running the cognitive layer.",
+  "Parsing your request.",
+  "Consulting the knowledge base.",
+  "Firing up the slow brain.",
+  "Cross-referencing context.",
+  "Let me think about that.",
+  "Assembling a response.",
+  "Checking what I know.",
+  "Working through it step by step.",
+  "Almost there, stay with me.",
+];
+
+const TYPING_SENTENCES = [
+  "Oh, you're typing... interesting.",
+  "I see those fingers moving.",
+  "Go on, I'm listening.",
+  "Hmm, what's on your mind?",
+  "Drafting something? I'm ready.",
+  "I'm all ears.",
+  "Take your time.",
+  "Whenever you're ready.",
+  "Something's coming my way...",
+  "I can feel a question forming.",
+];
+
+function renderView(
+  view: AppView,
+  profile: HatchingProfile,
+  setProfile: (p: HatchingProfile) => void,
+  onThinkingChange: (thinking: boolean) => void,
+  onTypingChange: (typing: boolean) => void,
+  onAnswerStart: () => void,
+) {
   switch (view) {
     case "hatching":
       return <HatchingShell profile={profile} onProfileSaved={setProfile} />;
@@ -34,7 +72,7 @@ function renderView(view: AppView, profile: HatchingProfile, setProfile: (p: Hat
       return <SettingsShell />;
     case "chat":
     default:
-      return <ChatShell />;
+      return <ChatShell onThinkingChange={onThinkingChange} onTypingChange={onTypingChange} onAnswerStart={onAnswerStart} />;
   }
 }
 
@@ -42,6 +80,46 @@ export function DesktopApp() {
   const [activeView, setActiveView] = useState<AppView>("chat");
   const [profile, setProfile] = useState<HatchingProfile>(defaultHatchingProfile);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [topbarLabel, setTopbarLabel] = useState<{ text: string; mode: "thinking" | "typing" } | null>(null);
+  const thinkingIntervalRef = useRef<number | null>(null);
+  const sentenceIndexRef = useRef(0);
+  const isThinkingRef = useRef(false);
+
+  const onThinkingChange = useCallback((thinking: boolean) => {
+    isThinkingRef.current = thinking;
+    if (thinking) {
+      sentenceIndexRef.current = Math.floor(Math.random() * THINKING_SENTENCES.length);
+      setTopbarLabel({ text: THINKING_SENTENCES[sentenceIndexRef.current], mode: "thinking" });
+      thinkingIntervalRef.current = window.setInterval(() => {
+        sentenceIndexRef.current = (sentenceIndexRef.current + 1) % THINKING_SENTENCES.length;
+        setTopbarLabel({ text: THINKING_SENTENCES[sentenceIndexRef.current], mode: "thinking" });
+      }, 2800);
+    } else {
+      if (thinkingIntervalRef.current !== null) {
+        window.clearInterval(thinkingIntervalRef.current);
+        thinkingIntervalRef.current = null;
+      }
+      setTopbarLabel(null); // clears both thinking and any lingering typing sentence
+    }
+  }, []);
+
+  const onAnswerStart = useCallback(() => {
+    if (thinkingIntervalRef.current !== null) {
+      window.clearInterval(thinkingIntervalRef.current);
+      thinkingIntervalRef.current = null;
+    }
+    setTopbarLabel(null);
+  }, []);
+
+  const onTypingChange = useCallback((typing: boolean) => {
+    if (isThinkingRef.current) return;
+    if (typing) {
+      const idx = Math.floor(Math.random() * TYPING_SENTENCES.length);
+      setTopbarLabel({ text: TYPING_SENTENCES[idx], mode: "typing" });
+    } else {
+      setTopbarLabel(null);
+    }
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -101,7 +179,9 @@ export function DesktopApp() {
             <img className="topbar-mascot" src={adultMascot} alt={profile.name} />
             <div>
               <p className="eyebrow">AzulClaw Desktop</p>
-              <h1>{profile.name}, your living workspace</h1>
+              <h1 className={topbarLabel ? `topbar-label topbar-label-${topbarLabel.mode}` : "topbar-label topbar-label-empty"}>
+                {topbarLabel?.text ?? ""}
+              </h1>
             </div>
           </div>
           <div className="status-cluster">
@@ -110,7 +190,7 @@ export function DesktopApp() {
             <span className="status-pill">Local + Cloud</span>
           </div>
         </header>
-        {renderView(activeView, profile, setProfile)}
+        {renderView(activeView, profile, setProfile, onThinkingChange, onTypingChange, onAnswerStart)}
       </main>
     </div>
   );
