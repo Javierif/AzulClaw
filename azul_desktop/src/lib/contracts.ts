@@ -88,7 +88,6 @@ export interface HatchingProfile {
   tone: string;
   style: string;
   autonomy: string;
-  archetype: string;
   workspace_root: string;
   confirm_sensitive_actions: boolean;
   is_hatched: boolean;
@@ -112,22 +111,9 @@ export interface RuntimeModelStatus {
   probe_detail: string;
 }
 
-export interface RuntimeHeartbeatStatus {
-  enabled: boolean;
-  interval_seconds: number;
-  prompt: string;
-  next_run_at: string;
-  last_run_at: string;
-  last_result: string;
-  last_error: string;
-  workspace_root: string;
-  heartbeat_file: string;
-}
-
 export interface RuntimeOverview {
   default_lane: "auto" | "fast" | "slow";
   models: RuntimeModelStatus[];
-  heartbeat: RuntimeHeartbeatStatus;
   scheduler_running: boolean;
   scheduler_last_error: string;
   jobs_total: number;
@@ -144,6 +130,8 @@ export interface ScheduledJob {
   run_at: string;
   interval_seconds: number;
   enabled: boolean;
+  system: boolean;
+  source: string;
   created_at: string;
   updated_at: string;
   last_run_at: string;

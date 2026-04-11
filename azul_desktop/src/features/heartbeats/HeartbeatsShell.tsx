@@ -4,10 +4,8 @@ import {
   deleteJob,
   loadJobs,
   loadRuntime,
-  runHeartbeat,
   runJob,
   saveJob,
-  saveRuntime,
 } from "../../lib/api";
 import type { RuntimeOverview, ScheduledJob } from "../../lib/contracts";
 import { runtimeOverview, scheduledJobs } from "../../lib/mock-data";
@@ -18,8 +16,8 @@ const INTERVAL_PRESETS = [
   { label: "5 min", seconds: 300 },
   { label: "15 min", seconds: 900 },
   { label: "30 min", seconds: 1800 },
-  { label: "1 hora", seconds: 3600 },
-  { label: "2 horas", seconds: 7200 },
+  { label: "1 hour", seconds: 3600 },
+  { label: "2 hours", seconds: 7200 },
 ] as const;
 
 function humanInterval(seconds: number): string {
@@ -40,66 +38,36 @@ function timeAgo(iso: string): string {
     const diff = Date.now() - d.getTime();
     if (diff < 0) {
       const abs = Math.abs(diff);
-      if (abs < 60_000) return `en ${Math.round(abs / 1000)}s`;
-      if (abs < 3_600_000) return `en ${Math.round(abs / 60_000)} min`;
-      return `en ${(abs / 3_600_000).toFixed(1)}h`;
+      if (abs < 60_000) return `in ${Math.round(abs / 1000)}s`;
+      if (abs < 3_600_000) return `in ${Math.round(abs / 60_000)} min`;
+      return `in ${(abs / 3_600_000).toFixed(1)}h`;
     }
-    if (diff < 60_000) return `hace ${Math.round(diff / 1000)}s`;
-    if (diff < 3_600_000) return `hace ${Math.round(diff / 60_000)} min`;
-    return `hace ${(diff / 3_600_000).toFixed(1)}h`;
+    if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`;
+    if (diff < 3_600_000) return `${Math.round(diff / 60_000)} min ago`;
+    return `${(diff / 3_600_000).toFixed(1)}h ago`;
   } catch {
     return iso;
   }
 }
 
-function resultClass(result: string): string {
-  if (!result) return "hb-metric-idle";
-  const upper = result.toUpperCase();
-  if (upper.includes("ERROR")) return "hb-metric-error";
-  if (upper.includes("SKIP")) return "hb-metric-skip";
-  if (upper.includes("OK") || upper === "HEARTBEAT_OK") return "hb-metric-ok";
-  return "hb-metric-ok";
-}
-
-function progressPercent(runtime: RuntimeOverview): number {
-  const { last_run_at, next_run_at } = runtime.heartbeat;
-  if (!last_run_at || !next_run_at) return 0;
-  try {
-    const start = new Date(last_run_at).getTime();
-    const end = new Date(next_run_at).getTime();
-    const now = Date.now();
-    const total = end - start;
-    if (total <= 0) return 100;
-    const elapsed = now - start;
-    return Math.min(100, Math.max(0, (elapsed / total) * 100));
-  } catch {
-    return 0;
-  }
-}
-
 /* ── Types ─────────────────────────────────────── */
 
-const laneOptions = ["auto", "fast", "slow"] as const;
-type Lane = (typeof laneOptions)[number];
 type JobDraft = {
   name: string;
   prompt: string;
-  lane: Lane;
   intervalSeconds: string;
 };
 
-const emptyDraft: JobDraft = { name: "", prompt: "", lane: "fast", intervalSeconds: "3600" };
+const emptyDraft: JobDraft = { name: "", prompt: "", intervalSeconds: "3600" };
 
 /* ── Component ─────────────────────────────────── */
 
 export function HeartbeatsShell() {
   const [runtime, setRuntime] = useState<RuntimeOverview>(runtimeOverview);
   const [jobs, setJobs] = useState<ScheduledJob[]>(scheduledJobs);
-  const [isSaving, setIsSaving] = useState(false);
-  const [isRunningHeartbeat, setIsRunningHeartbeat] = useState(false);
-  const [promptOpen, setPromptOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<JobDraft>(emptyDraft);
+  const [editingSystemPrompt, setEditingSystemPrompt] = useState(false);
 
   /* Polling */
   useEffect(() => {
@@ -120,29 +88,31 @@ export function HeartbeatsShell() {
     };
   }, []);
 
+  /* Derived data */
+  const systemJob = jobs.find((j) => j.system);
+  const userJobs = jobs.filter((j) => !j.system);
+
   /* Actions */
-  async function handleSave() {
-    setIsSaving(true);
-    try {
-      const next = await saveRuntime({
-        heartbeat_enabled: runtime.heartbeat.enabled,
-        heartbeat_interval_seconds: runtime.heartbeat.interval_seconds,
-        heartbeat_prompt: runtime.heartbeat.prompt,
-      });
-      setRuntime(next);
-    } finally {
-      setIsSaving(false);
-    }
+  async function handleToggleJob(job: ScheduledJob) {
+    const saved = await saveJob({
+      ...job,
+      enabled: !job.enabled,
+    } as Parameters<typeof saveJob>[0] & { id: string; enabled: boolean });
+    setJobs((cur) => cur.map((j) => (j.id === saved.id ? saved : j)));
   }
 
-  async function handleRunHeartbeat() {
-    setIsRunningHeartbeat(true);
-    try {
-      const next = await runHeartbeat();
-      setRuntime(next);
-    } finally {
-      setIsRunningHeartbeat(false);
-    }
+  async function handleUpdateSystemJob(patch: Partial<ScheduledJob>) {
+    if (!systemJob) return;
+    const saved = await saveJob({
+      id: systemJob.id,
+      name: systemJob.name,
+      prompt: patch.prompt ?? systemJob.prompt,
+      lane: "auto",
+      schedule_kind: systemJob.schedule_kind,
+      interval_seconds: patch.interval_seconds ?? systemJob.interval_seconds,
+      enabled: patch.enabled ?? systemJob.enabled,
+    });
+    setJobs((cur) => cur.map((j) => (j.id === saved.id ? saved : j)));
   }
 
   async function handleCreateJob() {
@@ -150,7 +120,7 @@ export function HeartbeatsShell() {
     const saved = await saveJob({
       name: form.name.trim(),
       prompt: form.prompt.trim(),
-      lane: form.lane,
+      lane: "auto",
       schedule_kind: "every",
       interval_seconds: Number(form.intervalSeconds) || 3600,
     });
@@ -159,7 +129,9 @@ export function HeartbeatsShell() {
     setModalOpen(false);
   }
 
-  const isPreset = INTERVAL_PRESETS.some((p) => p.seconds === runtime.heartbeat.interval_seconds);
+  const systemIsPreset = systemJob
+    ? INTERVAL_PRESETS.some((p) => p.seconds === systemJob.interval_seconds)
+    : false;
 
   return (
     <section className="single-panel-layout">
@@ -167,104 +139,96 @@ export function HeartbeatsShell() {
         {/* ── Header ─────────────────────────────── */}
         <div className="panel-heading">
           <div>
-            <p className="eyebrow">Heartbeats</p>
-            <h2>Pulso del workspace</h2>
+            <p className="eyebrow">Automations</p>
+            <h2>Heartbeats</h2>
+            <p style={{ color: "var(--muted)", fontSize: "0.88rem", marginTop: 4, maxWidth: 520 }}>
+              Heartbeats are recurring tasks that keep the agent alive. Each one runs on a schedule, checks the workspace, and acts on what it finds.
+            </p>
           </div>
           <div className="filter-row">
             <span className={`status-pill${runtime.scheduler_running ? " status-pill-live" : ""}`}>
-              {runtime.scheduler_running ? "Scheduler activo" : "Scheduler detenido"}
+              {runtime.scheduler_running ? "Scheduler running" : "Scheduler stopped"}
             </span>
-            <span className={`status-pill${runtime.heartbeat.enabled ? " status-pill-live" : ""}`}>
-              {runtime.heartbeat.enabled ? "Heartbeat activo" : "Heartbeat pausado"}
+            <span className="status-pill">
+              {runtime.jobs_total} {runtime.jobs_total === 1 ? "heartbeat" : "heartbeats"}
             </span>
           </div>
         </div>
 
-        {/* ── Top Grid: System Config + Status ──── */}
-        <div className="two-column-grid">
-          {/* System Heartbeat Config */}
-          <section className="subcard form-section">
-            <div>
-              <p className="eyebrow">Sistema</p>
-              <h3>Heartbeat del workspace</h3>
+        {/* ── System Heartbeat Job ────────────────── */}
+        {systemJob && (
+          <div className="subcard" style={{ borderLeft: "3px solid var(--brand)" }}>
+            <div className="hb-section-head">
+              <div>
+                <p className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span>🔒</span> System
+                </p>
+                <h3>{systemJob.name}</h3>
+              </div>
+              <div className="filter-row">
+                <span
+                  className={`status-pill${systemJob.enabled ? " status-pill-live" : ""}`}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => void handleUpdateSystemJob({ enabled: !systemJob.enabled })}
+                  title={systemJob.enabled ? "Click to pause" : "Click to enable"}
+                >
+                  {systemJob.enabled ? "Active" : "Paused"}
+                </span>
+              </div>
             </div>
 
-            <label className="toggle-row">
-              <input
-                type="checkbox"
-                checked={runtime.heartbeat.enabled}
-                onChange={(e) =>
-                  setRuntime((c) => ({
-                    ...c,
-                    heartbeat: { ...c.heartbeat, enabled: e.target.checked },
-                  }))
-                }
-              />
-              Activar heartbeat periódico
-            </label>
-
             {/* Interval chips */}
-            <div>
-              <span style={{ fontSize: "0.85rem", color: "var(--muted)" }}>Intervalo</span>
+            <div style={{ marginTop: 12 }}>
+              <span style={{ fontSize: "0.85rem", color: "var(--muted)" }}>Interval</span>
               <div className="hb-interval-row" style={{ marginTop: 8 }}>
                 {INTERVAL_PRESETS.map((p) => (
                   <button
                     key={p.seconds}
                     type="button"
-                    className={`hb-interval-chip${runtime.heartbeat.interval_seconds === p.seconds ? " hb-interval-chip-active" : ""}`}
-                    onClick={() =>
-                      setRuntime((c) => ({
-                        ...c,
-                        heartbeat: { ...c.heartbeat, interval_seconds: p.seconds },
-                      }))
-                    }
+                    className={`hb-interval-chip${systemJob.interval_seconds === p.seconds ? " hb-interval-chip-active" : ""}`}
+                    onClick={() => void handleUpdateSystemJob({ interval_seconds: p.seconds })}
                   >
                     {p.label}
                   </button>
                 ))}
                 <button
                   type="button"
-                  className={`hb-interval-chip${!isPreset ? " hb-interval-chip-active" : ""}`}
+                  className={`hb-interval-chip${!systemIsPreset ? " hb-interval-chip-active" : ""}`}
                   onClick={() => {
-                    const raw = prompt("Intervalo en segundos:", String(runtime.heartbeat.interval_seconds));
+                    const raw = prompt("Interval in seconds:", String(systemJob.interval_seconds));
                     if (raw) {
                       const val = Number(raw);
-                      if (val >= 60) {
-                        setRuntime((c) => ({
-                          ...c,
-                          heartbeat: { ...c.heartbeat, interval_seconds: val },
-                        }));
-                      }
+                      if (val >= 60) void handleUpdateSystemJob({ interval_seconds: val });
                     }
                   }}
                 >
-                  {isPreset ? "Personalizado" : humanInterval(runtime.heartbeat.interval_seconds)}
+                  {systemIsPreset ? "Custom" : humanInterval(systemJob.interval_seconds)}
                 </button>
               </div>
             </div>
 
-            {/* Prompt - Accordion */}
-            <div className={`hb-accordion${promptOpen ? " hb-accordion-open" : ""}`}>
+            {/* Prompt accordion */}
+            <div className={`hb-accordion${editingSystemPrompt ? " hb-accordion-open" : ""}`}>
               <button
                 type="button"
                 className="hb-accordion-trigger"
-                onClick={() => setPromptOpen((o) => !o)}
+                onClick={() => setEditingSystemPrompt((o) => !o)}
               >
-                <span>Editar prompt del heartbeat</span>
+                <span>Edit heartbeat prompt</span>
                 <span className="hb-accordion-chevron">▼</span>
               </button>
-              {promptOpen && (
+              {editingSystemPrompt && (
                 <div className="hb-accordion-body">
                   <textarea
                     className="form-field"
-                    rows={5}
-                    value={runtime.heartbeat.prompt}
-                    onChange={(e) =>
-                      setRuntime((c) => ({
-                        ...c,
-                        heartbeat: { ...c.heartbeat, prompt: e.target.value },
-                      }))
-                    }
+                    rows={4}
+                    defaultValue={systemJob.prompt}
+                    onBlur={(e) => {
+                      const newPrompt = e.target.value.trim();
+                      if (newPrompt && newPrompt !== systemJob.prompt) {
+                        void handleUpdateSystemJob({ prompt: newPrompt });
+                      }
+                    }}
                     style={{
                       width: "100%",
                       border: "1px solid var(--line)",
@@ -280,122 +244,67 @@ export function HeartbeatsShell() {
               )}
             </div>
 
-            <div className="action-row">
-              <button
-                type="button"
-                className="primary-button"
-                disabled={isSaving}
-                onClick={() => void handleSave()}
-              >
-                {isSaving ? "Guardando..." : "Guardar"}
-              </button>
+            {/* Status row */}
+            <div className="hb-metrics" style={{ marginTop: 12 }}>
+              <div className="hb-metric">
+                <p className="hb-metric-label">Next run</p>
+                <p className="hb-metric-value">
+                  {systemJob.next_run_at ? timeAgo(systemJob.next_run_at) : "pending"}
+                </p>
+              </div>
+              <div className="hb-metric">
+                <p className="hb-metric-label">Last run</p>
+                <p className="hb-metric-value">
+                  {systemJob.last_run_at ? timeAgo(systemJob.last_run_at) : "no runs yet"}
+                </p>
+              </div>
+
+            </div>
+
+            <div className="action-row" style={{ marginTop: 12 }}>
               <button
                 type="button"
                 className="ghost-button"
-                disabled={isRunningHeartbeat}
-                onClick={() => void handleRunHeartbeat()}
+                onClick={() => void runJob(systemJob.id)}
               >
-                {isRunningHeartbeat ? "Ejecutando..." : "▶ Ejecutar ahora"}
+                ▶ Run now
               </button>
             </div>
-          </section>
+          </div>
+        )}
 
-          {/* Status metrics */}
-          <section className="subcard">
-            <p className="eyebrow">Estado</p>
-            <h3>Scheduler</h3>
-
-            <div className="hb-metrics" style={{ marginTop: 12 }}>
-              <div className="hb-metric">
-                <p className="hb-metric-label">Próximo</p>
-                <p className="hb-metric-value">
-                  {runtime.heartbeat.next_run_at
-                    ? timeAgo(runtime.heartbeat.next_run_at)
-                    : "pendiente"}
-                </p>
-              </div>
-              <div className="hb-metric">
-                <p className="hb-metric-label">Última ejecución</p>
-                <p className="hb-metric-value">
-                  {runtime.heartbeat.last_run_at
-                    ? timeAgo(runtime.heartbeat.last_run_at)
-                    : "sin ejecuciones"}
-                </p>
-              </div>
-              <div className="hb-metric">
-                <p className="hb-metric-label">Resultado</p>
-                <p className={`hb-metric-value ${resultClass(runtime.heartbeat.last_result)}`}>
-                  {runtime.heartbeat.last_result || "—"}
-                </p>
-              </div>
-            </div>
-
-            {/* Progress bar */}
-            {runtime.heartbeat.enabled && runtime.heartbeat.next_run_at && (
-              <div className="hb-progress-track">
-                <div
-                  className="hb-progress-fill"
-                  style={{ width: `${progressPercent(runtime)}%` }}
-                />
-              </div>
-            )}
-
-            {/* Details pills */}
-            <div className="hb-details-row">
-              <span className="hb-detail-chip" title={runtime.heartbeat.workspace_root}>
-                📁 {runtime.heartbeat.workspace_root}
-              </span>
-              <span className="hb-detail-chip" title={runtime.heartbeat.heartbeat_file}>
-                📄 HEARTBEAT.md
-              </span>
-            </div>
-
-            {/* Errors */}
-            {runtime.heartbeat.last_error && (
-              <div className="hb-error-alert">
-                <strong>Error heartbeat:</strong> {runtime.heartbeat.last_error}
-              </div>
-            )}
-            {runtime.scheduler_last_error && (
-              <div className="hb-error-alert">
-                <strong>Error scheduler:</strong> {runtime.scheduler_last_error}
-              </div>
-            )}
-          </section>
-        </div>
-
-        {/* ── Jobs Section ──────────────────────── */}
+        {/* ── Custom Heartbeats ──────────────────── */}
         <div className="subcard">
           <div className="hb-section-head">
             <div>
-              <p className="eyebrow">Programados</p>
-              <h3>Jobs del usuario</h3>
+              <p className="eyebrow">Custom</p>
+              <h3>Your heartbeats</h3>
             </div>
             <button
               type="button"
               className="primary-button"
               onClick={() => setModalOpen(true)}
             >
-              + Nuevo job
+              + New heartbeat
             </button>
           </div>
 
-          {jobs.length === 0 ? (
+          {userJobs.length === 0 ? (
             <div className="hb-empty">
               <p style={{ fontSize: "1.5rem", marginBottom: 4 }}>📋</p>
-              <p>No hay jobs programados todavía</p>
+              <p>No custom heartbeats yet</p>
               <button
                 type="button"
                 className="ghost-button"
                 style={{ marginTop: 12 }}
                 onClick={() => setModalOpen(true)}
               >
-                Crear el primero
+                Create your first
               </button>
             </div>
           ) : (
             <div className="hb-job-list">
-              {jobs.map((job) => (
+              {userJobs.map((job) => (
                 <article key={job.id} className="hb-job-card">
                   <div>
                     <p className="hb-job-name">{job.name}</p>
@@ -403,27 +312,40 @@ export function HeartbeatsShell() {
                     <div className="hb-job-tags">
                       <span className="hb-job-tag">
                         {job.schedule_kind === "every"
-                          ? `cada ${humanInterval(job.interval_seconds)}`
-                          : `en ${job.run_at || "pendiente"}`}
+                          ? `every ${humanInterval(job.interval_seconds)}`
+                          : `at ${job.run_at || "pending"}`}
                       </span>
-                      <span className="hb-job-tag">{job.lane}</span>
+
                       <span
-                        className={`hb-job-tag`}
+                        className="hb-job-tag"
                         style={
                           job.enabled
                             ? { color: "#10b981", borderColor: "rgba(16,185,129,0.25)" }
                             : { color: "#fbbf24", borderColor: "rgba(251,191,36,0.25)" }
                         }
                       >
-                        {job.enabled ? "activo" : "pausado"}
+                        {job.enabled ? "enabled" : "paused"}
                       </span>
+                      {job.last_run_at && (
+                        <span className="hb-job-tag" title={job.last_run_at}>
+                          last: {timeAgo(job.last_run_at)}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="hb-job-actions">
                     <button
                       type="button"
                       className="hb-icon-btn"
-                      title="Ejecutar ahora"
+                      title={job.enabled ? "Pause" : "Enable"}
+                      onClick={() => void handleToggleJob(job)}
+                    >
+                      {job.enabled ? "⏸" : "▶"}
+                    </button>
+                    <button
+                      type="button"
+                      className="hb-icon-btn"
+                      title="Run now"
                       onClick={() => void runJob(job.id)}
                     >
                       ▶
@@ -431,7 +353,7 @@ export function HeartbeatsShell() {
                     <button
                       type="button"
                       className="hb-icon-btn hb-icon-btn-danger"
-                      title="Eliminar"
+                      title="Delete"
                       onClick={() =>
                         void deleteJob(job.id).then(() =>
                           setJobs((cur) => cur.filter((j) => j.id !== job.id)),
@@ -448,14 +370,14 @@ export function HeartbeatsShell() {
         </div>
       </div>
 
-      {/* ── Create Job Modal ───────────────────── */}
+      {/* ── Create Heartbeat Modal ─────────────── */}
       {modalOpen && (
         <div className="hb-modal-overlay" onClick={() => setModalOpen(false)}>
           <div className="hb-modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="hb-modal-header">
               <div>
-                <p className="eyebrow">Nuevo</p>
-                <h3>Crear job programado</h3>
+                <p className="eyebrow">New</p>
+                <h3>Create heartbeat</h3>
               </div>
               <button
                 type="button"
@@ -467,10 +389,10 @@ export function HeartbeatsShell() {
             </div>
 
             <label className="form-field">
-              <span>Nombre</span>
+              <span>Name</span>
               <input
                 value={form.name}
-                placeholder="Ej: Resumen operativo"
+                placeholder="e.g. Weekly summary"
                 onChange={(e) => setForm((c) => ({ ...c, name: e.target.value }))}
               />
             </label>
@@ -480,28 +402,16 @@ export function HeartbeatsShell() {
               <textarea
                 rows={4}
                 value={form.prompt}
-                placeholder="Qué quieres que haga el agente en cada ejecución..."
+                placeholder="What should the agent do on each run..."
                 onChange={(e) => setForm((c) => ({ ...c, prompt: e.target.value }))}
               />
             </label>
 
-            <label className="form-field">
-              <span>Cerebro</span>
-              <select
-                value={form.lane}
-                onChange={(e) => setForm((c) => ({ ...c, lane: e.target.value as Lane }))}
-              >
-                {laneOptions.map((lane) => (
-                  <option key={lane} value={lane}>
-                    {lane === "auto" ? "Auto" : lane === "fast" ? "Rápido" : "Lento"}
-                  </option>
-                ))}
-              </select>
-            </label>
+
 
             <div>
               <span style={{ fontSize: "0.85rem", color: "var(--muted)", display: "block", marginBottom: 8 }}>
-                Intervalo
+                Interval
               </span>
               <div className="hb-interval-row">
                 {INTERVAL_PRESETS.map((p) => (
@@ -523,7 +433,7 @@ export function HeartbeatsShell() {
                 className="ghost-button"
                 onClick={() => setModalOpen(false)}
               >
-                Cancelar
+                Cancel
               </button>
               <button
                 type="button"
@@ -531,7 +441,7 @@ export function HeartbeatsShell() {
                 disabled={!form.name.trim() || !form.prompt.trim()}
                 onClick={() => void handleCreateJob()}
               >
-                Crear job
+                Create heartbeat
               </button>
             </div>
           </div>

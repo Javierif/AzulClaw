@@ -1,4 +1,4 @@
-"""Persistencia local para runtime, modelos y jobs programados."""
+"""Local persistence for runtime, models, and scheduled jobs."""
 
 from __future__ import annotations
 
@@ -12,19 +12,19 @@ from typing import Any, Literal
 
 
 def utc_now() -> datetime:
-    """Devuelve la hora actual en UTC."""
+    """Returns the current UTC time."""
     return datetime.now(timezone.utc)
 
 
 def to_iso_z(value: datetime | None) -> str:
-    """Serializa un datetime a ISO-8601 UTC con sufijo Z."""
+    """Serialises a datetime to ISO-8601 UTC with a Z suffix."""
     if value is None:
         return ""
     return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def parse_iso_datetime(raw_value: str | None) -> datetime | None:
-    """Parsea datetimes ISO-8601 aceptando sufijo Z."""
+    """Parses ISO-8601 datetimes accepting a Z suffix."""
     text = (raw_value or "").strip()
     if not text:
         return None
@@ -58,7 +58,7 @@ def _default_process_history_path() -> Path:
 
 @dataclass
 class RuntimeModelProfile:
-    """Perfil ejecutable de modelo para Agent Framework."""
+    """Executable model profile for Agent Framework."""
 
     id: str
     label: str
@@ -70,23 +70,25 @@ class RuntimeModelProfile:
     description: str = ""
 
 
+SYSTEM_HEARTBEAT_JOB_ID = "system-heartbeat"
+SYSTEM_HEARTBEAT_DEFAULT_PROMPT = (
+    "System heartbeat. Read HEARTBEAT.md if it exists. "
+    "Follow it strictly. If nothing needs attention, respond exactly HEARTBEAT_OK."
+)
+SYSTEM_HEARTBEAT_DEFAULT_INTERVAL = 900
+
+
 @dataclass
 class RuntimeSettings:
-    """Configuracion editable del runtime local."""
+    """Editable local runtime configuration."""
 
     default_lane: Literal["auto", "fast", "slow"] = "auto"
-    heartbeat_enabled: bool = True
-    heartbeat_interval_seconds: int = 900
-    heartbeat_prompt: str = (
-        "Heartbeat del sistema. Lee la checklist operativa y actua solo sobre lo indicado. "
-        "Si no hay nada accionable, responde exactamente HEARTBEAT_OK."
-    )
     models: list[RuntimeModelProfile] = field(default_factory=list)
 
 
 @dataclass
 class ScheduledJob:
-    """Trabajo programado persistido en disco."""
+    """Scheduled job persisted to disk."""
 
     id: str
     name: str
@@ -96,6 +98,8 @@ class ScheduledJob:
     run_at: str = ""
     interval_seconds: int = 0
     enabled: bool = True
+    system: bool = False
+    source: str = "user"
     created_at: str = field(default_factory=lambda: to_iso_z(utc_now()))
     updated_at: str = field(default_factory=lambda: to_iso_z(utc_now()))
     last_run_at: str = ""
@@ -104,7 +108,7 @@ class ScheduledJob:
 
 @dataclass
 class ProcessHistoryEntry:
-    """Representacion persistida de una ejecucion reciente."""
+    """Persisted representation of a recent execution."""
 
     id: str
     title: str
@@ -121,7 +125,7 @@ class ProcessHistoryEntry:
 
 
 class RuntimeStore:
-    """Lee y escribe configuracion y estado basico del runtime."""
+    """Reads and writes basic runtime configuration and state."""
 
     def __init__(
         self,
@@ -138,7 +142,7 @@ class RuntimeStore:
         self.process_history_path.parent.mkdir(parents=True, exist_ok=True)
 
     def default_settings(self) -> RuntimeSettings:
-        """Construye configuracion por defecto desde variables de entorno."""
+        """Builds default configuration from environment variables."""
         fast_profile = self._build_fast_profile()
         slow_deployment = (
             os.environ.get("AZURE_OPENAI_SLOW_DEPLOYMENT", "").strip()
@@ -150,39 +154,27 @@ class RuntimeStore:
             or os.environ.get("AZURE_OPENAI_FALLBACK_DEPLOYMENT", "").strip()
             or "gpt-4o-mini"
         )
-        heartbeat_interval = self._bounded_int(
-            os.environ.get("AZUL_HEARTBEAT_INTERVAL_SECONDS", "900"),
-            default=900,
-            min_value=60,
-            max_value=86_400,
-        )
         default_lane = os.environ.get("AZUL_DEFAULT_LANE", "auto").strip().lower()
         if default_lane not in {"auto", "fast", "slow"}:
             default_lane = "auto"
 
         return RuntimeSettings(
             default_lane=default_lane,
-            heartbeat_enabled=self._parse_bool(os.environ.get("AZUL_HEARTBEAT_ENABLED"), True),
-            heartbeat_interval_seconds=heartbeat_interval,
-            heartbeat_prompt=(
-                os.environ.get("AZUL_HEARTBEAT_PROMPT", "").strip()
-                or RuntimeSettings().heartbeat_prompt
-            ),
             models=[
                 fast_profile
                 if fast_profile.deployment
                 else RuntimeModelProfile(
                     id="fast",
-                    label="Cerebro rapido",
+                    label="Fast brain",
                     lane="fast",
                     provider="azure",
                     deployment=fast_deployment,
                     enabled=True,
-                    description="Turnos rapidos, heartbeats y tareas de baja latencia.",
+                    description="Fast turns, heartbeats, and low-latency tasks.",
                 ),
                 RuntimeModelProfile(
                     id="slow",
-                    label="Cerebro lento",
+                    label="Slow brain",
                     lane="slow",
                     provider="azure",
                     deployment=slow_deployment,
@@ -191,13 +183,13 @@ class RuntimeStore:
                         os.environ.get("AZUL_SLOW_STREAMING_ENABLED"),
                         False,
                     ),
-                    description="Turnos deliberados y tareas que requieren mas contexto.",
+                    description="Deliberate turns and tasks that require more context.",
                 ),
             ],
         )
 
     def load_settings(self) -> RuntimeSettings:
-        """Carga ajustes persistidos fusionandolos con defaults seguros."""
+        """Loads persisted settings merged with safe defaults."""
         defaults = self.default_settings()
         if not self.settings_path.exists():
             return defaults
@@ -247,50 +239,20 @@ class RuntimeStore:
 
         return RuntimeSettings(
             default_lane=default_lane,
-            heartbeat_enabled=bool(raw.get("heartbeat_enabled", defaults.heartbeat_enabled)),
-            heartbeat_interval_seconds=self._bounded_int(
-                raw.get("heartbeat_interval_seconds"),
-                default=defaults.heartbeat_interval_seconds,
-                min_value=60,
-                max_value=86_400,
-            ),
-            heartbeat_prompt=(
-                str(raw.get("heartbeat_prompt", defaults.heartbeat_prompt)).strip()
-                or defaults.heartbeat_prompt
-            ),
             models=list(models_by_id.values()),
         )
 
     def save_settings(self, payload: dict[str, Any]) -> RuntimeSettings:
-        """Valida y persiste ajustes editables del runtime."""
+        """Validates and persists editable runtime settings."""
         current = self.load_settings()
         merged = RuntimeSettings(
             default_lane=current.default_lane,
-            heartbeat_enabled=current.heartbeat_enabled,
-            heartbeat_interval_seconds=current.heartbeat_interval_seconds,
-            heartbeat_prompt=current.heartbeat_prompt,
             models=current.models,
         )
 
         raw_lane = str(payload.get("default_lane", merged.default_lane)).strip().lower()
         if raw_lane in {"auto", "fast", "slow"}:
             merged.default_lane = raw_lane
-
-        if "heartbeat_enabled" in payload:
-            merged.heartbeat_enabled = bool(payload.get("heartbeat_enabled"))
-
-        if "heartbeat_interval_seconds" in payload:
-            merged.heartbeat_interval_seconds = self._bounded_int(
-                payload.get("heartbeat_interval_seconds"),
-                default=merged.heartbeat_interval_seconds,
-                min_value=60,
-                max_value=86_400,
-            )
-
-        if "heartbeat_prompt" in payload:
-            prompt = str(payload.get("heartbeat_prompt", "")).strip()
-            if prompt:
-                merged.heartbeat_prompt = prompt
 
         model_updates = payload.get("models", [])
         if isinstance(model_updates, list):
@@ -329,7 +291,7 @@ class RuntimeStore:
         return merged
 
     def load_jobs(self) -> list[ScheduledJob]:
-        """Carga jobs persistidos de cron local."""
+        """Loads persisted jobs from the local cron store."""
         if not self.jobs_path.exists():
             return []
 
@@ -373,6 +335,8 @@ class RuntimeStore:
                         max_value=31_536_000,
                     ),
                     enabled=bool(item.get("enabled", True)),
+                    system=bool(item.get("system", False)),
+                    source=str(item.get("source", "user")).strip() or "user",
                     created_at=str(item.get("created_at", "")).strip() or to_iso_z(utc_now()),
                     updated_at=str(item.get("updated_at", "")).strip() or to_iso_z(utc_now()),
                     last_run_at=str(item.get("last_run_at", "")).strip(),
@@ -382,7 +346,7 @@ class RuntimeStore:
         return jobs
 
     def save_jobs(self, jobs: list[ScheduledJob]) -> list[ScheduledJob]:
-        """Persiste la lista completa de jobs."""
+        """Persists the full job list."""
         payload = [asdict(job) for job in jobs]
         self.jobs_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
@@ -391,7 +355,7 @@ class RuntimeStore:
         return jobs
 
     def upsert_job(self, payload: dict[str, Any]) -> ScheduledJob:
-        """Crea o actualiza un job programado."""
+        """Creates or updates a scheduled job."""
         jobs = self.load_jobs()
         by_id = {job.id: job for job in jobs}
 
@@ -453,14 +417,54 @@ class RuntimeStore:
         return job
 
     def delete_job(self, job_id: str) -> bool:
-        """Elimina un job por identificador."""
+        """Deletes a job by identifier. System jobs cannot be deleted."""
         safe_id = str(job_id).strip()
-        jobs = [job for job in self.load_jobs() if job.id != safe_id]
+        jobs = self.load_jobs()
+        target = next((j for j in jobs if j.id == safe_id), None)
+        if target and target.system:
+            raise ValueError("System jobs cannot be deleted")
+        jobs = [j for j in jobs if j.id != safe_id]
         self.save_jobs(jobs)
         return True
 
+    def ensure_system_heartbeat_job(self) -> ScheduledJob:
+        """Creates the system heartbeat job if it does not exist."""
+        jobs = self.load_jobs()
+        existing = next((j for j in jobs if j.id == SYSTEM_HEARTBEAT_JOB_ID), None)
+        if existing is not None:
+            return existing
+
+        heartbeat_interval = self._bounded_int(
+            os.environ.get("AZUL_HEARTBEAT_INTERVAL_SECONDS", "900"),
+            default=SYSTEM_HEARTBEAT_DEFAULT_INTERVAL,
+            min_value=60,
+            max_value=86_400,
+        )
+        heartbeat_prompt = (
+            os.environ.get("AZUL_HEARTBEAT_PROMPT", "").strip()
+            or SYSTEM_HEARTBEAT_DEFAULT_PROMPT
+        )
+        heartbeat_enabled = self._parse_bool(
+            os.environ.get("AZUL_HEARTBEAT_ENABLED"), True
+        )
+
+        job = ScheduledJob(
+            id=SYSTEM_HEARTBEAT_JOB_ID,
+            name="System heartbeat",
+            prompt=heartbeat_prompt,
+            lane="fast",
+            schedule_kind="every",
+            interval_seconds=heartbeat_interval,
+            enabled=heartbeat_enabled,
+            system=True,
+            source="system",
+        )
+        jobs.insert(0, job)
+        self.save_jobs(jobs)
+        return job
+
     def mark_job_run(self, job_id: str, run_time: datetime | None = None) -> ScheduledJob | None:
-        """Actualiza timestamps de ejecucion y siguiente disparo."""
+        """Updates execution and next-fire timestamps."""
         jobs = self.load_jobs()
         target_time = run_time or utc_now()
         updated: ScheduledJob | None = None
@@ -500,7 +504,7 @@ class RuntimeStore:
         return updated
 
     def load_process_history(self) -> list[ProcessHistoryEntry]:
-        """Carga ejecuciones recientes persistidas."""
+        """Loads persisted recent executions."""
         if not self.process_history_path.exists():
             return []
 
@@ -538,7 +542,7 @@ class RuntimeStore:
         return items
 
     def save_process_history(self, items: list[ProcessHistoryEntry]) -> list[ProcessHistoryEntry]:
-        """Persiste historial reciente de procesos."""
+        """Persists recent process history."""
         payload = [asdict(item) for item in items]
         self.process_history_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
@@ -563,7 +567,7 @@ class RuntimeStore:
         return to_iso_z(reference + timedelta(seconds=interval_seconds))
 
     def _build_fast_profile(self) -> RuntimeModelProfile:
-        """Resuelve el perfil rapido usando Ollama si existe o Azure mini si no."""
+        """Resolves the fast profile using Ollama if available, Azure mini otherwise."""
         if self._should_use_local_fast():
             model_id = (
                 os.environ.get("AZUL_FAST_OLLAMA_MODEL", "").strip()
@@ -572,7 +576,7 @@ class RuntimeStore:
             )
             return RuntimeModelProfile(
                 id="fast",
-                label="Cerebro rapido",
+                label="Fast brain",
                 lane="fast",
                 provider="openai",
                 deployment=model_id,
@@ -581,7 +585,7 @@ class RuntimeStore:
                     os.environ.get("AZUL_FAST_STREAMING_ENABLED"),
                     True,
                 ),
-                description="Ruta rapida local via Ollama usando API OpenAI-compatible.",
+                description="Fast local route via Ollama using the OpenAI-compatible API.",
             )
 
         deployment = (
@@ -591,7 +595,7 @@ class RuntimeStore:
         )
         return RuntimeModelProfile(
             id="fast",
-            label="Cerebro rapido",
+            label="Fast brain",
             lane="fast",
             provider="azure",
             deployment=deployment,
@@ -600,11 +604,11 @@ class RuntimeStore:
                 os.environ.get("AZUL_FAST_STREAMING_ENABLED"),
                 True,
             ),
-            description="Ruta rapida cloud usando un deployment mini de Azure OpenAI.",
+            description="Fast cloud route using an Azure OpenAI mini deployment.",
         )
 
     def _should_use_local_fast(self) -> bool:
-        """Decide si el perfil rapido debe intentar usar Ollama."""
+        """Decides whether the fast profile should attempt to use Ollama."""
         preference = os.environ.get("AZUL_FAST_PROVIDER", "auto").strip().lower()
         if preference == "azure":
             return False
@@ -622,9 +626,6 @@ class RuntimeStore:
     def _settings_to_dict(self, settings: RuntimeSettings) -> dict[str, Any]:
         return {
             "default_lane": settings.default_lane,
-            "heartbeat_enabled": settings.heartbeat_enabled,
-            "heartbeat_interval_seconds": settings.heartbeat_interval_seconds,
-            "heartbeat_prompt": settings.heartbeat_prompt,
             "models": [asdict(model) for model in settings.models],
         }
 

@@ -1,4 +1,4 @@
-"""Registro de ejecuciones activas y recientes del runtime."""
+"""Registry of active and recent runtime executions."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from .store import ProcessHistoryEntry, RuntimeStore, to_iso_z, utc_now
 
 @dataclass
 class RuntimeProcess:
-    """Proceso visible para la desktop app."""
+    """Process visible to the desktop app."""
 
     id: str
     title: str
@@ -28,7 +28,7 @@ class RuntimeProcess:
 
 
 class ProcessRegistry:
-    """Mantiene procesos activos y un historial corto persistido."""
+    """Maintains active processes and a short persisted history."""
 
     def __init__(self, store: RuntimeStore, max_history: int = 40):
         self.store = store
@@ -39,7 +39,7 @@ class ProcessRegistry:
         ]
 
     def start(self, *, title: str, kind: str, source: str, lane: str, detail: str) -> RuntimeProcess:
-        """Abre un proceso en estado running."""
+        """Opens a process in running state."""
         now = to_iso_z(utc_now())
         process = RuntimeProcess(
             id=f"run-{uuid4().hex[:12]}",
@@ -65,7 +65,7 @@ class ProcessRegistry:
         model_label: str | None = None,
         attempts: int | None = None,
     ) -> RuntimeProcess | None:
-        """Actualiza un proceso activo."""
+        """Updates an active process."""
         process = self.active.get(process_id)
         if process is None:
             return None
@@ -93,7 +93,7 @@ class ProcessRegistry:
         model_label: str = "",
         attempts: int = 0,
     ) -> RuntimeProcess | None:
-        """Cierra un proceso y lo mueve a historial persistido."""
+        """Closes a process and moves it to the persisted history."""
         process = self.active.pop(process_id, None)
         if process is None:
             return None
@@ -115,6 +115,6 @@ class ProcessRegistry:
         return process
 
     def list_processes(self) -> list[dict]:
-        """Devuelve procesos activos y recientes ordenados por actualidad."""
+        """Returns active and recent processes ordered by recency."""
         running = sorted(self.active.values(), key=lambda item: item.updated_at, reverse=True)
         return [asdict(item) for item in [*running, *self.history]]

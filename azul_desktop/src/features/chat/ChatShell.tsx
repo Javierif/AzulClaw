@@ -15,12 +15,12 @@ function toUiMessages(items: ChatExchange[]): ChatMessageItem[] {
 
 function phaseStatusLabel(status: "pending" | "active" | "done") {
   if (status === "done") {
-    return "Completado";
+    return "Done";
   }
   if (status === "active") {
-    return "En curso";
+    return "In progress";
   }
-  return "Pendiente";
+  return "Pending";
 }
 
 function ThinkingCard({ message }: { message: ChatMessageItem }) {
@@ -51,8 +51,8 @@ function ThinkingCard({ message }: { message: ChatMessageItem }) {
 
   const statusText =
     progress.active_count > 0
-      ? `${progress.active_count} subtareas abiertas`
-      : "proceso completado";
+      ? `${progress.active_count} open subtasks`
+      : "process complete";
 
   return (
     <article className="message-bubble message-assistant message-thinking">
@@ -72,7 +72,7 @@ function ThinkingCard({ message }: { message: ChatMessageItem }) {
             className="thinking-toggle"
             onClick={() => setExpanded((current) => !current)}
           >
-            {expanded ? "Ocultar" : "Expandir"}
+            {expanded ? "Hide" : "Expand"}
           </button>
         </div>
 
@@ -217,7 +217,7 @@ export function ChatShell() {
       {
         id: commentaryMessageId,
         role: "assistant",
-        content: "Activando la primera respuesta visible...",
+        content: "Activating the first visible response...",
         kind: "text",
       },
     ]);
@@ -310,7 +310,7 @@ export function ChatShell() {
             if (existing) {
               return current.map((item) =>
                 item.id === assistantMessageId
-                  ? { ...item, content: event.message || "No pude completar la respuesta." }
+                  ? { ...item, content: event.message || "Could not complete the response." }
                   : item,
               );
             }
@@ -319,7 +319,7 @@ export function ChatShell() {
               {
                 id: assistantMessageId,
                 role: "assistant",
-                content: event.message || "No pude completar la respuesta.",
+                content: event.message || "Could not complete the response.",
                 kind: "text",
               },
             ];
@@ -369,10 +369,10 @@ export function ChatShell() {
         <div className="chat-header">
           <div>
             <p className="eyebrow">Main Session</p>
-            <h2>Conversacion principal</h2>
+            <h2>Main conversation</h2>
           </div>
           <div className="action-row">
-            <span className="status-pill">Triage interno</span>
+            <span className="status-pill">Internal triage</span>
           </div>
         </div>
 
@@ -399,7 +399,7 @@ export function ChatShell() {
             <label className="composer-field">
               <span className="sr-only">Message AzulClaw</span>
               <textarea
-                placeholder="Escribe un mensaje... (Enter para enviar, Shift+Enter para nueva linea)"
+                placeholder="Type a message... (Enter to send, Shift+Enter for new line)"
                 rows={1}
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
@@ -408,13 +408,13 @@ export function ChatShell() {
             </label>
             <div className="composer-bottom">
               <div className="composer-actions">
-                <button type="button" className="ghost-button-mini" title="Adjuntar un archivo local" aria-label="Adjuntar archivo">
-                  Archivo
+                <button type="button" className="ghost-button-mini" title="Attach a local file" aria-label="Attach file">
+                  File
                 </button>
-                <button type="button" className="ghost-button-mini" title="Buscar en las preferencias del agente" aria-label="Anadir Memoria">
-                  Memoria
+                <button type="button" className="ghost-button-mini" title="Search agent preferences" aria-label="Add Memory">
+                  Memory
                 </button>
-                <button type="button" className="ghost-button-mini" title="Buscar un documento del Workspace" aria-label="Anadir del Workspace">
+                <button type="button" className="ghost-button-mini" title="Search a Workspace document" aria-label="Add from Workspace">
                   Workspace
                 </button>
               </div>
@@ -427,7 +427,7 @@ export function ChatShell() {
               >
                 {isSending ? (
                   <>
-                    <span className="composer-send-label">Enviando</span>
+                    <span className="composer-send-label">Sending</span>
                     <span className="composer-send-loader" aria-hidden="true">
                       <span className="composer-send-loader-dot" />
                       <span className="composer-send-loader-dot" />
@@ -435,13 +435,13 @@ export function ChatShell() {
                     </span>
                   </>
                 ) : (
-                  "Enviar"
+                  "Send"
                 )}
               </button>
             </div>
           </div>
           <div className="composer-footer">
-            <span className="hint-text">AzulClaw puede cometer errores. Considera verificar la informacion importante.</span>
+            <span className="hint-text">AzulClaw can make mistakes. Consider verifying important information.</span>
           </div>
         </div>
       </div>
@@ -449,17 +449,17 @@ export function ChatShell() {
       <aside className="context-panel card">
         <div>
           <p className="eyebrow">Live Context</p>
-          <h2>Actividad de sesion</h2>
+          <h2>Session activity</h2>
         </div>
 
         <section className="context-section">
-          <h3>Estado actual</h3>
+          <h3>Current status</h3>
           <ul className="context-list">
             {[
-              `Ruta elegida: ${runtime.lane || "sin dato"}`,
-              `Motivo de triage: ${runtime.triage_reason || "sin dato"}`,
-              `Ultimo modelo: ${runtime.model_label || "sin dato"}`,
-              `Proceso: ${runtime.process_id || "sin dato"}`,
+              `Active lane: ${runtime.lane || "—"}`,
+              `Triage reason: ${runtime.triage_reason || "—"}`,
+              `Last model: ${runtime.model_label || "—"}`,
+              `Process: ${runtime.process_id || "—"}`,
             ].map((item) => (
               <li key={item}>{item}</li>
             ))}
@@ -467,17 +467,17 @@ export function ChatShell() {
         </section>
 
         <section className="context-section">
-          <h3>Memoria reciente</h3>
+          <h3>Recent memory</h3>
           <p>
-            Preferencia fijada: respuestas directas, foco en pasos concretos y
-            visibilidad de procesos.
+            Preference set: direct answers, focus on concrete steps and process
+            visibility.
           </p>
         </section>
 
         <section className="context-section">
           <h3>Workspace</h3>
           <p>
-            Ruta activa: <code>Desktop\AzulWorkspace</code>
+            Active path: <code>Desktop\AzulWorkspace</code>
           </p>
         </section>
       </aside>

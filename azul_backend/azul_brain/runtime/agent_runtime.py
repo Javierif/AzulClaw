@@ -1,4 +1,4 @@
-"""Runtime de inferencia sobre Microsoft Agent Framework con fallback local."""
+"""Inference runtime on top of Microsoft Agent Framework with local fallback."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from .store import RuntimeModelProfile, RuntimeSettings, RuntimeStore, to_iso_z
 
 @dataclass
 class RuntimeTurnResult:
-    """Resultado de una ejecucion del runtime."""
+    """Result of a runtime execution."""
 
     text: str
     model: RuntimeModelProfile | None
@@ -31,7 +31,7 @@ class RuntimeTurnResult:
 
 
 class AgentRuntimeManager:
-    """Selecciona perfiles, aplica fallback y registra ejecuciones."""
+    """Selects profiles, applies fallback, and records executions."""
 
     def __init__(
         self,
@@ -49,15 +49,15 @@ class AgentRuntimeManager:
         self.probe_cache: dict[str, tuple[float, dict[str, str | bool]]] = {}
 
     def load_settings(self) -> RuntimeSettings:
-        """Carga la configuracion efectiva del runtime."""
+        """Loads the effective runtime configuration."""
         return self.store.load_settings()
 
     def save_settings(self, payload: dict[str, Any]) -> RuntimeSettings:
-        """Persiste configuracion del runtime."""
+        """Persists runtime configuration."""
         return self.store.save_settings(payload)
 
     def list_model_status(self) -> list[dict]:
-        """Expone el estado actual de cada perfil de modelo."""
+        """Exposes the current status of each model profile."""
         now = time.time()
         items: list[dict] = []
         for model in self.load_settings().models:
@@ -95,26 +95,26 @@ class AgentRuntimeManager:
         kind: str,
         on_delta: Callable[[str], Awaitable[None]],
     ) -> RuntimeTurnResult:
-        """Ejecuta una inferencia con streaming cuando el perfil lo permite."""
+        """Runs an inference with streaming when the profile supports it."""
         candidates = self._resolve_candidates(lane)
         process = self.process_registry.start(
             title=title,
             kind=kind,
             source=source,
             lane=lane,
-            detail="Preparando Agent Framework.",
+            detail="Preparing Agent Framework.",
         )
 
         attempts: list[dict[str, str]] = []
         if not candidates:
-            detail = "No hay perfiles de modelo habilitados."
+            detail = "No enabled model profiles found."
             self.process_registry.finish(process.id, status="failed", detail=detail)
             return RuntimeTurnResult(text=detail, model=None, attempts=attempts, process_id=process.id)
 
         for index, model in enumerate(candidates, start=1):
             self.process_registry.update(
                 process.id,
-                detail=f"Intentando {model.label} ({model.deployment}).",
+                detail=f"Trying {model.label} ({model.deployment}).",
                 model_id=model.id,
                 model_label=model.label,
                 attempts=index,
@@ -145,8 +145,8 @@ class AgentRuntimeManager:
                     process.id,
                     status="done",
                     detail=(
-                        f"Completado con {model.label}"
-                        f"{' en streaming' if model.streaming_enabled else ''}."
+                        f"Completed with {model.label}"
+                        f"{' in streaming' if model.streaming_enabled else ''}."
                     ),
                     model_id=model.id,
                     model_label=model.label,
@@ -160,11 +160,11 @@ class AgentRuntimeManager:
                 self.cooldowns[model.id] = time.time() + 30
                 self.process_registry.update(
                     process.id,
-                    detail=f"Fallo en {model.label}. Probando fallback.",
+                    detail=f"Failed on {model.label}. Trying fallback.",
                     attempts=index,
                 )
 
-        summary = "Todos los perfiles fallaron. " + " | ".join(
+        summary = "All profiles failed. " + " | ".join(
             f"{item['label']}: {item['error']}" for item in attempts
         )
         self.process_registry.finish(
@@ -184,26 +184,26 @@ class AgentRuntimeManager:
         source: str,
         kind: str,
     ) -> RuntimeTurnResult:
-        """Ejecuta una inferencia con fallback entre perfiles."""
+        """Runs an inference with fallback between profiles."""
         candidates = self._resolve_candidates(lane)
         process = self.process_registry.start(
             title=title,
             kind=kind,
             source=source,
             lane=lane,
-            detail="Preparando Agent Framework.",
+            detail="Preparing Agent Framework.",
         )
 
         attempts: list[dict[str, str]] = []
         if not candidates:
-            detail = "No hay perfiles de modelo habilitados."
+            detail = "No enabled model profiles found."
             self.process_registry.finish(process.id, status="failed", detail=detail)
             return RuntimeTurnResult(text=detail, model=None, attempts=attempts, process_id=process.id)
 
         for index, model in enumerate(candidates, start=1):
             self.process_registry.update(
                 process.id,
-                detail=f"Intentando {model.label} ({model.deployment}).",
+                detail=f"Trying {model.label} ({model.deployment}).",
                 model_id=model.id,
                 model_label=model.label,
                 attempts=index,
@@ -218,7 +218,7 @@ class AgentRuntimeManager:
                 self.process_registry.finish(
                     process.id,
                     status="done",
-                    detail=f"Completado con {model.label}.",
+                    detail=f"Completed with {model.label}.",
                     model_id=model.id,
                     model_label=model.label,
                     attempts=index,
@@ -231,11 +231,11 @@ class AgentRuntimeManager:
                 self.cooldowns[model.id] = time.time() + 30
                 self.process_registry.update(
                     process.id,
-                    detail=f"Fallo en {model.label}. Probando fallback.",
+                    detail=f"Failed on {model.label}. Trying fallback.",
                     attempts=index,
                 )
 
-        summary = "Todos los perfiles fallaron. " + " | ".join(
+        summary = "All profiles failed. " + " | ".join(
             f"{item['label']}: {item['error']}" for item in attempts
         )
         self.process_registry.finish(
@@ -299,7 +299,7 @@ class AgentRuntimeManager:
         return agent
 
     def _probe_status_for_model(self, model: RuntimeModelProfile) -> dict[str, str | bool]:
-        """Comprueba disponibilidad real del proveedor cuando es viable."""
+        """Checks real provider availability when feasible."""
         cache_key = f"{model.provider}:{model.id}:{model.deployment}"
         now = time.time()
         cached = self.probe_cache.get(cache_key)
@@ -330,18 +330,18 @@ class AgentRuntimeManager:
         return fallback or str(response)
 
     def _probe_azure_model(self, model: RuntimeModelProfile) -> dict[str, str | bool]:
-        """Verifica si hay configuracion suficiente para Azure."""
+        """Checks whether Azure configuration is sufficient."""
         lane = model.lane.strip().lower()
         endpoint_var = "AZURE_OPENAI_FAST_ENDPOINT" if lane == "fast" else "AZURE_OPENAI_SLOW_ENDPOINT"
         api_key_var = "AZURE_OPENAI_FAST_API_KEY" if lane == "fast" else "AZURE_OPENAI_SLOW_API_KEY"
         endpoint = os.environ.get(endpoint_var, "").strip() or os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip()
         api_key = os.environ.get(api_key_var, "").strip() or os.environ.get("AZURE_OPENAI_API_KEY", "").strip()
         if not endpoint or not api_key or not model.deployment.strip():
-            return {"available": False, "detail": "Configuracion Azure incompleta"}
-        return {"available": True, "detail": "Configuracion Azure lista"}
+            return {"available": False, "detail": "Incomplete Azure configuration"}
+        return {"available": True, "detail": "Azure configuration ready"}
 
     def _probe_openai_compatible_model(self, model: RuntimeModelProfile) -> dict[str, str | bool]:
-        """Comprueba que el runtime OpenAI-compatible responde y publica el modelo."""
+        """Checks that the OpenAI-compatible runtime responds and publishes the model."""
         base_url = self._resolve_openai_base_url()
         api_key = os.environ.get("AZUL_FAST_OLLAMA_API_KEY", "").strip() or "ollama"
         models_url = f"{base_url.rstrip('/')}/models"
@@ -354,10 +354,10 @@ class AgentRuntimeManager:
         except urlerror.URLError:
             binary = shutil.which("ollama")
             if binary:
-                return {"available": False, "detail": "Ollama detectado pero el servidor no responde"}
-            return {"available": False, "detail": "Ollama no detectado"}
+                return {"available": False, "detail": "Ollama detected but server not responding"}
+            return {"available": False, "detail": "Ollama not detected"}
         except Exception:
-            return {"available": False, "detail": "Error al consultar modelos locales"}
+            return {"available": False, "detail": "Error querying local models"}
 
         raw_models = payload.get("data", []) if isinstance(payload, dict) else []
         model_ids = [
@@ -366,10 +366,10 @@ class AgentRuntimeManager:
             if isinstance(item, dict) and str(item.get("id", "")).strip()
         ]
         if model.deployment in model_ids:
-            return {"available": True, "detail": f"Modelo local disponible en {base_url}"}
+            return {"available": True, "detail": f"Local model available at {base_url}"}
         if model_ids:
-            return {"available": False, "detail": f"Ollama responde, pero falta {model.deployment}"}
-        return {"available": False, "detail": "Ollama responde sin modelos publicados"}
+            return {"available": False, "detail": f"Ollama responds, but {model.deployment} is missing"}
+        return {"available": False, "detail": "Ollama responds with no published models"}
 
     def _resolve_openai_base_url(self) -> str:
         base_url = (

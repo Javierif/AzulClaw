@@ -51,7 +51,7 @@ export async function sendDesktopMessage(
   } catch {
     return {
       reply:
-        "No he podido contactar con el backend real. Mantengo el shell visual activo con datos de fallback.",
+        "Could not reach the real backend. Keeping the visual shell active with fallback data.",
       history: chatMessages,
       runtime: defaultChatRuntime,
     };
@@ -216,9 +216,6 @@ export async function loadRuntime(): Promise<RuntimeOverview> {
 }
 
 export async function saveRuntime(payload: {
-  heartbeat_enabled?: boolean;
-  heartbeat_interval_seconds?: number;
-  heartbeat_prompt?: string;
   default_lane?: "auto" | "fast" | "slow";
   models?: Array<{ id: string; streaming_enabled?: boolean; enabled?: boolean; deployment?: string }>;
 }): Promise<RuntimeOverview> {
@@ -227,16 +224,6 @@ export async function saveRuntime(payload: {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-    });
-  } catch {
-    return runtimeOverview;
-  }
-}
-
-export async function runHeartbeat(): Promise<RuntimeOverview> {
-  try {
-    return await fetchJson<RuntimeOverview>("/api/desktop/runtime/heartbeat/run", {
-      method: "POST",
     });
   } catch {
     return runtimeOverview;

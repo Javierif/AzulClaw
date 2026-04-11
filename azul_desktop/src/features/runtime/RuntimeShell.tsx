@@ -31,13 +31,13 @@ export function RuntimeShell() {
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Automations</p>
-            <h2>Scheduler y runtime</h2>
+            <h2>Scheduler &amp; runtime</h2>
           </div>
           <div className="filter-row">
             <span
               className={`status-pill${runtime.scheduler_running ? " status-pill-live" : ""}`}
             >
-              {runtime.scheduler_running ? "Scheduler activo" : "Scheduler detenido"}
+              {runtime.scheduler_running ? "Scheduler running" : "Scheduler stopped"}
             </span>
             <span className="status-pill">{runtime.jobs_total} jobs</span>
             <span className="status-pill">{runtime.jobs_running} running</span>
@@ -47,34 +47,36 @@ export function RuntimeShell() {
         <div className="three-column-grid">
           <section className="subcard">
             <p className="eyebrow">Jobs</p>
-            <h3>Resumen</h3>
-            <p><strong>Jobs totales:</strong> {runtime.jobs_total}</p>
-            <p><strong>Jobs activos:</strong> {runtime.jobs_running}</p>
-            <p><strong>Procesos visibles:</strong> {runtime.processes_visible}</p>
+            <h3>Overview</h3>
+            <p><strong>Total jobs:</strong> {runtime.jobs_total}</p>
+            <p><strong>Active jobs:</strong> {runtime.jobs_running}</p>
+            <p><strong>Visible processes:</strong> {runtime.processes_visible}</p>
           </section>
 
           <section className="subcard">
             <p className="eyebrow">Inference</p>
-            <h3>Lane por defecto</h3>
-            <p><strong>Ruta activa:</strong> {runtime.default_lane}</p>
-            <p>Define qué cerebro usar cuando la petición no fuerce una lane concreta.</p>
-            <p><strong>Brains:</strong> la configuración vive en Settings.</p>
+            <h3>Default lane</h3>
+            <p><strong>Active route:</strong> {runtime.default_lane}</p>
+            <p>Defines which brain to use when the request doesn't force a specific lane.</p>
+            <p><strong>Brains:</strong> configuration lives in Settings.</p>
           </section>
 
           <section className="subcard">
-            <p className="eyebrow">Heartbeat</p>
-            <h3>Pulso del workspace</h3>
+            <p className="eyebrow">Scheduler</p>
+            <h3>Scheduled jobs</h3>
             <p>
-              <strong>Estado:</strong>{" "}
-              <span
-                className={`status-tag ${runtime.heartbeat.enabled ? "status-done" : "status-waiting"}`}
-              >
-                {runtime.heartbeat.enabled ? "Activo" : "Pausado"}
+              <strong>Status:</strong>{" "}
+              <span className={`status-tag ${runtime.scheduler_running ? "status-done" : "status-waiting"}`}>
+                {runtime.scheduler_running ? "Running" : "Stopped"}
               </span>
             </p>
-            <p><strong>Intervalo:</strong> {runtime.heartbeat.interval_seconds}s</p>
+            {runtime.scheduler_last_error && (
+              <p style={{ color: "var(--danger)", fontSize: "0.88rem", marginTop: 4 }}>
+                {runtime.scheduler_last_error}
+              </p>
+            )}
             <p style={{ marginTop: 8, color: "var(--muted)", fontSize: "0.88rem" }}>
-              Gestiona los heartbeats y jobs programados desde la vista <strong>Heartbeats</strong> en el menú lateral.
+              Manage all scheduled jobs from the <strong>Heartbeats</strong> view in the sidebar.
             </p>
           </section>
         </div>

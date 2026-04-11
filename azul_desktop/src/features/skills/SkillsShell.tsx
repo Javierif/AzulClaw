@@ -1,8 +1,8 @@
 const skills = [
-  { name: "Email", risk: "moderate", description: "Leer y redactar correo." },
-  { name: "Telegram", risk: "moderate", description: "Enviar mensajes y avisos." },
-  { name: "Workspace", risk: "safe", description: "Gestionar archivos del sandbox." },
-  { name: "Terminal", risk: "sensitive", description: "Acciones locales controladas." },
+  { name: "Email", risk: "moderate", description: "Read and draft emails." },
+  { name: "Telegram", risk: "moderate", description: "Send messages and notifications." },
+  { name: "Workspace", risk: "safe", description: "Manage sandbox files." },
+  { name: "Terminal", risk: "sensitive", description: "Controlled local actions." },
 ];
 
 export function SkillsShell() {
@@ -12,7 +12,7 @@ export function SkillsShell() {
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Skills</p>
-            <h2>Capacidades del agente</h2>
+            <h2>Agent capabilities</h2>
           </div>
           <button type="button" className="primary-button">
             Add skill

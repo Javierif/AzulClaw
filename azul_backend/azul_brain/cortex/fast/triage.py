@@ -1,4 +1,4 @@
-"""Triage inicial para decidir la ruta cognitiva interna."""
+"""Initial triage to decide the internal cognitive route."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import re
 
 @dataclass(frozen=True)
 class TriageDecision:
-    """Decision de enrutado cognitivo."""
+    """Cognitive routing decision."""
 
     lane: str
     reason: str
@@ -63,7 +63,7 @@ COMPLEX_MARKERS = (
 
 
 def classify_message(user_message: str) -> TriageDecision:
-    """Decide si el mensaje puede resolverse en ruta rapida o lenta."""
+    """Decides whether the message can be resolved via the fast or slow route."""
     normalized = " ".join((user_message or "").strip().lower().split())
     if not normalized:
         return TriageDecision(lane="fast", reason="empty")
@@ -87,6 +87,6 @@ def classify_message(user_message: str) -> TriageDecision:
     if len(words) >= 28:
         return TriageDecision(lane="slow", reason="long-request")
 
-    # System 1 debe ser la ruta normal; System 2 solo entra cuando hay
-    # señales claras de complejidad o una petición realmente extensa.
+    # System 1 should be the default route; System 2 only activates on
+    # clear signals of complexity or a genuinely long request.
     return TriageDecision(lane="fast", reason="default-fast")

@@ -1,4 +1,4 @@
-"""Servicios para endpoints de la desktop app."""
+"""Services for the desktop app endpoints."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from .hatching_store import HatchingProfile, HatchingStore
 
 
 def get_workspace_root() -> Path:
-    """Devuelve la raiz del workspace sandbox de AzulClaw."""
+    """Returns the root of the AzulClaw sandbox workspace."""
     profile = HatchingStore().load()
     workspace_root = Path(profile.workspace_root)
     workspace_root.mkdir(parents=True, exist_ok=True)
@@ -18,12 +18,12 @@ def get_workspace_root() -> Path:
 
 
 def build_workspace_validator() -> PathValidator:
-    """Construye un validador de rutas para el workspace desktop."""
+    """Builds a path validator for the desktop workspace."""
     return PathValidator(str(get_workspace_root()))
 
 
 def list_workspace_entries(relative_path: str = ".") -> dict:
-    """Lista entradas de una carpeta del workspace con metadata simple."""
+    """Lists entries in a workspace folder with basic metadata."""
     validator = build_workspace_validator()
     safe_dir = validator.safe_resolve(relative_path or ".")
 
@@ -31,7 +31,7 @@ def list_workspace_entries(relative_path: str = ".") -> dict:
         safe_dir.mkdir(parents=True, exist_ok=True)
 
     if not safe_dir.is_dir():
-        raise ValueError(f"La ruta '{relative_path}' no es un directorio valido.")
+        raise ValueError(f"Path '{relative_path}' is not a valid directory.")
 
     entries = []
     for child in sorted(safe_dir.iterdir(), key=lambda item: (item.is_file(), item.name.lower())):
@@ -58,7 +58,7 @@ def list_workspace_entries(relative_path: str = ".") -> dict:
 
 
 def summarize_processes(process_registry) -> list[dict]:
-    """Devuelve procesos reales del runtime para la desktop app."""
+    """Returns real runtime processes for the desktop app."""
     items = []
     for item in process_registry.list_processes():
         items.append(
@@ -79,13 +79,13 @@ def summarize_processes(process_registry) -> list[dict]:
 
 
 def summarize_memory(orchestrator, user_id: str) -> list[dict]:
-    """Devuelve una vista simple de memoria para la app desktop."""
+    """Returns a simple memory view for the desktop app."""
     profile = HatchingStore().load()
     history = orchestrator.memory.get_history(user_id, limit=12)
     records = [
         {
             "id": "pref-directness",
-            "title": f"Tono preferido: {profile.tone}",
+            "title": f"Preferred tone: {profile.tone}",
             "kind": "preference",
             "source": "hatching-profile",
             "pinned": True,
@@ -98,7 +98,7 @@ def summarize_memory(orchestrator, user_id: str) -> list[dict]:
         records.append(
             {
                 "id": f"history-{index}",
-                "title": compact_content or "(sin contenido)",
+                "title": compact_content or "(no content)",
                 "kind": "episodic",
                 "source": item.get("role", "unknown"),
                 "pinned": False,
@@ -109,13 +109,12 @@ def summarize_memory(orchestrator, user_id: str) -> list[dict]:
 
 
 def summarize_runtime(runtime_manager, scheduler, process_registry) -> dict:
-    """Devuelve estado agregado de modelos, scheduler y heartbeats."""
+    """Returns aggregated model and scheduler status."""
     settings = runtime_manager.load_settings()
     scheduler_status = scheduler.get_status()
     return {
         "default_lane": settings.default_lane,
         "models": runtime_manager.list_model_status(),
-        "heartbeat": scheduler_status["heartbeat"],
         "scheduler_running": scheduler_status["scheduler_running"],
         "scheduler_last_error": scheduler_status["scheduler_last_error"],
         "jobs_total": scheduler_status["jobs_total"],
@@ -125,7 +124,7 @@ def summarize_runtime(runtime_manager, scheduler, process_registry) -> dict:
 
 
 def summarize_jobs(store) -> list[dict]:
-    """Lista jobs programados para la desktop app."""
+    """Lists scheduled jobs for the desktop app."""
     items = []
     for job in store.load_jobs():
         items.append(
@@ -138,6 +137,8 @@ def summarize_jobs(store) -> list[dict]:
                 "run_at": job.run_at,
                 "interval_seconds": job.interval_seconds,
                 "enabled": job.enabled,
+                "system": job.system,
+                "source": job.source,
                 "created_at": job.created_at,
                 "updated_at": job.updated_at,
                 "last_run_at": job.last_run_at,
@@ -148,7 +149,7 @@ def summarize_jobs(store) -> list[dict]:
 
 
 def load_hatching_profile() -> dict:
-    """Devuelve el perfil actual de Hatching como diccionario serializable."""
+    """Returns the current Hatching profile as a serialisable dictionary."""
     return HatchingStore().load().__dict__
 
 
@@ -173,7 +174,7 @@ def _sanitize_skill_configs(raw_configs: object, fallback: dict[str, dict[str, s
 
 
 def save_hatching_profile(payload: dict) -> dict:
-    """Valida y persiste el perfil de Hatching."""
+    """Validates and persists the Hatching profile."""
     current = HatchingStore().load()
 
     profile = HatchingProfile(
@@ -183,7 +184,7 @@ def save_hatching_profile(payload: dict) -> dict:
         tone=str(payload.get("tone", current.tone)).strip() or current.tone,
         style=str(payload.get("style", current.style)).strip() or current.style,
         autonomy=str(payload.get("autonomy", current.autonomy)).strip() or current.autonomy,
-        archetype=str(payload.get("archetype", current.archetype)).strip() or current.archetype,
+
         workspace_root=str(payload.get("workspace_root", current.workspace_root)).strip()
         or current.workspace_root,
         confirm_sensitive_actions=bool(

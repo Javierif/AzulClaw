@@ -67,10 +67,10 @@ export function DesktopApp() {
         <section className="onboarding-card">
           <img className="onboarding-mascot" src={babyMascot} alt="AzulClaw hatchling" />
           <p className="eyebrow">Wake up</p>
-          <h1>Preparando el nido de AzulClaw</h1>
+          <h1>Preparing AzulClaw's nest</h1>
           <p>
-            Cargando perfil, sandbox y estado del companion antes de abrir el
-            escritorio.
+            Loading profile, sandbox and companion state before opening the
+            desktop.
           </p>
         </section>
       </div>
@@ -101,7 +101,7 @@ export function DesktopApp() {
             <img className="topbar-mascot" src={adultMascot} alt={profile.name} />
             <div>
               <p className="eyebrow">AzulClaw Desktop</p>
-              <h1>{profile.name}, tu workspace viviente</h1>
+              <h1>{profile.name}, your living workspace</h1>
             </div>
           </div>
           <div className="status-cluster">

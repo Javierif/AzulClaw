@@ -2,63 +2,63 @@ import os
 from pathlib import Path
 
 class SecurityError(Exception):
-    """Excepción lanzada cuando una operación viola las reglas de seguridad de AzulHands."""
+    """Exception raised when an operation violates AzulHands security rules."""
     pass
 
 class PathValidator:
     """
-    Motor de validación de rutas (Path Traversal Guard).
-    Asegura que cualquier ruta solicitada por el Cerebro de IA esté estrictamente
-    dentro de un directorio base permitido (el 'Workspace').
+    Path Traversal Guard.
+    Ensures that any path requested by the AI brain stays strictly
+    within an allowed base directory (the 'Workspace').
     """
 
     def __init__(self, allowed_base_dir: str):
         self.allowed_base = Path(allowed_base_dir).resolve()
-        
-        # Crear el directorio base si no existe
+
+        # Create the base directory if it does not exist
         if not self.allowed_base.exists():
             self.allowed_base.mkdir(parents=True, exist_ok=True)
-            
-        print(f"[Security] PathValidator inicializado. Workspace restringido a: {self.allowed_base}")
+
+        print(f"[Security] PathValidator initialized. Workspace restricted to: {self.allowed_base}")
 
     def safe_resolve(self, requested_path: str) -> Path:
         """
-        Resuelve una ruta solicitada y verifica mediante resolución canónica 
-        que no escape del directorio base permitido.
-        
+        Resolves a requested path and verifies via canonical resolution
+        that it does not escape the allowed base directory.
+
         Args:
-            requested_path: La ruta relativa o absoluta que la IA quiere tocar.
-            
+            requested_path: The relative or absolute path the AI wants to access.
+
         Returns:
-            Path obj resuelto y validado.
-            
+            Resolved and validated Path object.
+
         Raises:
-            SecurityError: Si la ruta intenta hacer Path Traversal (ej. '../../Windows')
+            SecurityError: If the path attempts path traversal (e.g. '../../Windows')
         """
         try:
-            # 1. Expandir variables de entorno y '~' si existieran
+            # 1. Expand environment variables and '~' if present
             expanded_path = os.path.expanduser(os.path.expandvars(requested_path))
-            
-            # 2. Si no es absoluta, interpretarla como relativa al workspace permitido
+
+            # 2. If not absolute, treat as relative to the allowed workspace
             if not os.path.isabs(expanded_path):
                 target_path = self.allowed_base / expanded_path
             else:
                 target_path = Path(expanded_path)
-                
-            # 3. Resolver la ruta final (elimina los ../ y symlinks)
+
+            # 3. Resolve the final path (strips ../ and symlinks)
             resolved_target = target_path.resolve()
-            
-            # 4. Chequeo Crítico de Seguridad: ¿El directorio resultante empieza por nuestro allowed_base?
+
+            # 4. Critical Security Check: does the resolved path start with our allowed_base?
             if not str(resolved_target).startswith(str(self.allowed_base)):
                 raise SecurityError(
-                    f"Violación de Seguridad: La ruta solicitada '{requested_path}' "
-                    f"resuelve fuera del Workspace permitido ({self.allowed_base})"
+                    f"Security Violation: requested path '{requested_path}' "
+                    f"resolves outside the allowed Workspace ({self.allowed_base})"
                 )
-                
+
             return resolved_target
-            
+
         except Exception as e:
             if isinstance(e, SecurityError):
                 raise
-            # Cualquier otro error de parsing de rutas se bloquea por defecto
-            raise SecurityError(f"Error al analizar la ruta solicitada: {str(e)}")
+            # Any other path parsing error is blocked by default
+            raise SecurityError(f"Error parsing the requested path: {str(e)}")

@@ -1,15 +1,15 @@
-# Azul Backend
+# azul_backend
 
-Backend Python de AzulClaw.
+Python backend for AzulClaw.
 
-## Contenido
+## Contents
 
-- `azul_brain/`: orquestacion, memoria, bot y runtime principal
-- `azul_hands_mcp/`: sandbox MCP para operaciones de archivos seguras
+- `azul_brain/`: orchestration, memory, bot handler and main runtime
+- `azul_hands_mcp/`: MCP sandbox for secure file operations
 
-## Arranque
+## Running
 
-Desde la raiz del repo:
+From the repo root:
 
 ```bash
 python -m azul_backend.azul_brain.main_launcher

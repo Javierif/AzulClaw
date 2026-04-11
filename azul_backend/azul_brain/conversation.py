@@ -1,4 +1,4 @@
-"""Servicios de conversacion reutilizables para bot y desktop API."""
+"""Reusable conversation services for the bot and desktop API."""
 
 import asyncio
 import logging
@@ -26,7 +26,7 @@ LOGGER = logging.getLogger(__name__)
 
 @dataclass
 class ConversationReply:
-    """Respuesta enriquecida del orquestador."""
+    """Enriched reply from the orchestrator."""
 
     text: str
     model_id: str = ""
@@ -37,7 +37,7 @@ class ConversationReply:
 
 
 def extract_result_text(result) -> str:
-    """Normaliza la respuesta del adapter de agente a texto serializable."""
+    """Normalises the agent adapter response to serialisable text."""
     value = getattr(result, "value", None)
     if isinstance(value, str):
         return value
@@ -45,7 +45,7 @@ def extract_result_text(result) -> str:
 
 
 def should_skip_vectorization(text: str) -> bool:
-    """Evita indexar texto potencialmente sensible en memoria vectorial local."""
+    """Avoids indexing potentially sensitive text in local vector memory."""
     low = (text or "").lower()
     sensitive_markers = (
         "api_key",
@@ -61,7 +61,7 @@ def should_skip_vectorization(text: str) -> bool:
 
 
 class ConversationOrchestrator:
-    """Orquesta memoria, recuperacion semantica e invocacion del agente."""
+    """Orchestrates memory, semantic retrieval, and agent invocation."""
 
     def __init__(self, mcp_client, runtime_manager: AgentRuntimeManager):
         self.mcp_client = mcp_client
@@ -73,12 +73,12 @@ class ConversationOrchestrator:
         try:
             self.embedding_service = EmbeddingService.from_env()
             self.vector_memory = VectorMemoryStore.from_env()
-            LOGGER.info("[Memory] Vector memory habilitada.")
+            LOGGER.info("[Memory] Vector memory enabled.")
         except Exception as error:
-            LOGGER.warning("[Memory] Vector memory deshabilitada: %s", error)
+            LOGGER.warning("[Memory] Vector memory disabled: %s", error)
 
     async def persist_with_vector_memory(self, user_id: str, role: str, content: str) -> None:
-        """Persiste en memoria corta y, si procede, indexa en memoria vectorial."""
+        """Persists to short-term memory and, if applicable, indexes in vector memory."""
         self.memory.add_message(user_id, role, content)
 
         if (
@@ -99,10 +99,10 @@ class ConversationOrchestrator:
                     source="chat",
                 )
         except Exception as error:
-            LOGGER.warning("[Memory] Error indexando memoria vectorial: %s", error)
+            LOGGER.warning("[Memory] Error indexing vector memory: %s", error)
 
     async def retrieve_semantic_memories(self, user_id: str, query_text: str) -> list[dict]:
-        """Recupera recuerdos semanticos relevantes para enriquecer el prompt."""
+        """Retrieves relevant semantic memories to enrich the prompt."""
         if self.embedding_service is None or self.vector_memory is None:
             return []
 
@@ -118,7 +118,7 @@ class ConversationOrchestrator:
                 candidate_pool=150,
             )
         except Exception as error:
-            LOGGER.warning("[Memory] Error recuperando memoria vectorial: %s", error)
+            LOGGER.warning("[Memory] Error retrieving vector memory: %s", error)
             return []
 
     async def invoke_messages(
@@ -130,7 +130,7 @@ class ConversationOrchestrator:
         source: str,
         title: str,
     ) -> ConversationReply:
-        """Invoca el agente con mensajes estructurados y fallback entre modelos."""
+        """Invokes the agent with structured messages and falls back on content filter errors."""
         try:
             result = await self.runtime_manager.execute_messages(
                 messages=messages,
@@ -151,13 +151,13 @@ class ConversationOrchestrator:
             if "content_filter" in error_text or "ResponsibleAIPolicyViolation" in error_text:
                 fallback = self._fallback_for_filtered_prompt(user_message)
                 if fallback:
-                    LOGGER.warning("[Brain] Azure filtro el prompt. Usando fallback local.")
+                    LOGGER.warning("[Brain] Azure filtered the prompt. Using local fallback.")
                     return ConversationReply(text=fallback, lane=lane)
             return ConversationReply(
                 text=(
-                    "No pude ejecutar la capa cognitiva aun. "
-                    "Verifica dependencias y variables AZURE_OPENAI_*.\n"
-                    f"Detalle tecnico: {error}"
+                    "Could not execute the cognitive layer yet. "
+                    "Check dependencies and AZURE_OPENAI_* variables.\n"
+                    f"Technical detail: {error}"
                 ),
                 lane=lane,
             )
@@ -172,7 +172,7 @@ class ConversationOrchestrator:
         title: str,
         on_delta: Callable[[str], Awaitable[None]],
     ) -> ConversationReply:
-        """Invoca el agente y emite deltas cuando el runtime usa streaming."""
+        """Invokes the agent and emits deltas when the runtime uses streaming."""
         try:
             result = await self.runtime_manager.execute_messages_stream(
                 messages=messages,
@@ -194,22 +194,22 @@ class ConversationOrchestrator:
             if "content_filter" in error_text or "ResponsibleAIPolicyViolation" in error_text:
                 fallback = self._fallback_for_filtered_prompt(user_message)
                 if fallback:
-                    LOGGER.warning("[Brain] Azure filtro el prompt. Usando fallback local.")
+                    LOGGER.warning("[Brain] Azure filtered the prompt. Using local fallback.")
                     await on_delta(fallback)
                     return ConversationReply(text=fallback, lane=lane)
             return ConversationReply(
                 text=(
-                    "No pude ejecutar la capa cognitiva aun. "
-                    "Verifica dependencias y variables AZURE_OPENAI_*.\n"
-                    f"Detalle tecnico: {error}"
+                    "Could not execute the cognitive layer yet. "
+                    "Check dependencies and AZURE_OPENAI_* variables.\n"
+                    f"Technical detail: {error}"
                 ),
                 lane=lane,
             )
 
     async def generate_fast_visible_plan(self, user_message: str, *, reason: str) -> tuple[str, dict]:
-        """Pide al cerebro rapido la primera narracion visible y un plan resumido."""
+        """Asks the fast brain for the first visible narration and a summarised plan."""
         prompt_messages = [
-            Message(role=item["role"], text=item["text"])
+            Message(role=item["role"], contents=item["text"])
             for item in prompt_for_fast_visible_plan(user_message, reason=reason)
         ]
         try:
@@ -218,11 +218,11 @@ class ConversationOrchestrator:
                 user_message,
                 lane="fast",
                 source="commentary",
-                title="Narracion visible",
+                title="Visible narration",
             )
             return normalize_fast_visible_plan(reply.text, user_message=user_message, reason=reason)
         except Exception as error:
-            LOGGER.warning("[Brain] Fast visible plan fallo: %s", error)
+            LOGGER.warning("[Brain] Fast visible plan failed: %s", error)
             fallback_commentary = build_commentary(user_message, reason=reason, lane="slow")
             fallback_progress = build_progress_snapshot(
                 user_message,
@@ -253,9 +253,9 @@ class ConversationOrchestrator:
         reason: str,
         lane: str,
     ) -> str:
-        """Pide al cerebro rapido la primera burbuja visible para cualquier ruta."""
+        """Asks the fast brain for the first visible bubble for any route."""
         prompt_messages = [
-            Message(role=item["role"], text=item["text"])
+            Message(role=item["role"], contents=item["text"])
             for item in prompt_for_fast_visible_commentary(user_message, reason=reason, lane=lane)
         ]
         try:
@@ -264,7 +264,7 @@ class ConversationOrchestrator:
                 user_message,
                 lane="fast",
                 source="commentary",
-                title="Primera burbuja visible",
+                title="First visible bubble",
             )
             return normalize_fast_visible_commentary(
                 reply.text,
@@ -273,18 +273,18 @@ class ConversationOrchestrator:
                 lane=lane,
             )
         except Exception as error:
-            LOGGER.warning("[Brain] Fast visible commentary fallo: %s", error)
+            LOGGER.warning("[Brain] Fast visible commentary failed: %s", error)
             return build_commentary(user_message, reason=reason, lane=lane)
 
     def _fallback_for_filtered_prompt(self, user_message: str) -> str | None:
-        """Devuelve una respuesta segura si Azure filtra una peticion simple."""
+        """Returns a safe response if Azure filters a simple request."""
         normalized = (user_message or "").strip().lower()
         if normalized in {"hola", "buenas", "hey", "hello", "holi"}:
-            return "Hola. Estoy activo y listo para ayudarte."
+            return "Hi. I'm active and ready to help."
         if normalized in {"gracias", "muchas gracias"}:
-            return "De nada."
+            return "You're welcome."
         if normalized in {"que tal", "como estas", "cómo estás"}:
-            return "Estoy operativo y listo para trabajar contigo."
+            return "I'm operational and ready to work with you."
         return None
 
     def build_agent_messages(
@@ -293,7 +293,7 @@ class ConversationOrchestrator:
         semantic_memories: list[dict],
         user_message: str,
     ) -> list[Message]:
-        """Convierte historial y contexto en mensajes reales para el framework."""
+        """Converts history and context into real messages for the framework."""
         messages: list[Message] = []
 
         for item in history:
@@ -302,7 +302,7 @@ class ConversationOrchestrator:
                 continue
             content = str(item.get("content", "")).strip()
             if content:
-                messages.append(Message(role=role, text=content))
+                messages.append(Message(role=role, contents=content))
 
         if semantic_memories:
             memory_lines: list[str] = []
@@ -318,15 +318,15 @@ class ConversationOrchestrator:
                 messages.append(
                     Message(
                         role="assistant",
-                        text="Contexto recuperado para esta conversacion:\n" + "\n".join(memory_lines),
+                        contents="Retrieved context for this conversation:\n" + "\n".join(memory_lines),
                     )
                 )
 
-        messages.append(Message(role="user", text=user_message))
+        messages.append(Message(role="user", contents=user_message))
         return messages
 
     def resolve_route(self, user_message: str, requested_lane: str = "auto") -> TriageDecision:
-        """Decide la ruta cognitiva efectiva para este turno."""
+        """Determines the effective cognitive route for this turn."""
         normalized = (requested_lane or "").strip().lower()
         if normalized in {"fast", "slow"}:
             return TriageDecision(lane=normalized, reason="explicit")
@@ -339,7 +339,7 @@ class ConversationOrchestrator:
         return TriageDecision(lane=default_lane, reason="runtime-default")
 
     def resolve_lane(self, user_message: str, requested_lane: str = "auto") -> str:
-        """Compatibilidad para obtener solo la lane."""
+        """Backwards compatibility helper to get only the lane."""
         return self.resolve_route(user_message, requested_lane).lane
 
     async def process_message(
@@ -352,20 +352,20 @@ class ConversationOrchestrator:
         store_memory: bool = True,
         title: str | None = None,
     ) -> str:
-        """Construye contexto, ejecuta inferencia y persiste conversacion si procede."""
+        """Builds context, runs inference, and persists the conversation if applicable."""
         route = self.resolve_route(user_message, lane)
         effective_lane = route.lane
         history = self.memory.get_history(user_id, limit=12)
         semantic_memories = await self.retrieve_semantic_memories(user_id, user_message)
         messages = self.build_agent_messages(history, semantic_memories, user_message)
 
-        LOGGER.info("[Brain] Mensaje recibido. Historial=%s", len(history))
+        LOGGER.info("[Brain] Message received. History=%s", len(history))
         reply = await self.invoke_messages(
             messages,
             user_message,
             lane=effective_lane,
             source=source,
-            title=title or "Conversacion principal",
+            title=title or "Main conversation",
         )
 
         if store_memory:
@@ -375,20 +375,20 @@ class ConversationOrchestrator:
         return reply.text
 
     async def process_user_message(self, user_id: str, user_message: str, lane: str = "auto") -> ConversationReply:
-        """Construye contexto, ejecuta inferencia y persiste conversacion."""
+        """Builds context, runs inference, and persists the conversation."""
         route = self.resolve_route(user_message, lane)
         effective_lane = route.lane
         history = self.memory.get_history(user_id, limit=12)
         semantic_memories = await self.retrieve_semantic_memories(user_id, user_message)
         messages = self.build_agent_messages(history, semantic_memories, user_message)
 
-        LOGGER.info("[Brain] Mensaje recibido. Historial=%s", len(history))
+        LOGGER.info("[Brain] Message received. History=%s", len(history))
         reply = await self.invoke_messages(
             messages,
             user_message,
             lane=effective_lane,
             source="chat",
-            title="Conversacion principal",
+            title="Main conversation",
         )
 
         await self.persist_with_vector_memory(user_id, "user", user_message)
@@ -406,7 +406,7 @@ class ConversationOrchestrator:
         on_commentary: Callable[[str], Awaitable[None]] | None = None,
         on_progress: Callable[[dict], Awaitable[None]] | None = None,
     ) -> ConversationReply:
-        """Construye contexto, ejecuta inferencia y emite streaming si aplica."""
+        """Builds context, runs inference, and emits streaming if applicable."""
         route = self.resolve_route(user_message, lane)
         effective_lane = route.lane
         progress_blueprint: dict | None = None
@@ -437,7 +437,7 @@ class ConversationOrchestrator:
         history = self.memory.get_history(user_id, limit=12)
         semantic_memories = await self.retrieve_semantic_memories(user_id, user_message)
         messages = self.build_agent_messages(history, semantic_memories, user_message)
-        context_commentary = "Ya tengo el contexto necesario. Ahora estoy preparando la respuesta completa."
+        context_commentary = "I now have the necessary context. Preparing the full response."
         if effective_lane == "slow" and on_commentary is not None:
             await on_commentary(context_commentary)
         if effective_lane == "slow" and on_progress is not None:
@@ -463,14 +463,14 @@ class ConversationOrchestrator:
                 )
             )
 
-        LOGGER.info("[Brain] Mensaje recibido en streaming. Historial=%s", len(history))
+        LOGGER.info("[Brain] Streaming message received. History=%s", len(history))
         try:
             reply = await self.invoke_messages_stream(
                 messages,
                 user_message,
                 lane=effective_lane,
                 source="chat",
-                title="Conversacion principal",
+                title="Main conversation",
                 on_delta=on_delta,
             )
         finally:
@@ -491,7 +491,7 @@ class ConversationOrchestrator:
                     reason=route.reason,
                     lane=effective_lane,
                     stage="done",
-                    summary="Proceso completado. Ya te entrego la respuesta final.",
+                    summary="Process complete. Delivering the final response.",
                     blueprint=progress_blueprint,
                 )
             )
@@ -506,11 +506,11 @@ class ConversationOrchestrator:
         on_progress: Callable[[dict], Awaitable[None]] | None = None,
         progress_blueprint: dict | None = None,
     ) -> None:
-        """Emite feedback ligero mientras el cerebro lento sigue trabajando."""
+        """Emits lightweight feedback while the slow brain is still working."""
         updates = [
-            "Sigo dándole una vuelta para no responderte con algo superficial.",
-            "Estoy ordenando la respuesta y comprobando que el enfoque tenga sentido.",
-            "Ya casi lo tengo. Estoy cerrando los puntos importantes antes de contestarte.",
+            "Still thinking this through to give you a thorough answer.",
+            "Structuring the response and making sure the approach makes sense.",
+            "Almost there. Closing the key points before responding.",
         ]
         index = 0
         while True:
