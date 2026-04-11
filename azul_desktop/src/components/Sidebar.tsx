@@ -9,7 +9,7 @@ const navItems: { label: string; view: AppView }[] = [
   { label: "Hatching", view: "hatching" },
   { label: "Skills", view: "skills" },
   { label: "Processes", view: "processes" },
-  { label: "Runtime", view: "runtime" },
+  { label: "Heartbeats", view: "heartbeats" },
   { label: "Memory", view: "memory" },
   { label: "Workspace", view: "workspace" },
   { label: "Settings", view: "settings" },

@@ -216,9 +216,6 @@ export async function loadRuntime(): Promise<RuntimeOverview> {
 }
 
 export async function saveRuntime(payload: {
-  heartbeat_enabled?: boolean;
-  heartbeat_interval_seconds?: number;
-  heartbeat_prompt?: string;
   default_lane?: "auto" | "fast" | "slow";
   models?: Array<{ id: string; streaming_enabled?: boolean; enabled?: boolean; deployment?: string }>;
 }): Promise<RuntimeOverview> {
@@ -243,12 +240,14 @@ export async function loadJobs(): Promise<ScheduledJob[]> {
 }
 
 export async function saveJob(payload: {
+  id?: string;
   name: string;
   prompt: string;
   lane: "auto" | "fast" | "slow";
   schedule_kind: "at" | "every";
   interval_seconds?: number;
   run_at?: string;
+  enabled?: boolean;
 }): Promise<ScheduledJob> {
   return fetchJson<ScheduledJob>("/api/desktop/jobs", {
     method: "POST",

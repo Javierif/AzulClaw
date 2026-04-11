@@ -70,17 +70,20 @@ class RuntimeModelProfile:
     description: str = ""
 
 
+SYSTEM_HEARTBEAT_JOB_ID = "system-heartbeat"
+SYSTEM_HEARTBEAT_DEFAULT_PROMPT = (
+    "System heartbeat. Read HEARTBEAT.md if it exists. "
+    "Follow it strictly. If nothing needs attention, respond exactly HEARTBEAT_OK."
+)
+SYSTEM_HEARTBEAT_DEFAULT_INTERVAL = 900
+
+
 @dataclass
 class RuntimeSettings:
     """Editable local runtime configuration."""
 
     default_lane: Literal["auto", "fast", "slow"] = "auto"
-    heartbeat_enabled: bool = True
-    heartbeat_interval_seconds: int = 900
-    heartbeat_prompt: str = (
-        "System heartbeat. Read the operational checklist and act only on what is indicated. "
-        "If there is nothing actionable, respond exactly HEARTBEAT_OK."
-    )
+
     models: list[RuntimeModelProfile] = field(default_factory=list)
 
 
@@ -96,6 +99,8 @@ class ScheduledJob:
     run_at: str = ""
     interval_seconds: int = 0
     enabled: bool = True
+    system: bool = False
+    source: str = "user"
     created_at: str = field(default_factory=lambda: to_iso_z(utc_now()))
     updated_at: str = field(default_factory=lambda: to_iso_z(utc_now()))
     last_run_at: str = ""
@@ -150,24 +155,12 @@ class RuntimeStore:
             or os.environ.get("AZURE_OPENAI_FALLBACK_DEPLOYMENT", "").strip()
             or "gpt-4o-mini"
         )
-        heartbeat_interval = self._bounded_int(
-            os.environ.get("AZUL_HEARTBEAT_INTERVAL_SECONDS", "900"),
-            default=900,
-            min_value=60,
-            max_value=86_400,
-        )
         default_lane = os.environ.get("AZUL_DEFAULT_LANE", "auto").strip().lower()
         if default_lane not in {"auto", "fast", "slow"}:
             default_lane = "auto"
 
         return RuntimeSettings(
             default_lane=default_lane,
-            heartbeat_enabled=self._parse_bool(os.environ.get("AZUL_HEARTBEAT_ENABLED"), True),
-            heartbeat_interval_seconds=heartbeat_interval,
-            heartbeat_prompt=(
-                os.environ.get("AZUL_HEARTBEAT_PROMPT", "").strip()
-                or RuntimeSettings().heartbeat_prompt
-            ),
             models=[
                 fast_profile
                 if fast_profile.deployment
@@ -247,17 +240,6 @@ class RuntimeStore:
 
         return RuntimeSettings(
             default_lane=default_lane,
-            heartbeat_enabled=bool(raw.get("heartbeat_enabled", defaults.heartbeat_enabled)),
-            heartbeat_interval_seconds=self._bounded_int(
-                raw.get("heartbeat_interval_seconds"),
-                default=defaults.heartbeat_interval_seconds,
-                min_value=60,
-                max_value=86_400,
-            ),
-            heartbeat_prompt=(
-                str(raw.get("heartbeat_prompt", defaults.heartbeat_prompt)).strip()
-                or defaults.heartbeat_prompt
-            ),
             models=list(models_by_id.values()),
         )
 
@@ -266,31 +248,12 @@ class RuntimeStore:
         current = self.load_settings()
         merged = RuntimeSettings(
             default_lane=current.default_lane,
-            heartbeat_enabled=current.heartbeat_enabled,
-            heartbeat_interval_seconds=current.heartbeat_interval_seconds,
-            heartbeat_prompt=current.heartbeat_prompt,
             models=current.models,
         )
 
         raw_lane = str(payload.get("default_lane", merged.default_lane)).strip().lower()
         if raw_lane in {"auto", "fast", "slow"}:
             merged.default_lane = raw_lane
-
-        if "heartbeat_enabled" in payload:
-            merged.heartbeat_enabled = bool(payload.get("heartbeat_enabled"))
-
-        if "heartbeat_interval_seconds" in payload:
-            merged.heartbeat_interval_seconds = self._bounded_int(
-                payload.get("heartbeat_interval_seconds"),
-                default=merged.heartbeat_interval_seconds,
-                min_value=60,
-                max_value=86_400,
-            )
-
-        if "heartbeat_prompt" in payload:
-            prompt = str(payload.get("heartbeat_prompt", "")).strip()
-            if prompt:
-                merged.heartbeat_prompt = prompt
 
         model_updates = payload.get("models", [])
         if isinstance(model_updates, list):
@@ -373,6 +336,8 @@ class RuntimeStore:
                         max_value=31_536_000,
                     ),
                     enabled=bool(item.get("enabled", True)),
+                    system=bool(item.get("system", False)),
+                    source=str(item.get("source", "user")).strip() or "user",
                     created_at=str(item.get("created_at", "")).strip() or to_iso_z(utc_now()),
                     updated_at=str(item.get("updated_at", "")).strip() or to_iso_z(utc_now()),
                     last_run_at=str(item.get("last_run_at", "")).strip(),
@@ -453,11 +418,51 @@ class RuntimeStore:
         return job
 
     def delete_job(self, job_id: str) -> bool:
-        """Deletes a job by identifier."""
+        """Deletes a job by identifier. System jobs cannot be deleted."""
         safe_id = str(job_id).strip()
-        jobs = [job for job in self.load_jobs() if job.id != safe_id]
+        jobs = self.load_jobs()
+        target = next((j for j in jobs if j.id == safe_id), None)
+        if target and target.system:
+            raise ValueError("System jobs cannot be deleted")
+        jobs = [j for j in jobs if j.id != safe_id]
         self.save_jobs(jobs)
         return True
+
+    def ensure_system_heartbeat_job(self) -> ScheduledJob:
+        """Creates the system heartbeat job if it does not exist."""
+        jobs = self.load_jobs()
+        existing = next((j for j in jobs if j.id == SYSTEM_HEARTBEAT_JOB_ID), None)
+        if existing is not None:
+            return existing
+
+        heartbeat_interval = self._bounded_int(
+            os.environ.get("AZUL_HEARTBEAT_INTERVAL_SECONDS", "900"),
+            default=SYSTEM_HEARTBEAT_DEFAULT_INTERVAL,
+            min_value=60,
+            max_value=86_400,
+        )
+        heartbeat_prompt = (
+            os.environ.get("AZUL_HEARTBEAT_PROMPT", "").strip()
+            or SYSTEM_HEARTBEAT_DEFAULT_PROMPT
+        )
+        heartbeat_enabled = self._parse_bool(
+            os.environ.get("AZUL_HEARTBEAT_ENABLED"), True
+        )
+
+        job = ScheduledJob(
+            id=SYSTEM_HEARTBEAT_JOB_ID,
+            name="System heartbeat",
+            prompt=heartbeat_prompt,
+            lane="fast",
+            schedule_kind="every",
+            interval_seconds=heartbeat_interval,
+            enabled=heartbeat_enabled,
+            system=True,
+            source="system",
+        )
+        jobs.insert(0, job)
+        self.save_jobs(jobs)
+        return job
 
     def mark_job_run(self, job_id: str, run_time: datetime | None = None) -> ScheduledJob | None:
         """Updates execution and next-fire timestamps."""
@@ -622,9 +627,6 @@ class RuntimeStore:
     def _settings_to_dict(self, settings: RuntimeSettings) -> dict[str, Any]:
         return {
             "default_lane": settings.default_lane,
-            "heartbeat_enabled": settings.heartbeat_enabled,
-            "heartbeat_interval_seconds": settings.heartbeat_interval_seconds,
-            "heartbeat_prompt": settings.heartbeat_prompt,
             "models": [asdict(model) for model in settings.models],
         }
 
