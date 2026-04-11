@@ -13,17 +13,17 @@ export function SettingsShell() {
           <section className="subcard">
             <p className="eyebrow">Identity</p>
             <h3>AzulClaw</h3>
-            <p>Editar nombre, tono y rol base.</p>
+            <p>Edit name, tone and base role.</p>
           </section>
           <section className="subcard">
             <p className="eyebrow">Models</p>
             <h3>Local + Cloud</h3>
-            <p>La configuracion activa de modelos y fallback vive ahora en Runtime.</p>
+            <p>Configure providers and fallback strategy.</p>
           </section>
           <section className="subcard">
             <p className="eyebrow">Security</p>
             <h3>Human approvals</h3>
-            <p>Gestionar permisos sensibles y el sandbox.</p>
+            <p>Manage sensitive permissions and the sandbox.</p>
           </section>
         </div>
       </div>

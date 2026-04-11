@@ -1,4 +1,4 @@
-"""Scheduler local para jobs y heartbeats del runtime."""
+"""Local scheduler for runtime jobs and heartbeats."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from .store import RuntimeStore, ScheduledJob, parse_iso_datetime, to_iso_z, utc
 
 
 class RuntimeScheduler:
-    """Ejecuta jobs recurrentes y heartbeats sobre el mismo orquestador."""
+    """Runs recurring jobs and heartbeats on the same orchestrator."""
 
     def __init__(
         self,
@@ -30,14 +30,14 @@ class RuntimeScheduler:
         self.next_heartbeat_at: str = ""
 
     async def start(self) -> None:
-        """Arranca el loop de scheduler."""
+        """Starts the scheduler loop."""
         if self.worker_task is not None and not self.worker_task.done():
             return
         self.stop_event.clear()
         self.worker_task = asyncio.create_task(self._run_loop(), name="azul-runtime-scheduler")
 
     async def stop(self) -> None:
-        """Detiene el scheduler en segundo plano."""
+        """Stops the background scheduler."""
         self.stop_event.set()
         if self.worker_task is None:
             return
@@ -49,7 +49,7 @@ class RuntimeScheduler:
         self.worker_task = None
 
     def get_status(self) -> dict[str, Any]:
-        """Estado visible de heartbeats y scheduler."""
+        """Visible status of heartbeats and scheduler."""
         settings = self.orchestrator.runtime_manager.load_settings()
         workspace_root = HatchingStore().load().workspace_root
         return {
@@ -68,7 +68,7 @@ class RuntimeScheduler:
         }
 
     async def run_job_now(self, job_id: str) -> dict[str, Any]:
-        """Ejecuta manualmente un job programado."""
+        """Manually runs a scheduled job."""
         job = next((item for item in self.store.load_jobs() if item.id == job_id), None)
         if job is None:
             raise ValueError("job not found")
@@ -116,11 +116,11 @@ class RuntimeScheduler:
 
         response = await self.orchestrator.process_message(
             user_id="heartbeat-system",
-            user_message=f"{settings.heartbeat_prompt}\n\nChecklist activa:\n{heartbeat_text}",
+            user_message=f"{settings.heartbeat_prompt}\n\nActive checklist:\n{heartbeat_text}",
             lane="fast",
             source="heartbeat",
             store_memory=False,
-            title="Heartbeat del workspace",
+            title="Workspace heartbeat",
         )
         self.last_heartbeat_at = to_iso_z(now)
         self.last_heartbeat_result = response[:160]
@@ -133,7 +133,7 @@ class RuntimeScheduler:
                 lane=job.lane,
                 source="cron",
                 store_memory=False,
-                title=f"Job programado: {job.name}",
+                title=f"Scheduled job: {job.name}",
             )
             updated = self.store.mark_job_run(job.id, utc_now())
             return {
@@ -152,7 +152,7 @@ class RuntimeScheduler:
         heartbeat_path = workspace_root / "HEARTBEAT.md"
         if not heartbeat_path.exists():
             heartbeat_path.write_text(
-                "# HEARTBEAT.md\n\n# Deja este archivo vacio o con comentarios para omitir heartbeats.\n",
+                "# HEARTBEAT.md\n\n# Leave this file empty or with comments only to skip heartbeats.\n",
                 encoding="utf-8",
             )
             return ""

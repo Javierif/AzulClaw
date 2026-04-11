@@ -1,4 +1,4 @@
-"""Rutas HTTP para la desktop app."""
+"""HTTP routes for the desktop app."""
 
 from __future__ import annotations
 
@@ -19,12 +19,12 @@ from .services import (
 
 
 async def health_handler(_: web.Request) -> web.Response:
-    """Devuelve estado basico del backend local."""
+    """Returns basic health status of the local backend."""
     return web.json_response({"status": "ok"})
 
 
 async def desktop_chat_handler(req: web.Request) -> web.Response:
-    """Procesa un mensaje desde la app desktop."""
+    """Processes a message from the desktop app."""
     orchestrator = req.app["orchestrator"]
     payload = await req.json()
 
@@ -53,7 +53,7 @@ async def desktop_chat_handler(req: web.Request) -> web.Response:
 
 
 async def desktop_chat_stream_handler(req: web.Request) -> web.StreamResponse:
-    """Procesa un mensaje desde la app desktop y emite NDJSON incremental."""
+    """Processes a message from the desktop app and emits incremental NDJSON."""
     orchestrator = req.app["orchestrator"]
     payload = await req.json()
 
@@ -130,19 +130,19 @@ async def desktop_chat_stream_handler(req: web.Request) -> web.StreamResponse:
 
 
 async def desktop_processes_handler(_: web.Request) -> web.Response:
-    """Devuelve el resumen de procesos visibles para la desktop app."""
+    """Returns the process summary visible to the desktop app."""
     return web.json_response({"items": summarize_processes(_.app["process_registry"])})
 
 
 async def desktop_memory_handler(req: web.Request) -> web.Response:
-    """Devuelve una vista resumida de memoria para la desktop app."""
+    """Returns a summarised memory view for the desktop app."""
     orchestrator = req.app["orchestrator"]
     user_id = req.query.get("user_id", "desktop-user")
     return web.json_response({"items": summarize_memory(orchestrator, user_id)})
 
 
 async def desktop_workspace_handler(req: web.Request) -> web.Response:
-    """Lista contenido del workspace sandbox."""
+    """Lists the contents of the sandbox workspace."""
     relative_path = req.query.get("path", ".")
     try:
         listing = list_workspace_entries(relative_path)
@@ -153,18 +153,18 @@ async def desktop_workspace_handler(req: web.Request) -> web.Response:
 
 
 async def desktop_hatching_get_handler(_: web.Request) -> web.Response:
-    """Devuelve el perfil actual de Hatching."""
+    """Returns the current Hatching profile."""
     return web.json_response(load_hatching_profile())
 
 
 async def desktop_hatching_put_handler(req: web.Request) -> web.Response:
-    """Guarda el perfil de Hatching enviado por la desktop app."""
+    """Saves the Hatching profile sent by the desktop app."""
     payload = await req.json()
     return web.json_response(save_hatching_profile(payload))
 
 
 async def desktop_runtime_get_handler(req: web.Request) -> web.Response:
-    """Devuelve estado agregado del runtime local."""
+    """Returns aggregated status of the local runtime."""
     return web.json_response(
         summarize_runtime(
             req.app["runtime_manager"],
@@ -175,7 +175,7 @@ async def desktop_runtime_get_handler(req: web.Request) -> web.Response:
 
 
 async def desktop_runtime_put_handler(req: web.Request) -> web.Response:
-    """Persiste configuracion editable del runtime."""
+    """Saves editable runtime configuration."""
     payload = await req.json()
     req.app["runtime_manager"].save_settings(payload)
     return web.json_response(
@@ -188,12 +188,12 @@ async def desktop_runtime_put_handler(req: web.Request) -> web.Response:
 
 
 async def desktop_jobs_get_handler(req: web.Request) -> web.Response:
-    """Lista jobs programados del runtime."""
+    """Lists scheduled runtime jobs."""
     return web.json_response({"items": summarize_jobs(req.app["runtime_store"])})
 
 
 async def desktop_jobs_post_handler(req: web.Request) -> web.Response:
-    """Crea o actualiza un job programado."""
+    """Creates or updates a scheduled job."""
     payload = await req.json()
     try:
         job = req.app["runtime_store"].upsert_job(payload)
@@ -203,7 +203,7 @@ async def desktop_jobs_post_handler(req: web.Request) -> web.Response:
 
 
 async def desktop_job_run_handler(req: web.Request) -> web.Response:
-    """Ejecuta un job existente de forma manual."""
+    """Runs an existing job manually."""
     job_id = req.match_info.get("job_id", "")
     try:
         result = await req.app["scheduler"].run_job_now(job_id)
@@ -213,14 +213,14 @@ async def desktop_job_run_handler(req: web.Request) -> web.Response:
 
 
 async def desktop_job_delete_handler(req: web.Request) -> web.Response:
-    """Elimina un job del scheduler local."""
+    """Deletes a job from the local scheduler."""
     job_id = req.match_info.get("job_id", "")
     req.app["runtime_store"].delete_job(job_id)
     return web.json_response({"deleted": True, "job_id": job_id})
 
 
 def register_desktop_routes(app: web.Application) -> None:
-    """Registra endpoints consumidos por la app desktop."""
+    """Registers endpoints consumed by the desktop app."""
     app.router.add_get("/api/health", health_handler)
     app.router.add_post("/api/desktop/chat", desktop_chat_handler)
     app.router.add_post("/api/desktop/chat/stream", desktop_chat_stream_handler)

@@ -1,69 +1,69 @@
-# AzulClaw Desktop
+# azul_desktop
 
-Frontend de la app desktop de AzulClaw.
+Desktop application shell for AzulClaw.
 
-Esta app esta construida con **Tauri, React, TypeScript y Vite** para ofrecer una shell nativa ligera con una UI moderna y un enlace directo con el backend local en Python.
+Built with **Tauri, React, TypeScript and Vite** to provide a lightweight native shell with a modern UI and a direct link to the local Python backend.
 
-## Caracteristicas principales
+## Key features
 
 ### 1. Hatching
-- Wizard inicial para definir identidad, tono, autonomia, workspace y capacidades base del agente.
-- Dashboard posterior para editar esa configuracion sin repetir el onboarding completo.
+- Initial wizard to define the agent's identity, tone, autonomy, workspace, and base capabilities.
+- Dashboard to edit that configuration without repeating the full onboarding.
 
-### 2. Chat y control operativo
-- **Composer inteligente:** campo multilinea con `Enter` para enviar y `Shift+Enter` para nueva linea.
-- **Acciones rapidas:** accesos a Archivo, Memoria y Workspace desde el propio composer.
-- **Contexto vivo:** panel lateral con lane activa, motivo de triage, modelo y proceso asociado al turno.
-- **Streaming cognitivo dual:** el chat principal usa `POST /api/desktop/chat/stream`. La primera burbuja visible llega desde el cerebro `fast`, la ruta `slow` puede mostrar una tarjeta de progreso resumida y la respuesta final entra por `delta`.
-- **Estado de envio real:** el boton de enviar usa un loader persistente; ya no muestra `"..."`.
+### 2. Chat and operational control
+- **Smart composer:** multiline field with `Enter` to send and `Shift+Enter` for new line.
+- **Quick actions:** access to File, Memory, and Workspace from the composer itself.
+- **Live context:** side panel showing active lane, triage reason, model, and process tied to the current turn.
+- **Dual cognitive streaming:** the main chat uses `POST /api/desktop/chat/stream`. The first visible bubble comes from the `fast` brain; the `slow` route can show a summarised progress card; the final reply arrives via `delta`.
+- **Real send state:** the send button uses a persistent loader.
 
-### 3. Integracion segura
-- La UI no decide la logica cognitiva critica.
-- El backend Python concentra triage, memoria, runtime y streaming.
-- El workspace del agente sigue actuando como sandbox visible y comprensible para el usuario.
+### 3. Secure integration
+- The UI does not decide critical cognitive logic.
+- The Python backend handles triage, memory, runtime, and streaming.
+- The agent workspace continues to act as a visible, understandable sandbox for the user.
 
-## Tecnologias
+## Stack
 
 - **Core:** Tauri 2.x
 - **Frontend:** React 19 + TypeScript + Vite
-- **Estilos:** CSS plano con variables, layout propio y animaciones ligeras
+- **Styles:** plain CSS with variables, custom layout, and lightweight animations
 
-## Guia de desarrollo
+## Development guide
 
-Para iterar la UI en modo web:
+To iterate the UI in web mode:
 
 ```bash
 npm install
 npm run dev
 ```
 
-Notas:
-- El frontend de desarrollo vive en `http://localhost:1420`.
-- `Vite` proxifica `/api` al backend local `http://localhost:3978`.
-- El flujo de chat principal depende del endpoint incremental `/api/desktop/chat/stream`.
+Notes:
+- The dev frontend runs at `http://localhost:1420`.
+- Vite proxies `/api` to the local backend at `http://localhost:3978`.
+- The main chat flow depends on the incremental endpoint `/api/desktop/chat/stream`.
 
-Para abrir la app desktop nativa:
+To open the native desktop app:
 
 ```bash
 npm run tauri:dev
 ```
 
-Para compilar el bundle desktop:
+To build the desktop bundle:
 
 ```bash
 npm run tauri:build
 ```
 
-## Estructura
+## Structure
 
 ```text
 azul_desktop/
 |-- src/
-|   |-- app/          # Shell principal
-|   |-- components/   # Componentes compartidos
-|   |-- features/     # Modulos de producto
-|   |-- lib/          # Contratos, mocks y cliente HTTP
-|   `-- styles/       # Estilos globales
-|-- src-tauri/        # Capa nativa Tauri
+|   |-- app/          # Main shell
+|   |-- components/   # Shared components
+|   |-- features/     # Product modules
+|   |-- lib/          # Contracts, mocks, and HTTP client
+|   `-- styles/       # Global styles
+|-- src-tauri/        # Tauri native layer
 `-- package.json
 ```

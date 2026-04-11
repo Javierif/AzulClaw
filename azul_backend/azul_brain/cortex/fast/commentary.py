@@ -1,4 +1,4 @@
-"""Comentarista rapido y progreso visible para el usuario."""
+"""Fast commentator and visible progress for the user."""
 
 from __future__ import annotations
 
@@ -6,25 +6,25 @@ import json
 
 
 def build_commentary(user_message: str, *, reason: str, lane: str) -> str:
-    """Fallback heuristico si el cerebro rapido no puede narrar."""
+    """Heuristic fallback if the fast brain cannot narrate."""
     normalized = " ".join((user_message or "").strip().lower().split())
 
     if lane == "fast":
         if any(token in normalized for token in ("historia", "cuento", "inventa", "imagina")):
-            return "Dejame que lo imagine un segundo. Ya te la voy contando."
+            return "Let me picture that for a second. I'll start telling you now."
         if normalized.endswith("?"):
-            return "A ver, voy a responderte al vuelo."
-        return "Estoy con ello. Te lo voy soltando sobre la marcha."
+            return "Let me answer that right away."
+        return "On it. I'll walk you through it as I go."
 
     if any(token in normalized for token in ("archivo", "workspace", "carpeta", "documento", "pdf")):
-        return "Estoy revisando el contexto y leyendo lo necesario. Enseguida te doy una respuesta completa."
+        return "Reviewing the context and reading what I need. I'll have a full response shortly."
     if any(token in normalized for token in ("codigo", "code", "bug", "error", "traceback", "stacktrace")):
-        return "Estoy inspeccionando el problema con mas calma. Primero ordeno el contexto y luego te doy una respuesta cerrada."
+        return "Taking a closer look at this. Let me gather context first, then give you a definitive answer."
     if any(token in normalized for token in ("analiza", "arquitectura", "plan", "estrategia", "detall")):
-        return "Estoy pasando esto al cerebro lento para pensarlo bien. Te voy contando y luego te doy la respuesta completa."
+        return "Routing this to the slow brain to think it through properly. I'll keep you updated."
     if reason == "long-request":
-        return "Estoy desgranando la peticion paso a paso. Enseguida vuelvo con una respuesta completa."
-    return "Estoy pensando esto con mas calma. Ahora te doy una respuesta completa."
+        return "Breaking down the request step by step. Back with a full response shortly."
+    return "Thinking this through more carefully. Full response coming up."
 
 
 def prompt_for_fast_visible_commentary(
@@ -33,28 +33,28 @@ def prompt_for_fast_visible_commentary(
     reason: str,
     lane: str,
 ) -> list[dict[str, str]]:
-    """Prompt para que el cerebro rapido redacte la primera burbuja visible."""
-    lane_label = "cerebro rapido" if lane == "fast" else "cerebro lento"
+    """Prompt for the fast brain to draft the first visible bubble."""
+    lane_label = "fast brain" if lane == "fast" else "slow brain"
     return [
         {
             "role": "system",
             "text": (
-                "Eres el cerebro rapido visible de AzulClaw. "
-                "Devuelve solo JSON valido, sin markdown ni texto extra. "
-                'Usa este esquema exacto: {"commentary":""}. '
-                "La commentary debe ser una sola frase breve, natural y en espanol. "
-                "No des la respuesta final. "
-                "No expongas cadena de pensamiento. "
-                "Suena como una primera reaccion util del agente mientras trabaja."
+                "You are AzulClaw's fast visible brain. "
+                "Return only valid JSON, no markdown or extra text. "
+                'Use this exact schema: {"commentary":""}. '
+                "The commentary must be a single short, natural sentence. "
+                "Do not give the final answer. "
+                "Do not expose chain of thought. "
+                "Sound like a useful first reaction from the agent while it works."
             ),
         },
         {
             "role": "user",
             "text": (
-                "Genera la primera narracion visible para esta peticion.\n"
-                f"Ruta activa: {lane_label}\n"
-                f"Motivo de triage: {reason}\n"
-                f"Peticion: {user_message}"
+                "Generate the first visible narration for this request.\n"
+                f"Active route: {lane_label}\n"
+                f"Triage reason: {reason}\n"
+                f"Request: {user_message}"
             ),
         },
     ]
@@ -70,7 +70,7 @@ def build_progress_snapshot(
     summary: str = "",
     blueprint: dict | None = None,
 ) -> dict:
-    """Construye una vista segura y resumida del progreso interno."""
+    """Builds a safe, summarised view of internal progress."""
     selected_blueprint = blueprint or _select_blueprint(user_message, reason=reason, lane=lane)
     phases = _materialize_phases(selected_blueprint["phases"], stage=stage, tick=tick)
     active_count = sum(
@@ -89,19 +89,19 @@ def build_progress_snapshot(
 
 
 def prompt_for_fast_visible_plan(user_message: str, *, reason: str) -> list[dict[str, str]]:
-    """Prompt para que el cerebro rapido genere la primera respuesta visible."""
+    """Prompt for the fast brain to generate the first visible response."""
     return [
         {
             "role": "system",
             "text": (
-                "Eres el cerebro rapido visible de AzulClaw. "
-                "El cerebro lento trabajara en segundo plano. "
-                "Devuelve solo JSON valido, sin markdown ni texto extra. "
-                "No expongas cadena de pensamiento. "
-                "Responde con este esquema exacto: "
+                "You are AzulClaw's fast visible brain. "
+                "The slow brain will work in the background. "
+                "Return only valid JSON, no markdown or extra text. "
+                "Do not expose chain of thought. "
+                "Respond with this exact schema: "
                 '{"commentary":"",'
                 '"title":"",'
-                '"badge":"Cerebro lento",'
+                '"badge":"Slow brain",'
                 '"phases":['
                 '{"id":"phase-1","label":"","steps":["",""]},'
                 '{"id":"phase-2","label":"","steps":["",""]},'
@@ -112,16 +112,16 @@ def prompt_for_fast_visible_plan(user_message: str, *, reason: str) -> list[dict
         {
             "role": "user",
             "text": (
-                "Genera la primera narracion visible y un plan resumido para esta peticion.\n"
-                f"Motivo de triage: {reason}\n"
-                f"Peticion: {user_message}"
+                "Generate the first visible narration and a summarised plan for this request.\n"
+                f"Triage reason: {reason}\n"
+                f"Request: {user_message}"
             ),
         },
     ]
 
 
 def normalize_fast_visible_plan(raw_text: str, *, user_message: str, reason: str) -> tuple[str, dict]:
-    """Normaliza la salida del cerebro rapido y la mezcla con un fallback seguro."""
+    """Normalises the fast brain output and merges it with a safe fallback."""
     fallback_blueprint = _select_blueprint(user_message, reason=reason, lane="slow")
     fallback_commentary = build_commentary(user_message, reason=reason, lane="slow")
     payload = _extract_json_payload(raw_text)
@@ -147,7 +147,7 @@ def normalize_fast_visible_commentary(
     reason: str,
     lane: str,
 ) -> str:
-    """Normaliza la primera burbuja visible generada por el cerebro rapido."""
+    """Normalises the first visible bubble generated by the fast brain."""
     fallback_commentary = build_commentary(user_message, reason=reason, lane=lane)
     payload = _extract_json_payload(raw_text)
 
@@ -226,22 +226,22 @@ def _select_blueprint(user_message: str, *, reason: str, lane: str) -> dict:
 
     if lane != "slow":
         return {
-            "title": "Respuesta rapida",
-            "badge": "Cerebro rapido",
+            "title": "Quick response",
+            "badge": "Fast brain",
             "summary": {
-                "delegated": "Respuesta inmediata en curso.",
-                "context-ready": "Respuesta inmediata en curso.",
-                "thinking": "Respuesta inmediata en curso.",
-                "finalizing": "Cerrando la respuesta.",
-                "done": "Respuesta completada.",
+                "delegated": "Immediate response in progress.",
+                "context-ready": "Immediate response in progress.",
+                "thinking": "Immediate response in progress.",
+                "finalizing": "Wrapping up the response.",
+                "done": "Response complete.",
             },
             "phases": [
                 {
                     "id": "fast-answer",
-                    "label": "Respuesta al vuelo",
+                    "label": "On-the-fly response",
                     "steps": [
-                        "Interpretar el pedido",
-                        "Responder en streaming",
+                        "Interpret the request",
+                        "Respond in streaming",
                     ],
                 }
             ],
@@ -249,38 +249,38 @@ def _select_blueprint(user_message: str, *, reason: str, lane: str) -> dict:
 
     if any(token in normalized for token in ("archivo", "workspace", "carpeta", "documento", "pdf")):
         return {
-            "title": "Pensamiento profundo en marcha",
-            "badge": "Cerebro lento",
+            "title": "Deep thinking in progress",
+            "badge": "Slow brain",
             "summary": {
-                "delegated": "He lanzado una lectura profunda del contexto antes de responderte.",
-                "context-ready": "Ya tengo el contexto principal. Ahora estoy ordenando lo importante.",
-                "thinking": "Sigo cruzando el contexto para darte una respuesta util y compacta.",
-                "finalizing": "Estoy cerrando el resumen final y limpiando la salida.",
-                "done": "Proceso completado.",
+                "delegated": "Started a deep context read before replying.",
+                "context-ready": "Context gathered. Now organising what matters most.",
+                "thinking": "Still cross-referencing context to give you a useful, concise answer.",
+                "finalizing": "Finalising the summary and cleaning up the output.",
+                "done": "Process complete.",
             },
             "phases": [
                 {
                     "id": "phase-context",
-                    "label": "Fase 1: Recopilacion de Contexto",
+                    "label": "Phase 1: Context Gathering",
                     "steps": [
-                        "Localizar fuentes relevantes",
-                        "Leer archivos y memoria util",
+                        "Locate relevant sources",
+                        "Read files and useful memory",
                     ],
                 },
                 {
                     "id": "phase-analysis",
-                    "label": "Fase 2: Analisis y Sintesis",
+                    "label": "Phase 2: Analysis and Synthesis",
                     "steps": [
-                        "Extraer hallazgos principales",
-                        "Ordenar una respuesta accionable",
+                        "Extract key findings",
+                        "Structure an actionable response",
                     ],
                 },
                 {
                     "id": "phase-close",
-                    "label": "Fase 3: Cierre",
+                    "label": "Phase 3: Close",
                     "steps": [
-                        "Redactar el resumen final",
-                        "Revisar claridad y cobertura",
+                        "Draft the final summary",
+                        "Review clarity and coverage",
                     ],
                 },
             ],
@@ -288,38 +288,38 @@ def _select_blueprint(user_message: str, *, reason: str, lane: str) -> dict:
 
     if any(token in normalized for token in ("codigo", "code", "bug", "error", "traceback", "stacktrace")):
         return {
-            "title": "Analisis tecnico en marcha",
-            "badge": "Cerebro lento",
+            "title": "Technical analysis in progress",
+            "badge": "Slow brain",
             "summary": {
-                "delegated": "He lanzado una revision mas profunda para no responderte a ciegas.",
-                "context-ready": "Ya tengo el contexto tecnico. Ahora voy con la hipotesis principal.",
-                "thinking": "Estoy contrastando sintomas, contexto y solucion probable.",
-                "finalizing": "Estoy cerrando la explicacion y los siguientes pasos.",
-                "done": "Proceso completado.",
+                "delegated": "Started a deeper review to avoid a blind answer.",
+                "context-ready": "Technical context ready. Moving to the main hypothesis.",
+                "thinking": "Cross-checking symptoms, context, and probable solution.",
+                "finalizing": "Finalising the explanation and next steps.",
+                "done": "Process complete.",
             },
             "phases": [
                 {
                     "id": "phase-inspect",
-                    "label": "Fase 1: Inspeccion Tecnica",
+                    "label": "Phase 1: Technical Inspection",
                     "steps": [
-                        "Identificar el area afectada",
-                        "Revisar sintomas y contexto",
+                        "Identify the affected area",
+                        "Review symptoms and context",
                     ],
                 },
                 {
                     "id": "phase-resolve",
-                    "label": "Fase 2: Resolucion",
+                    "label": "Phase 2: Resolution",
                     "steps": [
-                        "Construir una hipotesis util",
-                        "Definir cambio o explicacion",
+                        "Build a useful hypothesis",
+                        "Define the change or explanation",
                     ],
                 },
                 {
                     "id": "phase-output",
-                    "label": "Fase 3: Cierre",
+                    "label": "Phase 3: Close",
                     "steps": [
-                        "Sintetizar la propuesta",
-                        "Revisar riesgos y siguientes pasos",
+                        "Synthesise the proposal",
+                        "Review risks and next steps",
                     ],
                 },
             ],
@@ -327,76 +327,76 @@ def _select_blueprint(user_message: str, *, reason: str, lane: str) -> dict:
 
     if any(token in normalized for token in ("historia", "cuento", "inventa", "imagina")):
         return {
-            "title": "Narrativa en construccion",
-            "badge": "Cerebro lento",
+            "title": "Narrative in construction",
+            "badge": "Slow brain",
             "summary": {
-                "delegated": "He pasado esto al modo narrativo para que tenga mas forma y ritmo.",
-                "context-ready": "Ya tengo el tono y los elementos principales. Ahora construyo la historia.",
-                "thinking": "Estoy montando la historia para que tenga un hilo claro y un cierre bueno.",
-                "finalizing": "Estoy puliendo el ritmo y el remate final.",
-                "done": "Proceso completado.",
+                "delegated": "Switched to narrative mode for better shape and flow.",
+                "context-ready": "Tone and key elements ready. Building the story now.",
+                "thinking": "Crafting the story so it has a clear thread and a good ending.",
+                "finalizing": "Polishing the pace and the final payoff.",
+                "done": "Process complete.",
             },
             "phases": [
                 {
                     "id": "phase-scene",
-                    "label": "Fase 1: Preparacion Narrativa",
+                    "label": "Phase 1: Narrative Preparation",
                     "steps": [
-                        "Identificar protagonistas y tono",
-                        "Definir escenario y punto de partida",
+                        "Identify protagonists and tone",
+                        "Define setting and starting point",
                     ],
                 },
                 {
                     "id": "phase-story",
-                    "label": "Fase 2: Construccion de la Historia",
+                    "label": "Phase 2: Story Construction",
                     "steps": [
-                        "Elegir conflicto o giro",
-                        "Ordenar inicio, nudo y cierre",
+                        "Choose conflict or twist",
+                        "Structure beginning, middle, and end",
                     ],
                 },
                 {
                     "id": "phase-polish",
-                    "label": "Fase 3: Pulido Final",
+                    "label": "Phase 3: Final Polish",
                     "steps": [
-                        "Ajustar ritmo y voz",
-                        "Cerrar la respuesta",
+                        "Adjust pace and voice",
+                        "Close the response",
                     ],
                 },
             ],
         }
 
     return {
-        "title": "Pensamiento profundo en marcha",
-        "badge": "Cerebro lento",
+        "title": "Deep thinking in progress",
+        "badge": "Slow brain",
         "summary": {
-            "delegated": "He lanzado una pasada mas lenta para ordenar bien la respuesta.",
-            "context-ready": "Ya tengo el contexto principal. Ahora bajo a los detalles relevantes.",
-            "thinking": "Estoy ordenando el enfoque antes de responderte.",
-            "finalizing": "Estoy cerrando los puntos clave para entregartelo limpio.",
-            "done": "Proceso completado.",
+            "delegated": "Running a slower pass to structure the response properly.",
+            "context-ready": "Main context ready. Diving into the relevant details now.",
+            "thinking": "Organising the approach before replying.",
+            "finalizing": "Closing the key points to deliver a clean response.",
+            "done": "Process complete.",
         },
         "phases": [
             {
                 "id": "phase-understand",
-                "label": "Fase 1: Comprension",
+                "label": "Phase 1: Understanding",
                 "steps": [
-                    "Aterrizar el objetivo real",
-                    "Recuperar contexto util",
+                    "Clarify the real objective",
+                    "Retrieve useful context",
                 ],
             },
             {
                 "id": "phase-build",
-                "label": "Fase 2: Construccion",
+                "label": "Phase 2: Construction",
                 "steps": [
-                    "Construir el enfoque principal",
-                    "Resolver puntos ambiguos",
+                    "Build the main approach",
+                    "Resolve ambiguous points",
                 ],
             },
             {
                 "id": "phase-review",
-                "label": "Fase 3: Cierre",
+                "label": "Phase 3: Close",
                 "steps": [
-                    "Redactar la respuesta final",
-                    "Revisar claridad y tono",
+                    "Draft the final response",
+                    "Review clarity and tone",
                 ],
             },
         ],

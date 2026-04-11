@@ -51,7 +51,7 @@ export async function sendDesktopMessage(
   } catch {
     return {
       reply:
-        "No he podido contactar con el backend real. Mantengo el shell visual activo con datos de fallback.",
+        "Could not reach the real backend. Keeping the visual shell active with fallback data.",
       history: chatMessages,
       runtime: defaultChatRuntime,
     };

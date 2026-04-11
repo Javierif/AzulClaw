@@ -1,4 +1,4 @@
-"""Punto de entrada HTTP de AzulClaw y ciclo de vida del proceso principal."""
+"""AzulClaw HTTP entry point and main process lifecycle."""
 
 import asyncio
 import logging
@@ -39,7 +39,7 @@ CORS_ALLOWED_HEADERS = "Content-Type,Authorization"
 
 
 def apply_cors_headers(req: web.Request, response: web.StreamResponse) -> None:
-    """Aplica CORS tambien a respuestas en streaming y errores del framework."""
+    """Applies CORS headers also to streaming responses and framework errors."""
     origin = req.headers.get("Origin", "").strip()
     requested_headers = req.headers.get("Access-Control-Request-Headers", "").strip()
 
@@ -52,13 +52,13 @@ def apply_cors_headers(req: web.Request, response: web.StreamResponse) -> None:
 
 
 async def cors_on_prepare(req: web.Request, response: web.StreamResponse) -> None:
-    """Inyecta CORS justo antes de enviar cabeceras, incluso en StreamResponse."""
+    """Injects CORS headers just before sending, including on StreamResponse."""
     apply_cors_headers(req, response)
 
 
 @web.middleware
 async def cors_middleware(req: web.Request, handler):
-    """Aplica cabeceras CORS simples para la desktop app en desarrollo."""
+    """Applies simple CORS headers for the desktop app in development."""
     if req.method == "OPTIONS":
         response = web.Response(status=204)
         apply_cors_headers(req, response)
@@ -67,7 +67,7 @@ async def cors_middleware(req: web.Request, handler):
 
 
 async def messages_handler(req: web.Request) -> web.Response:
-    """Endpoint de mensajes de Azure Bot Service."""
+    """Azure Bot Service messages endpoint."""
     bot = req.app["bot"]
     adapter = req.app["adapter"]
 
@@ -85,8 +85,8 @@ async def messages_handler(req: web.Request) -> web.Response:
 
 
 async def create_app() -> web.Application:
-    """Inicializa app HTTP, cliente MCP, bot y API desktop."""
-    LOGGER.info("Despertando el Cerebro de AzulClaw...")
+    """Initialises the HTTP app, MCP client, bot, and desktop API."""
+    LOGGER.info("Waking up AzulClaw's brain...")
 
     base_path = Path(__file__).resolve().parent
     runtime_config = load_runtime_config(base_path)
@@ -98,8 +98,8 @@ async def create_app() -> web.Application:
         await mcp_client.connect()
     except Exception as error:
         LOGGER.error(
-            "Fallo critico: No se pudo conectar las Manos (MCP Server). "
-            "El Bot sera de solo lectura. %s",
+            "Critical failure: could not connect to the Hands (MCP Server). "
+            "Bot will be read-only. %s",
             error,
         )
 
@@ -130,7 +130,7 @@ async def create_app() -> web.Application:
 
 
 async def main() -> None:
-    """Arranca el servidor HTTP y mantiene el proceso en ejecucion."""
+    """Starts the HTTP server and keeps the process running."""
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
     base_path = Path(__file__).resolve().parent
@@ -145,7 +145,7 @@ async def main() -> None:
         site = web.TCPSite(runner, host=HOST, port=port)
         await site.start()
         LOGGER.info(
-            "Servidor local HTTP escuchando en http://%s:%s",
+            "Local HTTP server listening on http://%s:%s",
             HOST,
             port,
         )
@@ -153,8 +153,8 @@ async def main() -> None:
     except OSError as error:
         if getattr(error, "winerror", None) == 10048:
             LOGGER.error(
-                "El puerto %s ya esta en uso. Cierra la otra instancia de AzulClaw o "
-                "cambia la variable PORT.",
+                "Port %s is already in use. Close the other AzulClaw instance or "
+                "change the PORT variable.",
                 port,
             )
             return
@@ -165,13 +165,13 @@ async def main() -> None:
             try:
                 await mcp_client.cleanup()
             except Exception as cleanup_error:
-                LOGGER.warning("Error al cerrar MCP Client: %s", cleanup_error)
+                LOGGER.warning("Error closing MCP Client: %s", cleanup_error)
         scheduler = app.get("scheduler")
         if scheduler is not None:
             try:
                 await scheduler.stop()
             except Exception as scheduler_error:
-                LOGGER.warning("Error al detener scheduler: %s", scheduler_error)
+                LOGGER.warning("Error stopping scheduler: %s", scheduler_error)
         await runner.cleanup()
 
 
@@ -179,6 +179,6 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        LOGGER.info("AzulClaw detenido por usuario.")
+        LOGGER.info("AzulClaw stopped by user.")
     except Exception as error:
-        LOGGER.error("Error mortal: %s", error)
+        LOGGER.error("Fatal error: %s", error)

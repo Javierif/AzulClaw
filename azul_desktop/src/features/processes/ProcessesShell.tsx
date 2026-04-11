@@ -27,7 +27,7 @@ export function ProcessesShell() {
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Processes</p>
-            <h2>Actividad interna del agente</h2>
+            <h2>Agent internal activity</h2>
           </div>
           <div className="filter-row">
             <span className="status-pill status-pill-live">Running</span>
@@ -53,12 +53,12 @@ export function ProcessesShell() {
           </div>
 
           <div className="subcard">
-            <p className="eyebrow">Detalle</p>
-            <h3>{selected?.title || "Sin procesos"}</h3>
-            <p>Estado: {selected?.status || "idle"}</p>
-            <p>Origen: {selected?.skill || "runtime"}</p>
-            <p>Cerebro: {selected?.lane || "auto"} {selected?.modelLabel ? `· ${selected.modelLabel}` : ""}</p>
-            <p>Detalle: {selected?.detail || "Esperando nuevas ejecuciones."}</p>
+            <p className="eyebrow">Detail</p>
+            <h3>{selected?.title || "No processes"}</h3>
+            <p>Status: {selected?.status || "idle"}</p>
+            <p>Source: {selected?.skill || "runtime"}</p>
+            <p>Brain: {selected?.lane || "auto"} {selected?.modelLabel ? `· ${selected.modelLabel}` : ""}</p>
+            <p>Detail: {selected?.detail || "Waiting for new executions."}</p>
             <div className="action-row">
               <button type="button" className="ghost-button">
                 Refresh

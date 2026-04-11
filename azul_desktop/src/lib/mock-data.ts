@@ -13,20 +13,20 @@ export const chatMessages: ChatExchange[] = [
   {
     id: "m1",
     role: "user",
-    content: "Quiero revisar el contenido de Projects y resumir lo importante.",
+    content: "I want to review the Projects folder and summarise the key items.",
   },
   {
     id: "m2",
     role: "assistant",
     content:
-      "Estoy preparando el contexto del workspace. Primero leere la carpeta Projects y luego generare un resumen accionable.",
+      "I'm preparing the workspace context. I'll first read the Projects folder and then generate an actionable summary.",
   },
 ];
 
 export const processItems: ProcessSummary[] = [
   {
     id: "p1",
-    title: "Revisar documentos de Projects",
+    title: "Review Projects documents",
     status: "running",
     skill: "Workspace",
     kind: "agent-run",
@@ -38,7 +38,7 @@ export const processItems: ProcessSummary[] = [
   },
   {
     id: "p2",
-    title: "Clasificar notas en Inbox",
+    title: "Organise Inbox notes",
     status: "waiting",
     skill: "Workspace",
     kind: "agent-run",
@@ -49,7 +49,7 @@ export const processItems: ProcessSummary[] = [
   },
   {
     id: "p3",
-    title: "Resumen semanal",
+    title: "Weekly summary",
     status: "done",
     skill: "Memory",
     kind: "agent-run",
@@ -64,22 +64,22 @@ export const processItems: ProcessSummary[] = [
 export const memoryItems: MemoryRecord[] = [
   {
     id: "mem1",
-    title: "Javier prefiere respuestas directas",
+    title: "User prefers direct answers",
     kind: "preference",
     source: "Hatching",
     pinned: true,
   },
   {
     id: "mem2",
-    title: "Error recurrente con Azure auth",
+    title: "Recurring error with Azure auth",
     kind: "episodic",
-    source: "Sesion del 8 de abril",
+    source: "Session from April 8th",
   },
   {
     id: "mem3",
-    title: "Resumen de arquitectura de AzulClaw",
+    title: "AzulClaw architecture summary",
     kind: "semantic",
-    source: "Documento indexado",
+    source: "Indexed document",
   },
 ];
 
@@ -93,11 +93,11 @@ export const workspaceEntries: WorkspaceEntry[] = [
 
 export const defaultHatchingProfile: HatchingProfile = {
   name: "AzulClaw",
-  role: "Companero tecnico local",
-  mission: "Ayudarte sin perder seguridad ni contexto.",
-  tone: "Directo",
-  style: "Explicativo",
-  autonomy: "Autonomo moderado",
+  role: "Local technical companion",
+  mission: "Help you without losing safety or context.",
+  tone: "Direct",
+  style: "Explanatory",
+  autonomy: "Moderately autonomous",
   archetype: "Companion",
   workspace_root: "C:\\Users\\javie\\Desktop\\AzulWorkspace",
   confirm_sensitive_actions: true,

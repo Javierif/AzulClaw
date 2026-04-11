@@ -1,4 +1,4 @@
-"""Configuración de runtime para AzulClaw."""
+"""Runtime configuration for AzulClaw."""
 
 from dataclasses import dataclass
 import logging
@@ -14,7 +14,7 @@ LOGGER = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class RuntimeConfig:
-    """Configuración tipada de runtime para el proceso principal."""
+    """Typed runtime configuration for the main process."""
 
     app_id: str
     app_password: str
@@ -22,7 +22,7 @@ class RuntimeConfig:
 
 
 def load_env_file(env_file_path: Path) -> None:
-    """Carga variables desde .env.local sin sobrescribir variables ya definidas."""
+    """Loads variables from .env.local without overwriting already-defined variables."""
     if not env_file_path.exists():
         return
 
@@ -42,12 +42,12 @@ def load_env_file(env_file_path: Path) -> None:
 
 
 def parse_port(raw_port: str, default_port: int = DEFAULT_PORT) -> int:
-    """Convierte PORT a entero con fallback seguro."""
+    """Converts PORT to an integer with a safe fallback."""
     try:
         return int(raw_port)
     except ValueError:
         LOGGER.warning(
-            "PORT invalido ('%s'). Se usara el puerto por defecto %s.",
+            "Invalid PORT value ('%s'). Falling back to default port %s.",
             raw_port,
             default_port,
         )
@@ -55,7 +55,7 @@ def parse_port(raw_port: str, default_port: int = DEFAULT_PORT) -> int:
 
 
 def load_runtime_config(base_path: Path) -> RuntimeConfig:
-    """Carga variables de entorno y devuelve configuración tipada de runtime."""
+    """Loads environment variables and returns typed runtime configuration."""
     load_env_file(base_path / ENV_LOCAL_FILENAME)
     app_id = os.environ.get("MicrosoftAppId", "")
     app_password = os.environ.get("MicrosoftAppPassword", "")
