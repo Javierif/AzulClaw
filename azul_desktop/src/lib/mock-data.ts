@@ -98,6 +98,7 @@ export const defaultHatchingProfile: HatchingProfile = {
   tone: "Direct",
   style: "Explanatory",
   autonomy: "Moderately autonomous",
+  archetype: "Companion",
   workspace_root: "C:\\Users\\javie\\Desktop\\AzulWorkspace",
   confirm_sensitive_actions: true,
   is_hatched: false,

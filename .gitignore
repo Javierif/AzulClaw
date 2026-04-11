@@ -34,3 +34,4 @@ azul_desktop/src-tauri/gen/
 *.pdb
 *.rlib
 *.rmeta
+*.db

@@ -240,12 +240,14 @@ export async function loadJobs(): Promise<ScheduledJob[]> {
 }
 
 export async function saveJob(payload: {
+  id?: string;
   name: string;
   prompt: string;
   lane: "auto" | "fast" | "slow";
   schedule_kind: "at" | "every";
   interval_seconds?: number;
   run_at?: string;
+  enabled?: boolean;
 }): Promise<ScheduledJob> {
   return fetchJson<ScheduledJob>("/api/desktop/jobs", {
     method: "POST",

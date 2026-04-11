@@ -83,6 +83,7 @@ class RuntimeSettings:
     """Editable local runtime configuration."""
 
     default_lane: Literal["auto", "fast", "slow"] = "auto"
+
     models: list[RuntimeModelProfile] = field(default_factory=list)
 
 

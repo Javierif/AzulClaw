@@ -88,6 +88,7 @@ export interface HatchingProfile {
   tone: string;
   style: string;
   autonomy: string;
+  archetype: string;
   workspace_root: string;
   confirm_sensitive_actions: boolean;
   is_hatched: boolean;
