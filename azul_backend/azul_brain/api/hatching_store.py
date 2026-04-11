@@ -18,7 +18,7 @@ class HatchingProfile:
     tone: str = "Direct"
     style: str = "Explanatory"
     autonomy: str = "Moderately autonomous"
-    archetype: str = "Companion"
+
     workspace_root: str = field(
         default_factory=lambda: str(Path.home() / "Desktop" / "AzulWorkspace")
     )
@@ -48,6 +48,7 @@ class HatchingStore:
             return HatchingProfile()
 
         data = json.loads(self.profile_path.read_text(encoding="utf-8"))
+        data.pop("archetype", None)
         return HatchingProfile(**data)
 
     def save(self, profile: HatchingProfile) -> HatchingProfile:

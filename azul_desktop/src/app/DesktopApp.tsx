@@ -106,7 +106,6 @@ export function DesktopApp() {
           </div>
           <div className="status-cluster">
             <span className="status-pill status-pill-live">Awake</span>
-            <span className="status-pill">{profile.archetype}</span>
             <span className="status-pill">Local + Cloud</span>
           </div>
         </header>
