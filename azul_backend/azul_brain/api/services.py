@@ -109,13 +109,14 @@ def summarize_memory(orchestrator, user_id: str) -> list[dict]:
 
 
 def summarize_runtime(runtime_manager, scheduler, process_registry) -> dict:
-    """Returns aggregated model, scheduler, and heartbeat status."""
+    """Returns aggregated model and scheduler status."""
     settings = runtime_manager.load_settings()
     scheduler_status = scheduler.get_status()
     return {
         "default_lane": settings.default_lane,
         "models": runtime_manager.list_model_status(),
-        "heartbeat": scheduler_status["heartbeat"],
+        "scheduler_running": scheduler_status["scheduler_running"],
+        "scheduler_last_error": scheduler_status["scheduler_last_error"],
         "jobs_total": scheduler_status["jobs_total"],
         "jobs_running": scheduler_status["jobs_running"],
         "processes_visible": len(process_registry.list_processes()),
@@ -136,6 +137,8 @@ def summarize_jobs(store) -> list[dict]:
                 "run_at": job.run_at,
                 "interval_seconds": job.interval_seconds,
                 "enabled": job.enabled,
+                "system": job.system,
+                "source": job.source,
                 "created_at": job.created_at,
                 "updated_at": job.updated_at,
                 "last_run_at": job.last_run_at,
@@ -181,7 +184,7 @@ def save_hatching_profile(payload: dict) -> dict:
         tone=str(payload.get("tone", current.tone)).strip() or current.tone,
         style=str(payload.get("style", current.style)).strip() or current.style,
         autonomy=str(payload.get("autonomy", current.autonomy)).strip() or current.autonomy,
-        archetype=str(payload.get("archetype", current.archetype)).strip() or current.archetype,
+
         workspace_root=str(payload.get("workspace_root", current.workspace_root)).strip()
         or current.workspace_root,
         confirm_sensitive_actions=bool(
