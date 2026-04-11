@@ -2,6 +2,7 @@ import mascotIcon from "../../../img/azulclaw_ico.png";
 import hatchlingIcon from "../../../img/hatching_azulclaw_ico.png";
 
 import type { AppView, HatchingProfile } from "../lib/contracts";
+import { Tooltip } from "./Tooltip";
 
 const navItems: { label: string; view: AppView }[] = [
   { label: "Chat", view: "chat" },
@@ -47,8 +48,10 @@ export function Sidebar({ activeView, onNavigate, profile }: SidebarProps) {
 
       <section className="workspace-card">
         <p className="eyebrow">Sandbox</p>
-        <h3>AzulWorkspace</h3>
-        <p>{profile.workspace_root}</p>
+        <p className="workspace-name">{profile.workspace_root.split("/").filter(Boolean).pop() ?? "Workspace"}</p>
+        <Tooltip text={profile.workspace_root} className="workspace-path">
+          {"~/" + profile.workspace_root.split("/").filter(Boolean).slice(-2).join("/")}
+        </Tooltip>
       </section>
     </aside>
   );
