@@ -1,42 +1,42 @@
-# AzulClaw: Sistema unificado de Heartbeats (Scheduler)
+# AzulClaw: Unified Heartbeats System (Scheduler)
 
-**Fecha de última revisión:** Abril 2026
+**Last reviewed:** April 2026
 
-## 1. Visión General
+## 1. Overview
 
-El sistema de **Heartbeats** de AzulClaw es el mecanismo que le otorga "iniciativa propia" al agente. Históricamente existían dos conceptos paralelos que hacían lo mismo:
-1. **System Heartbeat**: El "latido" base del sistema para revisar el contexto (leer archivos de estado y ejecutar un prompt de chequeo general).
-2. **Scheduled Jobs**: Tareas recurrentes creadas por el usuario.
+The **Heartbeats** system in AzulClaw is the mechanism that gives the agent "its own initiative." Historically, there were two parallel concepts doing the same thing:
+1. **System Heartbeat**: The system's base "pulse" to check context (reading state files and running a general check prompt).
+2. **Scheduled Jobs**: Recurring tasks created by the user.
 
-Para simplificar la arquitectura cognitiva, se ha realizado una **unificación arquitectónica**. Ahora, **todo son Heartbeats**. Todas las rutinas y automatizaciones (incluyendo el sistema base) comparten un único modelo de datos, la misma vista de interfaz de usuario y el mismo ciclo de evaluación.
+To simplify the cognitive architecture, an **architectural unification** has been made. Now, **everything is a Heartbeat**. All routines and automations (including the base system) share a single data model, the same UI view, and the same evaluation loop.
 
-## 2. El Heartbeat del Sistema (`system-heartbeat`)
+## 2. The System Heartbeat (`system-heartbeat`)
 
-El heartbeat principal de AzulClaw se trata ahora como un *Heartbeat nativo/integrado*. 
-*   **Indestructible:** No se puede borrar desde la interfaz (aparece con un icono de candado 🔒).
-*   **Inyección Automática de Contexto:** El motor de ejecución (Scheduler) intercepta la ejecución de este heartbeat específico (`system: true` con id `system-heartbeat`) y le inyecta automáticamente el contenido del archivo `HEARTBEAT.md` que exista en el Workspace, además del propio prompt configurado en la UI.
-*   **Autocreación:** Al arrancar el cerebro en `store.py`, la función `ensure_system_heartbeat_job()` revisa si existe. De lo contrario, lo crea automáticamente con los valores por defecto asegurando que el agente nunca se quede sin "pulso".
+The main AzulClaw heartbeat is now treated as a *native/built-in Heartbeat*.
+*   **Indestructible:** It cannot be deleted from the interface (it appears with a 🔒 lock icon).
+*   **Automatic Context Injection:** The execution engine (Scheduler) intercepts the execution of this specific heartbeat (`system: true` with id `system-heartbeat`) and automatically injects the contents of the `HEARTBEAT.md` file (if it exists in the Workspace) alongside the prompt configured in the UI.
+*   **Self-creation:** On brain startup in `store.py`, the `ensure_system_heartbeat_job()` function checks if it exists. If not, it creates it automatically with default values, ensuring the agent never loses its "pulse."
 
-Si el agente escanea `HEARTBEAT.md` y no encuentra nada accionable, el hilo se cierra silenciosamente devolviendo un `HEARTBEAT_SKIP` en lugar de invocar una inferencia costosa del System 2.
+If the agent scans `HEARTBEAT.md` and finds nothing actionable, the thread closes silently returning a `HEARTBEAT_SKIP` instead of invoking an expensive System 2 inference.
 
 ## 3. Custom Heartbeats (User Jobs)
 
-Las automatizaciones de los usuarios se manejan de manera idéntica al latido principal, permitiendo crear recordatorios, validaciones periódicas o reportes con las siguientes propiedades:
-*   Frecuencia (`interval_seconds`).
-*   Prompt específico.
-*   Pausa/Reanudación.
+User automations are handled identically to the main pulse, allowing for reminders, periodic validations, or reports with the following properties:
+*   Frequency (`interval_seconds`).
+*   Specific prompt.
+*   Pause/Resume mechanics.
 
-## 4. Triage y Selección de Cerebros (Lanes)
+## 4. Triage and Brain Selection (Lanes)
 
-En la interfaz de usuario, al crear un Heartbeat, ya no se permite seleccionar manualmente el "Brain" (por ejemplo, forzar que use System 1 `fast` o System 2 `slow`). Mantenemos una postura opinada donde el _Lane_ es siempre **Auto**.
-La carga de trabajo se enruta mediante nuestro sistema interno de **Triage**, donde el agente `fast` decide, en tiempo de ejecución, si la tarea del heartbeat es lo suficientemente trivial para resolverla localmente o si requiere delegarla al modelo `slow`. Esto abstrae al usuario de la carga cognitiva de coordinar LLMs.
+In the user interface, when creating a Heartbeat, manually selecting the "Brain" (e.g., forcing System 1 `fast` or System 2 `slow`) is no longer allowed. We maintain an opinionated stance where the _Lane_ is always **Auto**.
+The workload is routed through our internal **Triage** system, where the `fast` agent decides at runtime whether the heartbeat task is trivial enough to solve locally or if it requires delegating to the `slow` model. This abstracts the cognitive load of coordinating LLMs away from the user.
 
-## 5. Arquitectura Interna y Componentes Clave
+## 5. Internal Architecture and Key Components
 
 ### 5.1 Backend
-*   **`azul_backend/azul_brain/runtime/store.py`**: Posee el modelo `ScheduledJob` unificado. Añadimos el campo `system: bool` y protegemos el borrado de tareas del propio sistema.
-*   **`azul_backend/azul_brain/runtime/scheduler.py`**: Contiene un único método `_execute_job()` para procesar todos los heartbeats en su turno evitando redundancias.
+*   **`azul_backend/azul_brain/runtime/store.py`**: Holds the unified `ScheduledJob` model. We added the `system: bool` field and protected the deletion of built-in system tasks.
+*   **`azul_backend/azul_brain/runtime/scheduler.py`**: Contains a single `_execute_job()` method to process all heartbeats in turn, avoiding redundancies.
 
 ### 5.2 Frontend
-*   Todo el texto visible al usuario hace referencia a traducciones de **"Heartbeats / Automations"**. 
-*   Se unieron las vistas antiguas de configuración del pulso del sistema con el listado de jobs, creando la interfaz unificada `HeartbeatsShell.tsx`.
+*   All user-facing text refers to translations of **"Heartbeats / Automations"**.
+*   The old system pulse configuration views were merged with the jobs list, creating the unified `HeartbeatsShell.tsx` interface.
