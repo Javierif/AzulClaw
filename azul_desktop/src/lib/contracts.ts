@@ -34,3 +34,19 @@ export interface ChatExchange {
   role: "user" | "assistant";
   content: string;
 }
+
+export interface HatchingProfile {
+  name: string;
+  role: string;
+  mission: string;
+  tone: string;
+  style: string;
+  autonomy: string;
+  archetype: string;
+  workspace_root: string;
+  confirm_sensitive_actions: boolean;
+  is_hatched: boolean;
+  completed_at: string;
+  skills: string[];
+  skill_configs: Record<string, Record<string, string>>;
+}

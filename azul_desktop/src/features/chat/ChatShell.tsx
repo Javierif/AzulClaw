@@ -35,6 +35,13 @@ export function ChatShell() {
     setIsSending(false);
   }
 
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      void handleSend();
+    }
+  }
+
   return (
     <section className="chat-layout">
       <div className="chat-panel card">
@@ -68,31 +75,41 @@ export function ChatShell() {
         </div>
 
         <div className="composer">
-          <div className="composer-actions">
-            <button type="button" className="ghost-button">
-              Attach
-            </button>
-            <button type="button" className="ghost-button">
-              Memory
-            </button>
-            <button type="button" className="ghost-button">
-              Workspace
-            </button>
+          <div className="composer-wrapper">
+            <label className="composer-field">
+              <span className="sr-only">Message AzulClaw</span>
+              <textarea
+                placeholder="Escribe un mensaje... (Enter para enviar, Shift+Enter para nueva línea)"
+                rows={1}
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={handleKeyDown}
+              />
+            </label>
+            <div className="composer-bottom">
+              <div className="composer-actions">
+                <button type="button" className="ghost-button-mini" title="Adjuntar un archivo local" aria-label="Adjuntar archivo">
+                  📎 Archivo
+                </button>
+                <button type="button" className="ghost-button-mini" title="Buscar en las preferencias del agente" aria-label="Añadir Memoria">
+                  🧠 Memoria
+                </button>
+                <button type="button" className="ghost-button-mini" title="Buscar un documento del Workspace" aria-label="Añadir del Workspace">
+                  🗂️ Workspace
+                </button>
+              </div>
+              <button 
+                type="button" 
+                className="composer-send-btn" 
+                onClick={() => void handleSend()} 
+                disabled={isSending || !draft.trim()}
+              >
+                {isSending ? "..." : "Enviar ➔"}
+              </button>
+            </div>
           </div>
-          <label className="composer-field">
-            <span className="sr-only">Message AzulClaw</span>
-            <textarea
-              placeholder="Escribe un mensaje para AzulClaw..."
-              rows={4}
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-            />
-          </label>
           <div className="composer-footer">
-            <span className="hint-text">El agente solo opera dentro de su sandbox.</span>
-            <button type="button" className="primary-button" onClick={handleSend}>
-              {isSending ? "Sending..." : "Send"}
-            </button>
+            <span className="hint-text">AzulClaw puede cometer errores. Considera verificar la información importante.</span>
           </div>
         </div>
       </div>

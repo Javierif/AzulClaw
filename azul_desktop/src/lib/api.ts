@@ -1,6 +1,13 @@
-import type { ChatExchange, MemoryRecord, ProcessSummary, WorkspaceEntry } from "./contracts";
+import type {
+  ChatExchange,
+  HatchingProfile,
+  MemoryRecord,
+  ProcessSummary,
+  WorkspaceEntry,
+} from "./contracts";
 import {
   chatMessages,
+  defaultHatchingProfile,
   memoryItems,
   processItems,
   workspaceEntries,
@@ -76,5 +83,25 @@ export async function loadWorkspace(path = "."): Promise<{
       current_path: ".",
       entries: workspaceEntries,
     };
+  }
+}
+
+export async function loadHatching(): Promise<HatchingProfile> {
+  try {
+    return await fetchJson<HatchingProfile>("/api/desktop/hatching");
+  } catch {
+    return defaultHatchingProfile;
+  }
+}
+
+export async function saveHatching(profile: HatchingProfile): Promise<HatchingProfile> {
+  try {
+    return await fetchJson<HatchingProfile>("/api/desktop/hatching", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profile),
+    });
+  } catch {
+    return profile;
   }
 }

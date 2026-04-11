@@ -6,6 +6,8 @@ from aiohttp import web
 
 from .services import (
     list_workspace_entries,
+    load_hatching_profile,
+    save_hatching_profile,
     summarize_memory,
     summarize_processes,
 )
@@ -61,6 +63,17 @@ async def desktop_workspace_handler(req: web.Request) -> web.Response:
     return web.json_response(listing)
 
 
+async def desktop_hatching_get_handler(_: web.Request) -> web.Response:
+    """Devuelve el perfil actual de Hatching."""
+    return web.json_response(load_hatching_profile())
+
+
+async def desktop_hatching_put_handler(req: web.Request) -> web.Response:
+    """Guarda el perfil de Hatching enviado por la desktop app."""
+    payload = await req.json()
+    return web.json_response(save_hatching_profile(payload))
+
+
 def register_desktop_routes(app: web.Application) -> None:
     """Registra endpoints consumidos por la app desktop."""
     app.router.add_get("/api/health", health_handler)
@@ -68,3 +81,5 @@ def register_desktop_routes(app: web.Application) -> None:
     app.router.add_get("/api/desktop/processes", desktop_processes_handler)
     app.router.add_get("/api/desktop/memory", desktop_memory_handler)
     app.router.add_get("/api/desktop/workspace", desktop_workspace_handler)
+    app.router.add_get("/api/desktop/hatching", desktop_hatching_get_handler)
+    app.router.add_put("/api/desktop/hatching", desktop_hatching_put_handler)

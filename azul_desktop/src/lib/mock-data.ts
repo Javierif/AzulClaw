@@ -1,5 +1,6 @@
 import type {
   ChatExchange,
+  HatchingProfile,
   MemoryRecord,
   ProcessSummary,
   WorkspaceEntry,
@@ -72,3 +73,19 @@ export const workspaceEntries: WorkspaceEntry[] = [
   { name: "weekly-summary.md", kind: "file", path: "/Generated/weekly-summary.md" },
   { name: "notes-refactor.txt", kind: "file", path: "/Inbox/notes-refactor.txt" },
 ];
+
+export const defaultHatchingProfile: HatchingProfile = {
+  name: "AzulClaw",
+  role: "Companero tecnico local",
+  mission: "Ayudarte sin perder seguridad ni contexto.",
+  tone: "Directo",
+  style: "Explicativo",
+  autonomy: "Autonomo moderado",
+  archetype: "Companion",
+  workspace_root: "C:\\Users\\javie\\Desktop\\AzulWorkspace",
+  confirm_sensitive_actions: true,
+  is_hatched: false,
+  completed_at: "",
+  skills: ["Email", "Telegram", "Workspace", "Memory"],
+  skill_configs: {},
+};

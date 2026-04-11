@@ -6,6 +6,8 @@ from pathlib import Path
 
 from azul_backend.azul_hands_mcp.path_validator import PathValidator
 
+from .hatching_store import HatchingProfile, HatchingStore
+
 
 def get_workspace_root() -> Path:
     """Devuelve la raiz del workspace sandbox de AzulClaw."""
@@ -84,13 +86,14 @@ def summarize_processes() -> list[dict]:
 
 def summarize_memory(orchestrator, user_id: str) -> list[dict]:
     """Devuelve una vista simple de memoria para la app desktop."""
+    profile = HatchingStore().load()
     history = orchestrator.memory.get_history(user_id, limit=12)
     records = [
         {
             "id": "pref-directness",
-            "title": "Preferencia por respuestas directas",
+            "title": f"Tono preferido: {profile.tone}",
             "kind": "preference",
-            "source": "desktop-default",
+            "source": "hatching-profile",
             "pinned": True,
         }
     ]
@@ -109,3 +112,63 @@ def summarize_memory(orchestrator, user_id: str) -> list[dict]:
         )
 
     return records
+
+
+def load_hatching_profile() -> dict:
+    """Devuelve el perfil actual de Hatching como diccionario serializable."""
+    return HatchingStore().load().__dict__
+
+
+def _sanitize_skill_configs(raw_configs: object, fallback: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
+    if not isinstance(raw_configs, dict):
+        return fallback
+
+    cleaned: dict[str, dict[str, str]] = {}
+    for skill, config in raw_configs.items():
+        skill_name = str(skill).strip()
+        if not skill_name or not isinstance(config, dict):
+            continue
+
+        entries = {
+            str(key).strip(): str(value).strip()
+            for key, value in config.items()
+            if str(key).strip() and str(value).strip()
+        }
+        cleaned[skill_name] = entries
+
+    return cleaned
+
+
+def save_hatching_profile(payload: dict) -> dict:
+    """Valida y persiste el perfil de Hatching."""
+    current = HatchingStore().load()
+
+    profile = HatchingProfile(
+        name=str(payload.get("name", current.name)).strip() or current.name,
+        role=str(payload.get("role", current.role)).strip() or current.role,
+        mission=str(payload.get("mission", current.mission)).strip() or current.mission,
+        tone=str(payload.get("tone", current.tone)).strip() or current.tone,
+        style=str(payload.get("style", current.style)).strip() or current.style,
+        autonomy=str(payload.get("autonomy", current.autonomy)).strip() or current.autonomy,
+        archetype=str(payload.get("archetype", current.archetype)).strip() or current.archetype,
+        workspace_root=str(payload.get("workspace_root", current.workspace_root)).strip()
+        or current.workspace_root,
+        confirm_sensitive_actions=bool(
+            payload.get("confirm_sensitive_actions", current.confirm_sensitive_actions)
+        ),
+        is_hatched=bool(payload.get("is_hatched", current.is_hatched)),
+        completed_at=str(payload.get("completed_at", current.completed_at)).strip()
+        or current.completed_at,
+        skills=[
+            str(skill).strip()
+            for skill in payload.get("skills", current.skills)
+            if str(skill).strip()
+        ]
+        or current.skills,
+        skill_configs=_sanitize_skill_configs(
+            payload.get("skill_configs", current.skill_configs),
+            current.skill_configs,
+        ),
+    )
+
+    return HatchingStore().save(profile).__dict__

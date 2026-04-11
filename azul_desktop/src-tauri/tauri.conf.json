@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "AzulClaw",
         "width": 1480,
         "height": 940,
@@ -27,6 +28,8 @@
   "bundle": {
     "active": false,
     "targets": "all",
-    "icon": []
+    "icon": [
+      "icons/icon.ico"
+    ]
   }
 }

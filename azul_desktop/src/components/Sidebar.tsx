@@ -1,4 +1,7 @@
-import type { AppView } from "../lib/contracts";
+import mascotIcon from "../../../img/azulclaw_ico.png";
+import hatchlingIcon from "../../../img/hatching_azulclaw_ico.png";
+
+import type { AppView, HatchingProfile } from "../lib/contracts";
 
 const navItems: { label: string; view: AppView }[] = [
   { label: "Chat", view: "chat" },
@@ -12,17 +15,19 @@ const navItems: { label: string; view: AppView }[] = [
 
 interface SidebarProps {
   activeView: AppView;
+  profile: HatchingProfile;
   onNavigate: (view: AppView) => void;
 }
 
-export function Sidebar({ activeView, onNavigate }: SidebarProps) {
+export function Sidebar({ activeView, onNavigate, profile }: SidebarProps) {
+  const avatarSrc = profile.is_hatched ? mascotIcon : hatchlingIcon;
+
   return (
     <aside className="sidebar">
       <div className="brand-card">
-        <div className="brand-avatar">AC</div>
         <div>
-          <p className="eyebrow">Companion</p>
-          <h2>AzulClaw</h2>
+          <p className="eyebrow">{profile.is_hatched ? profile.archetype : "Hatching"}</p>
+          <h2 style={{ fontSize: "1.2rem" }}>{profile.name}</h2>
         </div>
       </div>
 
@@ -42,7 +47,7 @@ export function Sidebar({ activeView, onNavigate }: SidebarProps) {
       <section className="workspace-card">
         <p className="eyebrow">Sandbox</p>
         <h3>AzulWorkspace</h3>
-        <p>C:\Users\javie\Desktop\AzulWorkspace</p>
+        <p>{profile.workspace_root}</p>
       </section>
     </aside>
   );
