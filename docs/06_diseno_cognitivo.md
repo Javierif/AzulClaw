@@ -1,4 +1,4 @@
-﻿# AzulClaw: Documentacion del Diseño Cognitivo Completo
+# AzulClaw: Documentacion del Diseño Cognitivo Completo
 
 **Fecha de ultima revision:** 11 de Abril de 2026.
 **Origen:** Deliberaciones de BlueClaw (`001_arquitectura_hibrida.md`, `002_filosofia_cognitiva.md`, `003_estructura_proyecto.md`).
@@ -141,10 +141,10 @@ Pub/Sub interno (Event Emitter) para comunicacion asincrona entre modulos.
 - Tipos de eventos: `Thought`, `Action`, `Error`, `ToolCall`
 - Permite que S1 y S2 trabajen en paralelo
 
-### 5.2 Scheduler / Heartbeat (`nervous/scheduler.py`)
-- **Tecnologia:** APScheduler
-- **Proposito:** El agente tiene "iniciativa". Cada X minutos verifica email, calendario, estado del sistema
-- **BlueClaw lo llama:** "Pulsion de Vida" / "Ritmos Circadianos"
+### 5.2 Heartbeats / Scheduler (`runtime/scheduler.py`)
+- **Propósito:** Centraliza la "Pulsión de Vida" (iniciativa propia del agente) y las rutinas periódicas. Originalmente separados, ahora **todas las rutinas son Heartbeats**.
+- **Heartbeat del Sistema:** Latido protegido (`system: true`) que no se puede borrar. Revisa el archivo `HEARTBEAT.md` en el workspace y actúa de forma autónoma. Si no hay nada accionable, aborta sin consumir tokens (`HEARTBEAT_SKIP`).
+- **Heartbeats Custom:** Trabajos recurrentes creados por el usuario con prompts específicos. Motor centralizado en `runtime/scheduler.py` con almacenamiento persistente local.
 
 ### 5.3 Circuit Breaker (`resilience/circuit_breaker.py`)
 Si Azure OpenAI devuelve muchos errores consecutivos, el circuit breaker:
@@ -185,7 +185,7 @@ Truncador de inputs gigantes. Si un archivo tiene 100.000 lineas, no enviarlo en
 | Canales | Azure Bot Service | `botbuilder-core` |
 | Memoria Vectorial | sqlite-vec | `sqlite-vec` |
 | Memoria Episodica | SQLite | `sqlite3` (stdlib) |
-| Cron/Heartbeat | APScheduler | `apscheduler` |
+| Heartbeats | Scheduler Nativo (Asyncio) | `asyncio` / Tareas periódicas |
 | File Watching | Watchdog | `watchdog` |
 | Navegacion Web | Playwright | `playwright` |
 | Terminal Interactiva | pywinpty | `pywinpty` |
