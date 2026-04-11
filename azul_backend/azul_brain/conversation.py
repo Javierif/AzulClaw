@@ -156,7 +156,7 @@ class ConversationOrchestrator:
             return ConversationReply(
                 text=(
                     "Could not execute the cognitive layer yet. "
-                    "Verifica dependencias y variables AZURE_OPENAI_*.\n"
+                    "Check dependencies and AZURE_OPENAI_* variables.\n"
                     f"Technical detail: {error}"
                 ),
                 lane=lane,
@@ -199,7 +199,7 @@ class ConversationOrchestrator:
             return ConversationReply(
                 text=(
                     "Could not execute the cognitive layer yet. "
-                    "Verifica dependencias y variables AZURE_OPENAI_*.\n"
+                    "Check dependencies and AZURE_OPENAI_* variables.\n"
                     f"Technical detail: {error}"
                 ),
                 lane=lane,
