@@ -142,9 +142,9 @@ Pub/Sub interno (Event Emitter) para comunicacion asincrona entre modulos.
 - Permite que S1 y S2 trabajen en paralelo
 
 ### 5.2 Heartbeats / Scheduler (`runtime/scheduler.py`)
-- **Propósito:** Centraliza la "Pulsión de Vida" (iniciativa propia del agente) y las rutinas periódicas. Originalmente separados, ahora **todas las rutinas son Heartbeats**.
-- **Heartbeat del Sistema:** Latido protegido (`system: true`) que no se puede borrar. Revisa el archivo `HEARTBEAT.md` en el workspace y actúa de forma autónoma. Si no hay nada accionable, aborta sin consumir tokens (`HEARTBEAT_SKIP`).
-- **Heartbeats Custom:** Trabajos recurrentes creados por el usuario con prompts específicos. Motor centralizado en `runtime/scheduler.py` con almacenamiento persistente local.
+- **Purpose:** Centralizes the "Life Pulse" (the agent's own initiative) and periodic routines. Originally separated, now **all routines are Heartbeats**.
+- **System Heartbeat:** Protected pulse (`system: true`) that cannot be deleted. Checks the `HEARTBEAT.md` file in the workspace and acts autonomously. If there is nothing actionable, it aborts without consuming tokens (`HEARTBEAT_SKIP`).
+- **Custom Heartbeats:** Recurring jobs created by the user with specific prompts. Centralized engine in `runtime/scheduler.py` with persistent local storage.
 
 ### 5.3 Circuit Breaker (`resilience/circuit_breaker.py`)
 Si Azure OpenAI devuelve muchos errores consecutivos, el circuit breaker:
