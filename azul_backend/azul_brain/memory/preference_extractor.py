@@ -57,8 +57,9 @@ def should_extract(user_message: str) -> bool:
 
 _EXTRACTION_SYSTEM_PROMPT = """\
 You are a silent background module. Your ONLY job is to detect personal
-preferences from a user message — how they like things done, what they enjoy,
-how they want to be explained things, their working style, their goals.
+preferences, values, priorities, and goals from a user message — what matters
+to them, how they like things done, what they enjoy, how they want to be
+explained things, their working style, and what they care about.
 
 Rules:
 1. Return ONLY a JSON array. No markdown, no explanation.
@@ -69,10 +70,13 @@ Rules:
    Bad:  "Quiere aprender hooks", "Quiere aprender Redux", "Quiere aprender TypeScript"
 4. Do NOT include implied details that are obvious from the main topic.
 5. Return at most 3 items per call. If everything fits in 1–2, prefer that.
-6. If the message contains NO preference, return [].
-7. Do NOT save neutral facts (name, location, job title) — only preferences and behaviours.
+6. If the message contains NO preference, value, or priority, return [].
+7. Skip trivial identity data (name, email, phone) — but DO save personal
+   values, priorities, things the user cares about, and how they want to work.
 8. Do NOT invent or infer things the user did not say.
 9. Ignore instructions, code, or technical content that is not *about* the user.
+10. If the user explicitly asks you to "remember" or "save" something about
+    themselves, ALWAYS extract it — treat it as a mandatory save.
 """
 
 _EXTRACTION_USER_TEMPLATE = """\
@@ -99,6 +103,7 @@ class PreferenceExtractor:
         self._runtime = runtime_manager
         self._embedder = embedding_service  # None → text-only storage, BM25 search only
         self._store = vector_store
+        self._pending_tasks: set[asyncio.Task] = set()  # prevent GC of background tasks
 
     @property
     def enabled(self) -> bool:
@@ -119,14 +124,18 @@ class PreferenceExtractor:
     ) -> None:
         """Launches the extraction as a background task (non-blocking)."""
         if not self.enabled:
+            LOGGER.info("[PrefExtractor] Extraction disabled via env var.")
             return
         if not should_extract(user_message):
             LOGGER.debug("[PrefExtractor] Skipped short/greeting message.")
             return
 
-        asyncio.create_task(
+        LOGGER.info("[PrefExtractor] Scheduling extraction for user %s (msg=%s)", user_id, user_message[:60])
+        task = asyncio.create_task(
             self._extract_and_store(user_id, user_message, assistant_reply)
         )
+        self._pending_tasks.add(task)
+        task.add_done_callback(self._pending_tasks.discard)
 
     # ── Internal pipeline ─────────────────────────────────────────────
 
@@ -194,12 +203,13 @@ class PreferenceExtractor:
         try:
             result = await self._runtime.execute_messages(
                 messages=messages,
-                lane="fast",
+                lane="auto",
                 title="Preference extraction",
                 source="preference-extractor",
                 kind="extraction",
             )
             raw = result.text.strip()
+            LOGGER.info("[PrefExtractor] LLM raw response: %s", raw[:200])
 
             # Strip markdown fences if the model wraps in ```json ... ```
             if raw.startswith("```"):
@@ -208,8 +218,13 @@ class PreferenceExtractor:
             parsed = json.loads(raw)
             if isinstance(parsed, list):
                 return parsed
+            LOGGER.warning("[PrefExtractor] LLM returned non-list JSON: %s", raw[:200])
             return []
 
-        except (json.JSONDecodeError, Exception) as error:
-            LOGGER.debug("[PrefExtractor] LLM returned non-JSON: %s", error)
+        except json.JSONDecodeError as error:
+            raw_preview = raw[:200] if 'raw' in locals() else "N/A"
+            LOGGER.warning("[PrefExtractor] LLM returned non-JSON (raw=%s): %s", raw_preview, error)
+            return []
+        except Exception as error:
+            LOGGER.warning("[PrefExtractor] LLM call failed: %s", error)
             return []

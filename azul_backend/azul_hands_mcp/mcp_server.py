@@ -22,8 +22,26 @@ else:
 app = Server("azul-hands-mcp")
 
 # Secure workspace (sandbox) for file operations.
-USER_HOME = os.path.expanduser("~")
-WORKSPACE_DIR = os.path.join(USER_HOME, "Desktop", "AzulWorkspace")
+# Keep in sync with HatchingProfile.workspace_root (override: AZUL_WORKSPACE_ROOT).
+def _resolve_workspace_dir() -> str:
+    override = os.environ.get("AZUL_WORKSPACE_ROOT", "").strip()
+    if override:
+        return override
+    return str(Path.home() / "Documents" / "dev" / "AzulWorkspace")
+
+
+WORKSPACE_DIR = _resolve_workspace_dir()
+
+# Match desktop API: default folders + WORKSPACE.md (repo root on path for import).
+try:
+    _repo_root = Path(__file__).resolve().parents[2]
+    if str(_repo_root) not in sys.path:
+        sys.path.insert(0, str(_repo_root))
+    from azul_backend.workspace_layout import ensure_workspace_scaffold
+
+    ensure_workspace_scaffold(Path(WORKSPACE_DIR))
+except Exception:
+    Path(WORKSPACE_DIR).mkdir(parents=True, exist_ok=True)
 
 # Path validator for blocking path traversal attempts.
 validator = PathValidator(WORKSPACE_DIR)

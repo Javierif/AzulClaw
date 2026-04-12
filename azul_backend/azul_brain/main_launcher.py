@@ -135,6 +135,10 @@ async def create_app() -> web.Application:
     except Exception as error:
         LOGGER.warning("[Workspace] Startup prepare failed: %s", error)
 
+    # Seed onboarding profile preferences on every startup (idempotent — skips existing rows)
+    if hasattr(orchestrator, "seed_profile_facts"):
+        asyncio.create_task(orchestrator.seed_profile_facts())
+
     return app
 
 

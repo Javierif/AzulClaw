@@ -1,6 +1,6 @@
 ﻿# AzulClaw: Documentación Arquitectónica
 
-**Fecha de última revisión:** 22 de Febrero de 2026.
+**Fecha de última revisión:** 12 de Abril de 2026.
 **Objetivo del Documento:** Servir de base para cualquier desarrollador que entre al proyecto `AzulClaw`, explicando el "Por qué" y el "Cómo" de las decisiones de diseño.
 
 ## 1. Visión General: De OpenClaw a AzulClaw
@@ -49,7 +49,7 @@ repo-root/
 │   │   ├── bot/                 # Integración con Azure Bot Framework
 │   │   │   └── azul_bot.py      # Clase principal del Bot (ActivityHandler)
 │   │   ├── cortex/              # Microsoft Agent Framework / GPT-4 Planner
-│   │   ├── memory/              # Memoria Segura (No pickle, solo JSON)
+│   │   ├── memory/              # Memoria híbrida SQLite + embeddings + FTS5
 │   │   ├── main_launcher.py     # Punto de entrada de la APP (Escucha en 3978)
 │   │   └── mcp_client.py        # Adaptador de MCP en Python (Cliente STDIO)
 │   │
@@ -58,7 +58,18 @@ repo-root/
 │       └── path_validator.py    # Algoritmo de prevención de Path Traversal
 ```
 
-## 4. Próxima Fase (Pendiente de Desarrollo): Fase 4
+## 4. Memoria local híbrida (SQLite)
+
+El agente local mantiene memoria **persistente** entre reinicios:
+
+- **Historial reciente:** `SafeMemory` escribe un subconjunto de turnos en SQLite (`conversation_history`) cuando `AZUL_MEMORY_DB_PATH` está configurado.
+- **Memoria semántica + texto:** `VectorMemoryStore` guarda contenido, metadatos y embeddings en la misma base; **FTS5** permite búsqueda léxica (BM25) y la búsqueda vectorial usa similitud coseno en Python sobre vectores almacenados como BLOB.
+- **Recuperación híbrida:** las listas vectorial y de texto se fusionan con **RRF ponderado** (por defecto 70 % / 30 %), inspirado en el enfoque de OpenClaw.
+- **Aprendizaje ligero:** un extractor en segundo plano usa el carril **rápido** de Azure (`AZURE_OPENAI_FAST_DEPLOYMENT`, p. ej. `gpt-5.4-nano`) para inferir preferencias y hechos atemporales sin bloquear la respuesta al usuario.
+
+La guía de variables está en `docs/02_setup_and_development.md` (ancla `#hybrid-memory-env`).
+
+## 5. Próxima Fase (Pendiente de Desarrollo): Fase 4
 
 La arquitectura de red (`main_launcher.py`) y la tubería de seguridad local (`mcp_server.py`) **ya están montadas y probadas**. 
 
