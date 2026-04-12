@@ -187,6 +187,8 @@ async def desktop_runtime_put_handler(req: web.Request) -> web.Response:
     )
 
 
+
+
 async def desktop_jobs_get_handler(req: web.Request) -> web.Response:
     """Lists scheduled runtime jobs."""
     return web.json_response({"items": summarize_jobs(req.app["runtime_store"])})
@@ -215,7 +217,10 @@ async def desktop_job_run_handler(req: web.Request) -> web.Response:
 async def desktop_job_delete_handler(req: web.Request) -> web.Response:
     """Deletes a job from the local scheduler."""
     job_id = req.match_info.get("job_id", "")
-    req.app["runtime_store"].delete_job(job_id)
+    try:
+        req.app["runtime_store"].delete_job(job_id)
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
     return web.json_response({"deleted": True, "job_id": job_id})
 
 

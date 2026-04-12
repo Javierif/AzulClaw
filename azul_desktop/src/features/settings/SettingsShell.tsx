@@ -1,4 +1,53 @@
+import { useEffect, useState } from "react";
+
+import { loadRuntime, saveRuntime } from "../../lib/api";
+import type { RuntimeOverview } from "../../lib/contracts";
+import { runtimeOverview } from "../../lib/mock-data";
+
+const laneOptions = ["auto", "fast", "slow"] as const;
+
 export function SettingsShell() {
+  const [runtime, setRuntime] = useState<RuntimeOverview>(runtimeOverview);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function refreshSettings() {
+      const runtimeData = await loadRuntime();
+      if (!isMounted) {
+        return;
+      }
+      setRuntime(runtimeData);
+    }
+
+    void refreshSettings();
+    const pollId = window.setInterval(() => {
+      void refreshSettings();
+    }, 10000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(pollId);
+    };
+  }, []);
+
+  async function handleSave() {
+    setIsSaving(true);
+    try {
+      const next = await saveRuntime({
+        default_lane: runtime.default_lane,
+        models: runtime.models.map((model) => ({
+          id: model.id,
+          streaming_enabled: model.streaming_enabled,
+        })),
+      });
+      setRuntime(next);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   return (
     <section className="single-panel-layout">
       <div className="card panel-stack">
@@ -6,7 +55,11 @@ export function SettingsShell() {
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Settings</p>
-            <h2>Soul and system</h2>
+            <h2>Preferences and configuration</h2>
+          </div>
+          <div className="filter-row">
+            <span className="status-pill">{runtime.default_lane}</span>
+            <span className="status-pill">{runtime.models.length} models</span>
           </div>
         </div>
 
@@ -87,7 +140,7 @@ export function SettingsShell() {
               </div>
               <div className="runtime-kv-row">
                 <span className="runtime-kv-key">Default lane</span>
-                <code className="runtime-kv-code">auto</code>
+                <code className="runtime-kv-code">{runtime.default_lane}</code>
               </div>
               <div className="runtime-kv-row">
                 <span className="runtime-kv-key">Streaming</span>
@@ -144,6 +197,18 @@ export function SettingsShell() {
             </div>
           </section>
 
+        </div>
+
+        <div className="panel-footer">
+          <p className="hint-text">Heartbeat and scheduled job settings live in the Heartbeats view.</p>
+          <button
+            type="button"
+            className="primary-button"
+            disabled={isSaving}
+            onClick={() => void handleSave()}
+          >
+            {isSaving ? "Saving..." : "Save settings"}
+          </button>
         </div>
       </div>
     </section>

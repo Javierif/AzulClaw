@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
 import { sendDesktopMessageStream } from "../../lib/api";
-import { Tooltip } from "../../components/Tooltip";
 import type { ChatExchange, ThinkingProgress } from "../../lib/contracts";
 import { chatMessages, defaultChatRuntime } from "../../lib/mock-data";
 
 type ChatMessageItem = ChatExchange & {
-  kind: "text" | "thinking" | "loading";
+  kind: "text" | "thinking";
   progress?: ThinkingProgress;
 };
 
@@ -129,22 +128,12 @@ function ThinkingCard({ message }: { message: ChatMessageItem }) {
   );
 }
 
-export function ChatShell({
-  onThinkingChange,
-  onTypingChange,
-  onAnswerStart,
-}: {
-  onThinkingChange?: (thinking: boolean) => void;
-  onTypingChange?: (typing: boolean) => void;
-  onAnswerStart?: () => void;
-}) {
+export function ChatShell() {
   const [messages, setMessages] = useState<ChatMessageItem[]>(() => toUiMessages(chatMessages));
   const [draft, setDraft] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [runtime, setRuntime] = useState(defaultChatRuntime);
-  const bottomRef = useRef<HTMLDivElement>(null);
   const streamMessageIdRef = useRef("");
-  const answerStartedRef = useRef(false);
   const streamBufferRef = useRef("");
   const streamPumpRef = useRef<number | null>(null);
 
@@ -197,10 +186,6 @@ export function ChatShell({
   }
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  useEffect(() => {
     return () => {
       if (streamPumpRef.current !== null) {
         window.clearInterval(streamPumpRef.current);
@@ -215,9 +200,6 @@ export function ChatShell({
     }
 
     setIsSending(true);
-    answerStartedRef.current = false;
-    onTypingChange?.(false);
-    onThinkingChange?.(true);
     const now = Date.now();
     const nextUserMessage: ChatMessageItem = {
       id: `user-${now}`,
@@ -235,8 +217,8 @@ export function ChatShell({
       {
         id: commentaryMessageId,
         role: "assistant",
-        content: "",
-        kind: "loading",
+        content: "Activating the first visible response...",
+        kind: "text",
       },
     ]);
     setDraft("");
@@ -244,12 +226,11 @@ export function ChatShell({
     try {
       const response = await sendDesktopMessageStream(trimmed, (event) => {
         if (event.type === "commentary" && event.text) {
-          if (!answerStartedRef.current) { answerStartedRef.current = true; onAnswerStart?.(); }
           setMessages((current) => {
             const existing = current.find((item) => item.id === commentaryMessageId);
             if (existing) {
               return current.map((item) =>
-                item.id === commentaryMessageId ? { ...item, kind: "text", content: event.text || item.content } : item,
+                item.id === commentaryMessageId ? { ...item, content: event.text || item.content } : item,
               );
             }
             return [
@@ -294,7 +275,6 @@ export function ChatShell({
         }
 
         if (event.type === "delta") {
-          if (!answerStartedRef.current) { answerStartedRef.current = true; onAnswerStart?.(); }
           streamBufferRef.current += event.text || "";
           ensureStreamPump();
         }
@@ -373,7 +353,6 @@ export function ChatShell({
     } finally {
       flushStreamBuffer();
       setIsSending(false);
-      onThinkingChange?.(false);
     }
   }
 
@@ -401,15 +380,6 @@ export function ChatShell({
           {messages.map((message) =>
             message.kind === "thinking" && message.role === "assistant" ? (
               <ThinkingCard key={message.id} message={message} />
-            ) : message.kind === "loading" ? (
-              <article key={message.id} className="message-bubble message-assistant">
-                <span className="message-role">AzulClaw</span>
-                <div className="message-wave">
-                  <span className="message-wave-dot" />
-                  <span className="message-wave-dot" />
-                  <span className="message-wave-dot" />
-                </div>
-              </article>
             ) : (
               <article
                 key={message.id}
@@ -422,7 +392,6 @@ export function ChatShell({
               </article>
             ),
           )}
-          <div ref={bottomRef} />
         </div>
 
         <div className="composer">
@@ -433,37 +402,41 @@ export function ChatShell({
                 placeholder="Type a message... (Enter to send, Shift+Enter for new line)"
                 rows={1}
                 value={draft}
-                onChange={(event) => {
-                  const val = event.target.value;
-                  const wasEmpty = !draft.trim();
-                  const isEmpty = !val.trim();
-                  setDraft(val);
-                  if (wasEmpty && !isEmpty) onTypingChange?.(true);
-                  if (!wasEmpty && isEmpty) onTypingChange?.(false);
-                }}
+                onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={handleKeyDown}
               />
             </label>
             <div className="composer-bottom">
               <div className="composer-actions">
-                <button type="button" className="ghost-button-mini" title="Attach a local file" aria-label="Attach file" disabled>
+                <button type="button" className="ghost-button-mini" title="Attach a local file" aria-label="Attach file">
                   File
                 </button>
-                <button type="button" className="ghost-button-mini" title="Search agent preferences" aria-label="Add Memory" disabled>
+                <button type="button" className="ghost-button-mini" title="Search agent preferences" aria-label="Add Memory">
                   Memory
                 </button>
-                <button type="button" className="ghost-button-mini" title="Search a Workspace document" aria-label="Add from Workspace" disabled>
+                <button type="button" className="ghost-button-mini" title="Search a Workspace document" aria-label="Add from Workspace">
                   Workspace
                 </button>
               </div>
               <button
                 type="button"
-                className="composer-send-btn"
+                className={`composer-send-btn ${isSending ? "composer-send-btn-loading" : ""}`}
                 onClick={() => void handleSend()}
-                disabled={!draft.trim()}
+                disabled={isSending || !draft.trim()}
                 aria-busy={isSending}
               >
-                Send
+                {isSending ? (
+                  <>
+                    <span className="composer-send-label">Sending</span>
+                    <span className="composer-send-loader" aria-hidden="true">
+                      <span className="composer-send-loader-dot" />
+                      <span className="composer-send-loader-dot" />
+                      <span className="composer-send-loader-dot" />
+                    </span>
+                  </>
+                ) : (
+                  "Send"
+                )}
               </button>
             </div>
           </div>
@@ -474,41 +447,38 @@ export function ChatShell({
       </div>
 
       <aside className="context-panel card">
-        <div className="context-header">
+        <div>
           <p className="eyebrow">Live Context</p>
           <h2>Session activity</h2>
         </div>
 
         <section className="context-section">
-          <p className="context-section-label">Current status</p>
-          <div className="context-kv-list">
-            <div className="context-kv-row">
-              <span className="context-kv-key">Lane</span>
-              <span className="context-kv-value">{runtime.lane || "—"}</span>
-            </div>
-            <div className="context-kv-row">
-              <span className="context-kv-key">Triage</span>
-              <span className="context-kv-value">{runtime.triage_reason || "—"}</span>
-            </div>
-            <div className="context-kv-row">
-              <span className="context-kv-key">Model</span>
-              <span className="context-kv-value">{runtime.model_label || "—"}</span>
-            </div>
-            <div className="context-kv-row">
-              <span className="context-kv-key">Process</span>
-              <span className="context-kv-value context-kv-mono">{runtime.process_id || "—"}</span>
-            </div>
-          </div>
+          <h3>Current status</h3>
+          <ul className="context-list">
+            {[
+              `Active lane: ${runtime.lane || "—"}`,
+              `Triage reason: ${runtime.triage_reason || "—"}`,
+              `Last model: ${runtime.model_label || "—"}`,
+              `Process: ${runtime.process_id || "—"}`,
+            ].map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
         </section>
 
         <section className="context-section">
-          <p className="context-section-label">Recent memory</p>
-          <p className="context-body">No memory indexed yet.</p>
+          <h3>Recent memory</h3>
+          <p>
+            Preference set: direct answers, focus on concrete steps and process
+            visibility.
+          </p>
         </section>
 
         <section className="context-section">
-          <p className="context-section-label">Workspace</p>
-          <p className="context-body context-kv-mono">~/Desktop/AzulWorkspace</p>
+          <h3>Workspace</h3>
+          <p>
+            Active path: <code>Desktop\AzulWorkspace</code>
+          </p>
         </section>
       </aside>
     </section>

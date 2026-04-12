@@ -127,13 +127,7 @@ function buildWizardState(profile: HatchingProfile, onboardingRequired: boolean)
   };
 }
 
-function deriveArchetype(value: string, fallback: string) {
-  const v = value.toLowerCase();
-  if (v.includes("guardian") || v.includes("secur") || v.includes("safe")) return "Guardian";
-  if (v.includes("explor") || v.includes("investigat") || v.includes("research")) return "Explorer";
-  if (v.includes("techni") || v.includes("code") || v.includes("program") || v.includes("engineer")) return "Engineer";
-  return fallback || "Companion";
-}
+
 
 function deriveTone(value: string, fallback: string) {
   const v = value.toLowerCase();
@@ -168,7 +162,7 @@ function buildProfileFromWizard(base: HatchingProfile, state: WizardState): Hatc
     tone: deriveTone(temper, base.tone),
     style: deriveStyle(temper, base.style),
     autonomy: deriveAutonomy(temper, base.autonomy),
-    archetype: deriveArchetype(`${role} ${mission}`, base.archetype),
+
     workspace_root: state.workspaceRoot.trim() || base.workspace_root,
     confirm_sensitive_actions: state.confirmSensitiveActions,
     skills: state.configuredSkills,
@@ -562,7 +556,7 @@ export function HatchingShell({
 
             <div className="hw-summary-grid">
               <div className="hw-summary-item"><span className="hw-summary-label">Name</span><span className="hw-summary-value">{draftProfile.name}</span></div>
-              <div className="hw-summary-item"><span className="hw-summary-label">Archetype</span><span className="hw-summary-value">{draftProfile.archetype}</span></div>
+
               <div className="hw-summary-item"><span className="hw-summary-label">Style</span><span className="hw-summary-value">{draftProfile.tone} · {draftProfile.style}</span></div>
               <div className="hw-summary-item"><span className="hw-summary-label">Workspace</span><span className="hw-summary-value hw-mono">{draftProfile.workspace_root}</span></div>
               <div className="hw-summary-item" style={{ gridColumn: "1 / -1" }}><span className="hw-summary-label">Capabilities</span><span className="hw-summary-value">{draftProfile.skills.length > 0 ? draftProfile.skills.join(", ") : "None for now"}</span></div>
