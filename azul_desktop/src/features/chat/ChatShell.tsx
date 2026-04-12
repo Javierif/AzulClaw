@@ -426,11 +426,8 @@ export function ChatShell({
                 value={draft}
                 onChange={(event) => {
                   const val = event.target.value;
-                  const wasEmpty = !draft.trim();
-                  const isEmpty = !val.trim();
                   setDraft(val);
-                  if (wasEmpty && !isEmpty) onTypingChange?.(true);
-                  if (!wasEmpty && isEmpty) onTypingChange?.(false);
+                  onTypingChange?.(val.trim().length > 0);
                 }}
                 onKeyDown={handleKeyDown}
               />

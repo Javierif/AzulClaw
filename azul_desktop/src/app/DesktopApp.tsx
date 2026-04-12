@@ -88,6 +88,7 @@ export function DesktopApp() {
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [topbarLabel, setTopbarLabel] = useState<{ text: string; mode: "thinking" | "typing" } | null>(null);
   const thinkingIntervalRef = useRef<number | null>(null);
+  const typingClearRef = useRef<number | null>(null);
   const sentenceIndexRef = useRef(0);
   const isThinkingRef = useRef(false);
 
@@ -138,9 +139,23 @@ export function DesktopApp() {
   const onTypingChange = useCallback((typing: boolean) => {
     if (isThinkingRef.current) return;
     if (typing) {
-      const idx = Math.floor(Math.random() * TYPING_SENTENCES.length);
-      setTopbarLabel({ text: TYPING_SENTENCES[idx], mode: "typing" });
+      // Pick a sentence only when transitioning from nothing
+      setTopbarLabel((current) => {
+        if (current?.mode === "typing") return current;
+        const idx = Math.floor(Math.random() * TYPING_SENTENCES.length);
+        return { text: TYPING_SENTENCES[idx], mode: "typing" };
+      });
+      // Reset the 3s idle clear timer on every keystroke
+      if (typingClearRef.current !== null) window.clearTimeout(typingClearRef.current);
+      typingClearRef.current = window.setTimeout(() => {
+        setTopbarLabel(null);
+        typingClearRef.current = null;
+      }, 3000);
     } else {
+      if (typingClearRef.current !== null) {
+        window.clearTimeout(typingClearRef.current);
+        typingClearRef.current = null;
+      }
       setTopbarLabel(null);
     }
   }, []);
@@ -183,12 +198,11 @@ export function DesktopApp() {
         <header className="desktop-topbar">
           <div className="topbar-identity">
             <img className="topbar-mascot" src={adultMascot} alt={profile.name} />
-            <div>
-              <p className="eyebrow">AzulClaw Desktop</p>
-              <h1 className={topbarLabel ? `topbar-label topbar-label-${topbarLabel.mode}` : "topbar-label topbar-label-empty"}>
-                {topbarLabel?.text ?? `${profile.name}, your living workspace`}
-              </h1>
-            </div>
+            {topbarLabel && (
+              <div className={`topbar-bubble topbar-bubble-${topbarLabel.mode}`}>
+                {topbarLabel.text}
+              </div>
+            )}
           </div>
           <div className="status-cluster">
             <span className="status-pill status-pill-live">Awake</span>
