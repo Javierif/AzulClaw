@@ -57,3 +57,4 @@ python -m azul_backend.azul_brain.main_launcher
 | Desktop Interface Design | [docs/08_desktop_interface_design.md](docs/08_desktop_interface_design.md) |
 | Desktop Wireframes | [docs/09_desktop_low_fidelity_wireframes.md](docs/09_desktop_low_fidelity_wireframes.md) |
 | Desktop Architecture & Repo Structure | [docs/10_desktop_architecture_and_repo_structure.md](docs/10_desktop_architecture_and_repo_structure.md) |
+| Azure Bot Deployment Guide | [docs/13_azure_bot_deployment_guide.md](docs/13_azure_bot_deployment_guide.md) |
