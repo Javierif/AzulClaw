@@ -2,18 +2,31 @@
 
 from __future__ import annotations
 
+import logging
+import shutil
 from pathlib import Path
 
 from azul_backend.azul_hands_mcp.path_validator import PathValidator
+from azul_backend.workspace_layout import ensure_workspace_scaffold
 
-from .hatching_store import HatchingProfile, HatchingStore
+from .hatching_store import (
+    HatchingProfile,
+    HatchingStore,
+    _AZUL_STATE_DIR,
+    resolve_memory_db_path,
+)
+
+LOGGER = logging.getLogger(__name__)
+
+WIPE_CONFIRMATION_PHRASE = "RESET_ALL_LOCAL_DATA"
 
 
 def get_workspace_root() -> Path:
     """Returns the root of the AzulClaw sandbox workspace."""
     profile = HatchingStore().load()
-    workspace_root = Path(profile.workspace_root)
+    workspace_root = Path(profile.workspace_root).expanduser()
     workspace_root.mkdir(parents=True, exist_ok=True)
+    ensure_workspace_scaffold(workspace_root)
     return workspace_root
 
 
@@ -79,31 +92,31 @@ def summarize_processes(process_registry) -> list[dict]:
 
 
 def summarize_memory(orchestrator, user_id: str) -> list[dict]:
-    """Returns a simple memory view for the desktop app."""
-    profile = HatchingStore().load()
-    history = orchestrator.memory.get_history(user_id, limit=12)
-    records = [
-        {
-            "id": "pref-directness",
-            "title": f"Preferred tone: {profile.tone}",
-            "kind": "preference",
-            "source": "hatching-profile",
-            "pinned": True,
-        }
-    ]
+    """Returns the memory view for the desktop app, sourced from the vector store and history."""
+    records: list[dict] = []
 
-    for index, item in enumerate(reversed(history), start=1):
-        content = item.get("content", "")
-        compact_content = content if len(content) <= 80 else f"{content[:77]}..."
-        records.append(
-            {
-                "id": f"history-{index}",
-                "title": compact_content or "(no content)",
-                "kind": "episodic",
-                "source": item.get("role", "unknown"),
-                "pinned": False,
-            }
-        )
+    # Preferences and facts persisted in SQLite (extracted + seeded from hatching profile)
+    vector_memory = getattr(orchestrator, "vector_memory", None)
+    if vector_memory is not None:
+        try:
+            for item in vector_memory.get_user_knowledge(user_id, limit=50):
+                category = item.get("category", "fact")
+                kind = "preference" if category == "preference" else "semantic"
+                full_content = item["content"]
+                short_title = full_content if len(full_content) <= 72 else f"{full_content[:69]}..."
+                records.append(
+                    {
+                        "id": item["id"],
+                        "title": short_title,
+                        "content": full_content,
+                        "kind": kind,
+                        "source": item.get("source", "extracted"),
+                        "pinned": item.get("source") == "hatching-profile",
+                        "created_at": item.get("created_at", ""),
+                    }
+                )
+        except Exception as error:
+            LOGGER.warning("[Memory] Could not load user knowledge: %s", error)
 
     return records
 
@@ -150,7 +163,70 @@ def summarize_jobs(store) -> list[dict]:
 
 def load_hatching_profile() -> dict:
     """Returns the current Hatching profile as a serialisable dictionary."""
-    return HatchingStore().load().__dict__
+    data = HatchingStore().load().__dict__.copy()
+    data["memory_db_path"] = resolve_memory_db_path()
+    return data
+
+
+def _delete_sqlite_bundle(db_file: Path) -> None:
+    """Removes the main DB file and common SQLite sidecar files in the same folder."""
+    if not db_file.name:
+        return
+    parent = db_file.parent
+    try:
+        for candidate in parent.glob(db_file.name + "*"):
+            if candidate.is_file():
+                candidate.unlink(missing_ok=True)
+    except OSError as error:
+        LOGGER.warning("[Wipe] Could not remove SQLite files under %s: %s", parent, error)
+
+
+def _remove_workspace_azul_store(db_file: Path, workspace_root: Path) -> bool:
+    """Deletes ``<workspace>/.azul`` when it is the parent of the resolved DB path."""
+    try:
+        ws = workspace_root.expanduser().resolve()
+        parent = db_file.parent
+        if parent.name != _AZUL_STATE_DIR or not parent.is_dir():
+            return False
+        if parent.resolve().parent != ws:
+            return False
+        shutil.rmtree(parent, ignore_errors=True)
+        return True
+    except OSError as error:
+        LOGGER.warning("[Wipe] Could not remove .azul directory: %s", error)
+        return False
+
+
+def wipe_local_user_data(confirmation: str) -> dict:
+    """Deletes persistent memory (SQLite) and resets the Hatching profile.
+
+    The running process still holds open DB handles; restart the brain after
+    calling this so memory subsystems reopen a clean file.
+    """
+    if (confirmation or "").strip() != WIPE_CONFIRMATION_PHRASE:
+        raise ValueError("Invalid confirmation phrase.")
+
+    store = HatchingStore()
+    profile = store.load()
+    workspace = Path(profile.workspace_root)
+    db_file = Path(resolve_memory_db_path())
+
+    removed_azul = _remove_workspace_azul_store(db_file, workspace)
+    if not removed_azul:
+        _delete_sqlite_bundle(db_file)
+
+    fresh = HatchingProfile()
+    store.save(fresh)
+    try:
+        ensure_workspace_scaffold(Path(fresh.workspace_root).expanduser())
+    except OSError as error:
+        LOGGER.warning("[Workspace] Scaffold after wipe failed: %s", error)
+    LOGGER.info("[Wipe] Local memory cleared and hatching profile reset to defaults.")
+
+    data = fresh.__dict__.copy()
+    data["memory_db_path"] = resolve_memory_db_path()
+    data["restart_required"] = True
+    return data
 
 
 def _sanitize_skill_configs(raw_configs: object, fallback: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
@@ -205,4 +281,12 @@ def save_hatching_profile(payload: dict) -> dict:
         ),
     )
 
-    return HatchingStore().save(profile).__dict__
+    saved = HatchingStore().save(profile)
+    try:
+        ensure_workspace_scaffold(Path(saved.workspace_root).expanduser())
+    except OSError as error:
+        LOGGER.warning("[Workspace] Scaffold after hatching save failed: %s", error)
+
+    data = saved.__dict__.copy()
+    data["memory_db_path"] = resolve_memory_db_path()
+    return data

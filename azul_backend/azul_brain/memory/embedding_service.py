@@ -7,7 +7,7 @@ from agent_framework.openai import OpenAIEmbeddingClient
 
 LOGGER = logging.getLogger(__name__)
 
-_DEFAULT_EMBEDDING_MODEL = "text-embedding-ada-002"
+_DEFAULT_EMBEDDING_MODEL = "text-embedding-3-large"
 
 
 class EmbeddingService:

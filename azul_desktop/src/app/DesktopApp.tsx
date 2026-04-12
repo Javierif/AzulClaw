@@ -54,6 +54,7 @@ function renderView(
   onThinkingChange: (thinking: boolean) => void,
   onTypingChange: (typing: boolean) => void,
   onAnswerStart: () => void,
+  onLocalDataWiped: (p: HatchingProfile) => void,
 ) {
   switch (view) {
     case "hatching":
@@ -69,7 +70,7 @@ function renderView(
     case "workspace":
       return <WorkspaceShell />;
     case "settings":
-      return <SettingsShell />;
+      return <SettingsShell onLocalDataWiped={onLocalDataWiped} />;
     case "chat":
     default:
       return (
@@ -222,7 +223,10 @@ export function DesktopApp() {
             </span>
           </div>
         </header>
-        {renderView(activeView, profile, setProfile, onThinkingChange, onTypingChange, onAnswerStart)}
+        {renderView(activeView, profile, setProfile, onThinkingChange, onTypingChange, onAnswerStart, (data) => {
+          const { restart_required: _rr, ...rest } = data;
+          setProfile(rest);
+        })}
       </main>
     </div>
   );

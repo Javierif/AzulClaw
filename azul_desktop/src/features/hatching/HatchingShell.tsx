@@ -58,7 +58,7 @@ const wizardQuestions: WizardQuestion[] = [
   { id: "MISSION", title: "What should its main mission be?", helper: "This defines where it should focus when working with you.", placeholder: "Help me move forward with focus, context and order.", type: "textarea", emoji: "Mission" },
   { id: "CHARACTER", title: "How do you want it to talk and act?", helper: "Describe its tone, style and how much autonomy you want to give it.", placeholder: "Direct, clear, technical and proactive, but confirm sensitive actions.", type: "textarea", emoji: "Tone" },
   { id: "CAPABILITIES", title: "Which skills do you want to activate first?", helper: "Click a skill to configure it. It will only activate once you fully complete that popup.", placeholder: "", type: "skills", emoji: "Skills" },
-  { id: "WORKSPACE", title: "Which folder will be its workspace?", helper: "The workspace must be a folder. It will be AzulClaw's desk: its safe zone for reading, writing and organising files.", placeholder: "C:\\Users\\user\\Desktop\\AzulWorkspace", type: "path", emoji: "Desk" },
+  { id: "WORKSPACE", title: "Which folder will be its workspace?", helper: "Pick a folder: file tools use it as the sandbox, and persistent memory (SQLite) is stored in a .azul subfolder inside it unless you override AZUL_MEMORY_DB_PATH in .env.local.", placeholder: "~/Documents/dev/AzulWorkspace", type: "path", emoji: "Desk" },
 ];
 
 const SKILL_CATALOG: SkillDefinition[] = [
@@ -112,6 +112,14 @@ const SKILL_CATALOG: SkillDefinition[] = [
 ];
 
 const SKILL_IDS = new Set(SKILL_CATALOG.map((skill) => skill.id));
+
+/** Matches backend: ``<workspace>/.azul/azul_memory.db``. */
+function previewMemoryDbPath(workspaceRoot: string): string {
+  const trimmed = workspaceRoot.trim();
+  if (!trimmed) return "";
+  const sep = trimmed.includes("\\") ? "\\" : "/";
+  return `${trimmed.replace(/[/\\]$/, "")}${sep}.azul${sep}azul_memory.db`;
+}
 
 function buildTextAnswers(profile: HatchingProfile) {
   return [profile.name, profile.role, profile.mission, [profile.tone, profile.style, profile.autonomy].filter(Boolean).join(", ")];
@@ -190,6 +198,8 @@ export function HatchingShell({
   const [confirmSensitiveActions, setConfirmSensitiveActions] = useState(initialState.confirmSensitiveActions);
   const [currentStep, setCurrentStep] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
+  const [isPreparing, setIsPreparing] = useState(false);
+  const [isAllSet, setIsAllSet] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
   const [navDir, setNavDir] = useState<NavDir>("forward");
   const [isPickingWorkspace, setIsPickingWorkspace] = useState(false);
@@ -329,8 +339,22 @@ export function HatchingShell({
     setSkillConfigs(nextState.skillConfigs);
     setWorkspaceRoot(nextState.workspaceRoot);
     setConfirmSensitiveActions(nextState.confirmSensitiveActions);
-    onProfileSaved?.(saved);
     setIsSaving(false);
+
+    if (markAsHatched && onboardingRequired) {
+      setIsPreparing(true);
+      // Phase 1: 2s preparing, then show "All set"
+      setTimeout(() => {
+        setIsAllSet(true);
+        // Phase 2: 2s "All set", then enter desktop
+        setTimeout(() => {
+          onProfileSaved?.(saved);
+        }, 2000);
+      }, 2000);
+      return;
+    }
+
+    onProfileSaved?.(saved);
   }
 
   const contentAnim = isExiting
@@ -340,6 +364,33 @@ export function HatchingShell({
   const shellClass = onboardingRequired ? "hw-fullscreen" : "hw-contained card";
   const nextButtonLabel = activeQuestion?.type === "skills" && configuredSkills.length === 0 ? "Skip for now ->" : "Next ->";
   const nextHint = activeQuestion?.type === "skills" && configuredSkills.length === 0 ? "Press Enter to skip for now" : "Press Enter to continue";
+
+  if (isPreparing) {
+    return (
+      <div style={{ position: "fixed", inset: 0, background: "#020617", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "28px", textAlign: "center", padding: "0 24px" }}>
+        <img
+          src={adultMascot}
+          alt="AzulClaw"
+          className="hw-celebrate-img"
+          style={{ animation: "hw-pulse 1.4s ease-in-out infinite" }}
+        />
+        <div>
+          <p className="hw-label">PREPARING</p>
+          <h1 className="hw-title" style={{ marginBottom: "8px" }}>Setting up your environment</h1>
+          <p className="hw-helper">Creating workspace folders, initialising memory database...</p>
+        </div>
+        {isAllSet && (
+          <div style={{ position: "absolute", bottom: "48px", display: "flex", alignItems: "center", gap: "10px", animation: "hwEnterFwd 0.4s ease both" }}>
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+              <circle cx="11" cy="11" r="11" fill="#2563eb" />
+              <path d="M6 11.5l3.5 3.5 6.5-7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span style={{ fontSize: "1rem", fontWeight: 600, color: "#e2e8f0", letterSpacing: "0.01em" }}>All set</span>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (!onboardingRequired) {
     return (
@@ -520,6 +571,13 @@ export function HatchingShell({
                     <label className="hw-field-label" htmlFor="hw-workspace-root">Workspace folder</label>
                     <input id="hw-workspace-root" className="hw-input-line hw-input-mono" type="text" value={workspaceRoot} placeholder={activeQuestion.placeholder} onChange={(event) => setWorkspaceRoot(event.target.value)} autoFocus />
 
+                    {previewMemoryDbPath(workspaceRoot) && (
+                      <div className="hw-workspace-db-preview">
+                        <span className="hw-field-label">Memory database (auto)</span>
+                        <p className="hw-inline-note hw-mono">{previewMemoryDbPath(workspaceRoot)}</p>
+                      </div>
+                    )}
+
                     {workspacePickerError && <p className="hw-inline-note hw-inline-note-warning">{workspacePickerError}</p>}
 
                     <div className="hw-workspace-confirm">
@@ -559,6 +617,7 @@ export function HatchingShell({
 
               <div className="hw-summary-item"><span className="hw-summary-label">Style</span><span className="hw-summary-value">{draftProfile.tone} · {draftProfile.style}</span></div>
               <div className="hw-summary-item"><span className="hw-summary-label">Workspace</span><span className="hw-summary-value hw-mono">{draftProfile.workspace_root}</span></div>
+              <div className="hw-summary-item" style={{ gridColumn: "1 / -1" }}><span className="hw-summary-label">Memory database</span><span className="hw-summary-value hw-mono">{previewMemoryDbPath(draftProfile.workspace_root) || "(set workspace folder)"}</span></div>
               <div className="hw-summary-item" style={{ gridColumn: "1 / -1" }}><span className="hw-summary-label">Capabilities</span><span className="hw-summary-value">{draftProfile.skills.length > 0 ? draftProfile.skills.join(", ") : "None for now"}</span></div>
             </div>
           </div>

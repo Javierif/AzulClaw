@@ -162,6 +162,13 @@ export async function loadMemory(userId = "desktop-user"): Promise<MemoryRecord[
   }
 }
 
+export async function deleteMemory(id: string, userId = "desktop-user"): Promise<void> {
+  await fetchJson<{ deleted: boolean }>(
+    `/api/desktop/memory/${encodeURIComponent(id)}?user_id=${encodeURIComponent(userId)}`,
+    { method: "DELETE" },
+  );
+}
+
 export async function loadWorkspace(path = "."): Promise<{
   root: string;
   current_path: string;
@@ -204,6 +211,40 @@ export async function saveHatching(profile: HatchingProfile): Promise<HatchingPr
   } catch {
     localStorage.setItem("azul_mock_profile", JSON.stringify(profile));
     return profile;
+  }
+}
+
+/** Must match ``WIPE_CONFIRMATION_PHRASE`` in ``azul_brain/api/services.py``. */
+export const DATA_WIPE_CONFIRM_PHRASE = "RESET_ALL_LOCAL_DATA";
+
+export async function wipeLocalUserData(confirm: string): Promise<HatchingProfile> {
+  try {
+    const response = await fetch(`${getApiBase()}/api/desktop/data-wipe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm }),
+    });
+    let data: { error?: string } & Partial<HatchingProfile> = {};
+    try {
+      data = (await response.json()) as { error?: string } & Partial<HatchingProfile>;
+    } catch {
+      /* non-JSON body */
+    }
+    if (!response.ok) {
+      throw new Error(data.error || `Request failed (${response.status})`);
+    }
+    return data as HatchingProfile;
+  } catch (error) {
+    if (error instanceof Error && error.message && !error.message.includes("Failed to fetch")) {
+      throw error;
+    }
+    localStorage.removeItem("azul_mock_profile");
+    return {
+      ...defaultHatchingProfile,
+      is_hatched: false,
+      completed_at: "",
+      restart_required: true,
+    };
   }
 }
 

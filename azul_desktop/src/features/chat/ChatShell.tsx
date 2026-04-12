@@ -6,7 +6,7 @@ import type { ChatExchange, ThinkingProgress } from "../../lib/contracts";
 import { chatMessages, defaultChatRuntime } from "../../lib/mock-data";
 
 type ChatMessageItem = ChatExchange & {
-  kind: "text" | "thinking";
+  kind: "text" | "thinking" | "pending";
   progress?: ThinkingProgress;
 };
 
@@ -236,8 +236,8 @@ export function ChatShell({
       {
         id: commentaryMessageId,
         role: "assistant",
-        content: "Activating the first visible response...",
-        kind: "text",
+        content: "",
+        kind: "pending",
       },
     ]);
     setDraft("");
@@ -249,7 +249,7 @@ export function ChatShell({
             const existing = current.find((item) => item.id === commentaryMessageId);
             if (existing) {
               return current.map((item) =>
-                item.id === commentaryMessageId ? { ...item, content: event.text || item.content } : item,
+                item.id === commentaryMessageId ? { ...item, kind: "text", content: event.text || item.content } : item,
               );
             }
             return [
@@ -391,6 +391,15 @@ export function ChatShell({
           {messages.map((message) =>
             message.kind === "thinking" && message.role === "assistant" ? (
               <ThinkingCard key={message.id} message={message} />
+            ) : message.kind === "pending" ? (
+              <article key={message.id} className="message-bubble message-assistant">
+                <span className="message-role">AzulClaw</span>
+                <p style={{ display: "flex", alignItems: "center", gap: "5px", margin: 0, padding: "4px 0" }}>
+                  <span className="message-wave-dot" />
+                  <span className="message-wave-dot" />
+                  <span className="message-wave-dot" />
+                </p>
+              </article>
             ) : (
               <article
                 key={message.id}
