@@ -586,6 +586,10 @@ textarea {
   border: 1px solid var(--line);
 }
 
+.subcard-accent {
+  border-left: 3px solid var(--brand);
+}
+
 .three-column-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -739,6 +743,7 @@ textarea {
   padding: 12px 14px;
   background: var(--surface-strong);
   color: var(--text);
+  font: inherit;
 }
 
 .toggle-row {
@@ -2774,7 +2779,7 @@ textarea {
   width: min(560px, calc(100% - 48px));
   padding: 28px;
   border-radius: var(--radius-lg);
-  background: rgba(15, 23, 42, 0.96);
+  background: var(--surface);
   border: 1px solid var(--line);
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
   display: flex;
@@ -2879,7 +2884,7 @@ textarea {
 
 .hb-metrics {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 12px;
 }
 
