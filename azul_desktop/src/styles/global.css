@@ -236,7 +236,6 @@ textarea {
 
 .tooltip-portal {
   position: fixed;
-  transform: translateY(-50%);
   background: rgba(10, 20, 40, 0.94);
   color: #e2e8f0;
   font-size: 0.68rem;
@@ -1483,6 +1482,20 @@ textarea {
   background: rgba(14, 165, 233, 0.08);
   padding: 2px 6px;
   border-radius: 4px;
+}
+
+.chat-path-truncated {
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  display: block;
+  text-align: right;
+  margin-left: auto;
+  color: var(--accent);
+  font-family: ui-monospace, "Consolas", monospace;
+  font-size: 0.75rem;
 }
 
 .runtime-toggle {
