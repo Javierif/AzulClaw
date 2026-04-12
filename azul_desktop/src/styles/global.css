@@ -150,7 +150,7 @@ textarea {
 
 .brand-card h2,
 .desktop-topbar h1,
-.chat-header h2,
+.desktop-topbar h2,
 .context-panel h2,
 .workspace-card h3 {
   margin: 0;
@@ -259,12 +259,14 @@ textarea {
 }
 
 .desktop-topbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
+  display: grid;
+  grid-template-columns: 2fr 1fr 280px;
+  align-items: end;
   gap: 18px;
-  padding: 6px 4px;
+  padding: 6px 4px 14px;
   flex-shrink: 0;
+  position: relative;
+  border-bottom: 1px solid var(--line);
 }
 
 
@@ -278,6 +280,11 @@ textarea {
   background: rgba(255, 255, 255, 0.18);
   box-shadow: 0 2px 14px rgba(0, 0, 0, 0.2);
   animation: topbar-fade 0.3s ease forwards;
+  /* never overflow the identity column */
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* pure CSS left-pointing triangle — 1px gap from bubble, larger size */
@@ -320,13 +327,96 @@ textarea {
   display: flex;
   align-items: center;
   gap: 16px;
+  min-width: 0;
+  padding-right: 32px;
+  overflow: hidden;
+}
+
+.topbar-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 6px;
+  grid-column: 3;
+}
+
+.topbar-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.topbar-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  flex-shrink: 0;
+  animation: live-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }
+  50% { opacity: 0.7; box-shadow: 0 0 0 4px rgba(34, 197, 94, 0); }
+}
+
+.topbar-status-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.topbar-status-divider {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.topbar-workspace-chip {
+  font-size: 0.72rem;
+  font-family: ui-monospace, monospace;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 280px;
+  text-align: right;
+  direction: rtl;
+}
+
+.topbar-context {
+  border-left: 2px solid var(--brand);
+  padding-left: 16px;
+  padding-bottom: 2px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.topbar-context-eyebrow {
+  margin: 0;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--brand);
+}
+
+.topbar-context-title {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
 }
 
 .topbar-mascot {
-  width: 72px;
-  height: 72px;
+  width: 52px;
+  height: 52px;
   object-fit: contain;
-  filter: drop-shadow(0 16px 28px rgba(16, 50, 74, 0.12));
+  filter: drop-shadow(0 12px 20px rgba(16, 50, 74, 0.14));
 }
 
 .status-cluster {
@@ -1305,6 +1395,81 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.sidebar-account {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.account-plan-badge {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.22);
+  border-radius: 12px;
+}
+
+.account-plan-icon {
+  font-size: 1rem;
+  color: var(--brand);
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(59, 130, 246, 0.14);
+  border-radius: 6px;
+}
+
+.account-plan-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.account-plan-name {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--brand);
+  letter-spacing: 0.04em;
+}
+
+.account-plan-hint {
+  font-size: 0.7rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.disconnect-btn {
+  width: 100%;
+  padding: 9px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  background: rgba(239, 68, 68, 0.06);
+  color: rgba(239, 68, 68, 0.8);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+  font-family: inherit;
+  letter-spacing: 0.02em;
+}
+
+.disconnect-btn:hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.45);
+  color: rgba(239, 68, 68, 1);
 }
 
 .context-section-label {

@@ -204,9 +204,22 @@ export function DesktopApp() {
               </div>
             )}
           </div>
-          <div className="status-cluster">
-            <span className="status-pill status-pill-live">Awake</span>
-            <span className="status-pill">Local + Cloud</span>
+          {activeView === "chat" && (
+            <div className="topbar-context">
+              <p className="topbar-context-eyebrow">Active session</p>
+              <h2 className="topbar-context-title">Main conversation</h2>
+            </div>
+          )}
+          <div className="topbar-right">
+            <div className="topbar-status-row">
+              <span className="topbar-live-dot" />
+              <span className="topbar-status-label">Slow Brain</span>
+              <span className="topbar-status-divider">·</span>
+              <span className="topbar-status-label">auto</span>
+            </div>
+            <span className="topbar-workspace-chip" title={profile.workspace_root}>
+              {profile.workspace_root}
+            </span>
           </div>
         </header>
         {renderView(activeView, profile, setProfile, onThinkingChange, onTypingChange, onAnswerStart)}

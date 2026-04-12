@@ -387,16 +387,6 @@ export function ChatShell({
   return (
     <section className="chat-layout">
       <div className="chat-panel card">
-        <div className="chat-header">
-          <div>
-            <p className="eyebrow">Main Session</p>
-            <h2>Main conversation</h2>
-          </div>
-          <div className="action-row">
-            <span className="status-pill">Internal triage</span>
-          </div>
-        </div>
-
         <div className="message-list">
           {messages.map((message) =>
             message.kind === "thinking" && message.role === "assistant" ? (
@@ -494,12 +484,6 @@ export function ChatShell({
               <span className="runtime-kv-key">Process</span>
               <code className="runtime-kv-code">{runtime.process_id || "—"}</code>
             </div>
-            <div className="runtime-kv-row">
-              <span className="runtime-kv-key">Workspace</span>
-              <Tooltip text="~/Desktop/AzulWorkspace" className="chat-path-truncated" position="left">
-                <code className="runtime-kv-code">~/Desktop/AzulWorkspace</code>
-              </Tooltip>
-            </div>
           </div>
         </section>
 
@@ -513,6 +497,7 @@ export function ChatShell({
             <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>Hatching</span>
           </article>
         </section>
+
       </aside>
     </section>
   );
