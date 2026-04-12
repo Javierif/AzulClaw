@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { Tooltip } from "../../components/Tooltip";
 import { loadWorkspace } from "../../lib/api";
 import { workspaceEntries } from "../../lib/mock-data";
 
@@ -42,7 +43,9 @@ export function WorkspaceShell() {
 
         <div className="workspace-banner">
           <strong>Active path</strong>
-          <code>{workspaceRoot}</code>
+          <Tooltip text={workspaceRoot} className="workspace-banner-path">
+            {workspaceRoot}
+          </Tooltip>
           <span>AzulClaw can only read and write within this sandbox.</span>
         </div>
 
@@ -50,9 +53,11 @@ export function WorkspaceShell() {
           <div className="subcard">
             {entries.map((entry) => (
               <article key={entry.path} className="list-row">
-                <div>
+                <div style={{ minWidth: 0 }}>
                   <strong>{entry.name}</strong>
-                  <p>{entry.path}</p>
+                  <Tooltip text={entry.path} className="list-path">
+                    {entry.path}
+                  </Tooltip>
                 </div>
                 <div className="list-row-meta">
                   <span className="memory-kind">{entry.kind}</span>

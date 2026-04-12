@@ -1,8 +1,15 @@
 import { useEffect, useState } from "react";
 
 import { loadMemory } from "../../lib/api";
-import { memoryItems } from "../../lib/mock-data";
 import type { MemoryRecord } from "../../lib/contracts";
+import { memoryItems } from "../../lib/mock-data";
+
+const kindColor: Record<string, string> = {
+  preference: "status-done",
+  episodic: "status-running",
+  semantic: "status-waiting",
+  session: "",
+};
 
 export function MemoryShell() {
   const [records, setRecords] = useState<MemoryRecord[]>(memoryItems);
@@ -24,54 +31,79 @@ export function MemoryShell() {
   }, []);
 
   return (
-    <section className="detail-layout">
-      <div className="card panel-stack">
-        <div className="panel-heading">
+    <section className="detail-layout" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div className="card panel-stack" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+        <div className="panel-heading" style={{ flexShrink: 0 }}>
           <div>
             <p className="eyebrow">Memory</p>
             <h2>Agent memory</h2>
           </div>
           <div className="action-row">
-            <button type="button" className="ghost-button">
-              Clear session
-            </button>
-            <button type="button" className="primary-button">
-              Export
-            </button>
+            <button type="button" className="ghost-button">Clear session</button>
+            <button type="button" className="primary-button">Export</button>
           </div>
         </div>
 
-        <div className="list-detail-grid">
-          <div className="subcard">
+        <div className="list-detail-grid" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+          {/* ── Record list (scrolls) ────────────── */}
+          <div className="subcard process-list-panel">
             {records.map((record) => (
               <article
                 key={record.id}
-                className={`list-row${selected?.id === record.id ? " list-row--active" : ""}`}
+                className={`process-row${selected?.id === record.id ? " process-row-active" : ""}`}
                 onClick={() => setSelected(record)}
-                style={{ cursor: "pointer" }}
               >
-                <div>
-                  <strong>{record.title}</strong>
-                  <p>{record.source}</p>
+                <div className="process-row-body">
+                  <div className="process-row-title">
+                    {record.pinned ? <span className="memory-pin">●</span> : null}
+                    <strong>{record.title}</strong>
+                  </div>
+                  <p className="process-row-meta">{record.source}</p>
                 </div>
-                <div className="list-row-meta">
-                  <span className="memory-kind">{record.kind}</span>
-                  {record.pinned && <span className="memory-kind">pinned</span>}
+                <div className="process-row-aside">
+                  <span className={`status-tag ${kindColor[record.kind] ?? ""}`}>{record.kind}</span>
                 </div>
               </article>
             ))}
           </div>
 
-          <div className="subcard">
+          {/* ── Detail panel (fixed) ─────────────── */}
+          <div className="subcard form-section" style={{ overflow: "hidden" }}>
             {selected ? (
               <>
-                <p className="eyebrow">{selected.kind}</p>
-                <h3>{selected.title}</h3>
-                <p>Source: {selected.source}</p>
-                {selected.pinned && <p><em>Pinned memory — will persist across sessions.</em></p>}
+                <div>
+                  <p className="eyebrow">{selected.kind}</p>
+                  <h3 style={{ margin: "4px 0 0" }}>{selected.title}</h3>
+                </div>
+
+                <div className="runtime-kv-list">
+                  <div className="runtime-kv-row">
+                    <span className="runtime-kv-key">Source</span>
+                    <span className="runtime-kv-val">{selected.source}</span>
+                  </div>
+                  <div className="runtime-kv-row">
+                    <span className="runtime-kv-key">Kind</span>
+                    <span className={`status-tag ${kindColor[selected.kind] ?? ""}`}>{selected.kind}</span>
+                  </div>
+                  <div className="runtime-kv-row">
+                    <span className="runtime-kv-key">Pinned</span>
+                    <span className="runtime-kv-val">{selected.pinned ? "Yes" : "No"}</span>
+                  </div>
+                </div>
+
+                {selected.pinned ? (
+                  <p style={{ margin: 0, fontSize: "0.82rem", color: "var(--muted)", fontStyle: "italic" }}>
+                    Persists across sessions.
+                  </p>
+                ) : null}
+
+                <div className="filter-row" style={{ marginTop: "auto" }}>
+                  <button type="button" className="ghost-button">Unpin</button>
+                  <button type="button" className="ghost-button">Delete</button>
+                </div>
               </>
             ) : (
-              <p>Select a memory record to preview it.</p>
+              <p style={{ color: "var(--muted)", margin: 0 }}>Select a memory record to preview it.</p>
             )}
           </div>
         </div>

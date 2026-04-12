@@ -33,8 +33,8 @@ export const processItems: ProcessSummary[] = [
     lane: "slow",
     startedAt: "12:04",
     updatedAt: "12:05",
-    detail: "Leyendo documentos del workspace y preparando contexto.",
-    modelLabel: "Cerebro lento",
+    detail: "Reading workspace documents and preparing context.",
+    modelLabel: "Slow Brain",
   },
   {
     id: "p2",
@@ -45,7 +45,7 @@ export const processItems: ProcessSummary[] = [
     lane: "fast",
     startedAt: "11:51",
     updatedAt: "11:51",
-    detail: "Pendiente de nueva ejecucion del scheduler.",
+    detail: "Pending next scheduler run.",
   },
   {
     id: "p3",
@@ -56,8 +56,8 @@ export const processItems: ProcessSummary[] = [
     lane: "slow",
     startedAt: "10:30",
     updatedAt: "10:32",
-    detail: "Ultimo resumen completado y persistido.",
-    modelLabel: "Cerebro lento",
+    detail: "Last summary completed and persisted.",
+    modelLabel: "Slow Brain",
   },
 ];
 
@@ -110,7 +110,7 @@ export const defaultHatchingProfile: HatchingProfile = {
 export const defaultChatRuntime: ChatRuntimeMeta = {
   lane: "auto",
   model_id: "slow",
-  model_label: "Cerebro lento",
+  model_label: "Slow Brain",
   process_id: "local-fallback",
 };
 
@@ -119,7 +119,7 @@ export const runtimeOverview: RuntimeOverview = {
   models: [
     {
       id: "fast",
-      label: "Cerebro rapido",
+      label: "Fast Brain",
       lane: "fast",
       provider: "azure",
       deployment: "gpt-4o-mini",
@@ -128,12 +128,12 @@ export const runtimeOverview: RuntimeOverview = {
       available: true,
       cooldown_until: "",
       last_error: "",
-      description: "Turnos rapidos, heartbeats y tareas ligeras.",
-      probe_detail: "Configuracion Azure lista",
+      description: "Quick turns, heartbeats and lightweight tasks.",
+      probe_detail: "Azure configuration ready",
     },
     {
       id: "slow",
-      label: "Cerebro lento",
+      label: "Slow Brain",
       lane: "slow",
       provider: "azure",
       deployment: "gpt-4o",
@@ -142,8 +142,8 @@ export const runtimeOverview: RuntimeOverview = {
       available: true,
       cooldown_until: "",
       last_error: "",
-      description: "Tareas deliberadas y con mas contexto.",
-      probe_detail: "Configuracion Azure lista",
+      description: "Deliberate tasks with more context.",
+      probe_detail: "Azure configuration ready",
     },
   ],
   scheduler_running: true,

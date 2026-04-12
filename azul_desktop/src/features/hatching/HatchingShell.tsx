@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import adultMascot from "../../../../img/azulclaw.png";
 import babyMascot from "../../../../img/hatching_azulclaw.png";
 
+import { Tooltip } from "../../components/Tooltip";
 import { saveHatching } from "../../lib/api";
 import type { HatchingProfile } from "../../lib/contracts";
 import { defaultHatchingProfile } from "../../lib/mock-data";
@@ -343,86 +344,86 @@ export function HatchingShell({
   if (!onboardingRequired) {
     return (
       <section className="single-panel-layout">
-        <div className="card panel-stack" style={{ padding: "28px" }}>
-          <div className="panel-heading" style={{ borderBottom: "1px solid var(--line)", paddingBottom: "20px", marginBottom: "10px" }}>
+        <div className="card panel-stack">
+          <div className="panel-heading" style={{ borderBottom: "1px solid var(--line)", paddingBottom: "20px", marginBottom: "4px" }}>
             <div>
-              <p className="eyebrow">Identity Menu</p>
-              <h2 style={{ fontSize: "1.8rem", margin: "4px 0" }}>Hatching Profile</h2>
-              <p className="hint-text" style={{ margin: 0 }}>Adjust your agent's core personality and environment at any time.</p>
+              <p className="eyebrow">Identity</p>
+              <h2>Hatching profile</h2>
+              <p className="hint-text" style={{ margin: "4px 0 0" }}>Adjust your agent's core personality and environment at any time.</p>
             </div>
             <button type="button" className="primary-button" onClick={() => void handleSave(true)} disabled={isSaving}>
               {isSaving ? "Saving..." : "Apply changes"}
             </button>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-            <label className="hw-modal-field">
-              <span className="hw-field-label">Agent Name</span>
-              <input 
-                className="hw-modal-input" 
-                type="text" 
-                value={answers[0] ?? ""} 
-                onChange={(e) => setAnswers(c => { const n = [...c]; n[0] = e.target.value; return n; })} 
+          <div className="two-column-grid">
+            <label className="form-field">
+              <span>Agent name</span>
+              <input
+                type="text"
+                value={answers[0] ?? ""}
+                onChange={(e) => setAnswers(c => { const n = [...c]; n[0] = e.target.value; return n; })}
               />
             </label>
+            <label className="form-field">
+              <span>Behaviour and tone</span>
+              <input
+                type="text"
+                value={answers[3] ?? ""}
+                onChange={(e) => setAnswers(c => { const n = [...c]; n[3] = e.target.value; return n; })}
+              />
+            </label>
+          </div>
 
-            <div className="hw-choice-row">
-              <label className="hw-modal-field">
-                <span className="hw-field-label">Main Role</span>
-                <textarea 
-                  className="hw-textarea" 
-                  style={{ minHeight: "100px" }} 
-                  value={answers[1] ?? ""} 
-                  onChange={(e) => setAnswers(c => { const n = [...c]; n[1] = e.target.value; return n; })} 
-                />
-              </label>
-              <label className="hw-modal-field">
-                <span className="hw-field-label">Mission or Goal</span>
-                <textarea 
-                  className="hw-textarea" 
-                  style={{ minHeight: "100px" }} 
-                  value={answers[2] ?? ""} 
-                  onChange={(e) => setAnswers(c => { const n = [...c]; n[2] = e.target.value; return n; })} 
-                />
-              </label>
+          <div className="two-column-grid">
+            <label className="form-field">
+              <span>Main role</span>
+              <textarea
+                rows={4}
+                value={answers[1] ?? ""}
+                onChange={(e) => setAnswers(c => { const n = [...c]; n[1] = e.target.value; return n; })}
+              />
+            </label>
+            <label className="form-field">
+              <span>Mission or goal</span>
+              <textarea
+                rows={4}
+                value={answers[2] ?? ""}
+                onChange={(e) => setAnswers(c => { const n = [...c]; n[2] = e.target.value; return n; })}
+              />
+            </label>
+          </div>
+
+          <div className="subcard form-section">
+            <p className="eyebrow">Secure workspace</p>
+            <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+              <Tooltip text={workspaceRoot} className="workspace-banner-path">
+                {workspaceRoot}
+              </Tooltip>
+              <button type="button" className="ghost-button" onClick={() => void handlePickWorkspace()}>
+                Choose folder
+              </button>
             </div>
-
-            <label className="hw-modal-field">
-              <span className="hw-field-label">Behaviour and Tone</span>
-              <input 
-                className="hw-modal-input" 
-                type="text" 
-                value={answers[3] ?? ""} 
-                onChange={(e) => setAnswers(c => { const n = [...c]; n[3] = e.target.value; return n; })} 
+            <label className="form-field" style={{ marginTop: "8px" }}>
+              <span>Path</span>
+              <input
+                type="text"
+                value={workspaceRoot}
+                onChange={(e) => setWorkspaceRoot(e.target.value)}
+                style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.85rem" }}
               />
             </label>
+            {workspacePickerError && <p style={{ margin: 0, color: "#fca5a5", fontSize: "0.85rem" }}>{workspacePickerError}</p>}
 
-            <div className="hw-workspace-panel" style={{ marginTop: "10px" }}>
-              <p className="hw-field-label" style={{ marginBottom: "6px" }}>Secure Workspace</p>
-              <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-                <input 
-                  className="hw-input-line hw-input-mono" 
-                  type="text" 
-                  value={workspaceRoot} 
-                  onChange={(e) => setWorkspaceRoot(e.target.value)} 
-                  style={{ flex: 1 }}
-                />
-                <button type="button" className="hw-btn-ghost" onClick={() => void handlePickWorkspace()}>
-                  📂 Choose
+            <div style={{ marginTop: "8px" }}>
+              <p className="eyebrow" style={{ marginBottom: "10px" }}>Sensitive action confirmation</p>
+              <div className="filter-row">
+                <button type="button" className={confirmSensitiveActions ? "primary-button" : "ghost-button"} onClick={() => setConfirmSensitiveActions(true)}>
+                  Ask before acting
                 </button>
-              </div>
-              {workspacePickerError && <p className="hw-inline-note hw-inline-note-warning">{workspacePickerError}</p>}
-              
-              <div className="hw-workspace-confirm" style={{ marginTop: "16px" }}>
-                <p className="hw-field-label">Sensitive action confirmation</p>
-                <div className="hw-choice-row">
-                  <button type="button" className={`hw-choice${confirmSensitiveActions ? " hw-choice-active" : ""}`} onClick={() => setConfirmSensitiveActions(true)}>
-                    Ask before acting
-                  </button>
-                  <button type="button" className={`hw-choice${!confirmSensitiveActions ? " hw-choice-active" : ""}`} onClick={() => setConfirmSensitiveActions(false)}>
-                    Full autonomy
-                  </button>
-                </div>
+                <button type="button" className={!confirmSensitiveActions ? "primary-button" : "ghost-button"} onClick={() => setConfirmSensitiveActions(false)}>
+                  Full autonomy
+                </button>
               </div>
             </div>
           </div>
