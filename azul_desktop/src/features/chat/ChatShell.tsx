@@ -130,13 +130,23 @@ function ThinkingCard({ message }: { message: ChatMessageItem }) {
 }
 
 
-export function ChatShell() {
+export function ChatShell({
+  onThinkingChange,
+  onTypingChange,
+  onAnswerStart,
+}: {
+  onThinkingChange?: (thinking: boolean) => void;
+  onTypingChange?: (typing: boolean) => void;
+  onAnswerStart?: () => void;
+}) {
   const [messages, setMessages] = useState<ChatMessageItem[]>(() => toUiMessages(chatMessages));
   const [draft, setDraft] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [runtime, setRuntime] = useState(defaultChatRuntime);
   const streamMessageIdRef = useRef("");
   const streamBufferRef = useRef("");
+  const answerStartedRef = useRef(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
   const streamPumpRef = useRef<number | null>(null);
 
   function ensureStreamPump() {
@@ -188,6 +198,10 @@ export function ChatShell() {
   }
 
   useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  useEffect(() => {
     return () => {
       if (streamPumpRef.current !== null) {
         window.clearInterval(streamPumpRef.current);
@@ -202,6 +216,9 @@ export function ChatShell() {
     }
 
     setIsSending(true);
+    answerStartedRef.current = false;
+    onTypingChange?.(false);
+    onThinkingChange?.(true);
     const now = Date.now();
     const nextUserMessage: ChatMessageItem = {
       id: `user-${now}`,
@@ -277,6 +294,7 @@ export function ChatShell() {
         }
 
         if (event.type === "delta") {
+          if (!answerStartedRef.current) { answerStartedRef.current = true; onAnswerStart?.(); }
           streamBufferRef.current += event.text || "";
           ensureStreamPump();
         }
@@ -354,6 +372,7 @@ export function ChatShell() {
       }
     } finally {
       flushStreamBuffer();
+      onThinkingChange?.(false);
       setIsSending(false);
     }
   }
@@ -394,6 +413,7 @@ export function ChatShell() {
               </article>
             ),
           )}
+          <div ref={bottomRef} />
         </div>
 
         <div className="composer">
@@ -404,7 +424,14 @@ export function ChatShell() {
                 placeholder="Type a message... (Enter to send, Shift+Enter for new line)"
                 rows={1}
                 value={draft}
-                onChange={(event) => setDraft(event.target.value)}
+                onChange={(event) => {
+                  const val = event.target.value;
+                  const wasEmpty = !draft.trim();
+                  const isEmpty = !val.trim();
+                  setDraft(val);
+                  if (wasEmpty && !isEmpty) onTypingChange?.(true);
+                  if (!wasEmpty && isEmpty) onTypingChange?.(false);
+                }}
                 onKeyDown={handleKeyDown}
               />
             </label>
