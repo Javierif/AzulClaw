@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { sendDesktopMessageStream } from "../../lib/api";
+import { Tooltip } from "../../components/Tooltip";
 import type { ChatExchange, ThinkingProgress } from "../../lib/contracts";
 import { chatMessages, defaultChatRuntime } from "../../lib/mock-data";
 
@@ -127,6 +128,7 @@ function ThinkingCard({ message }: { message: ChatMessageItem }) {
     </article>
   );
 }
+
 
 export function ChatShell() {
   const [messages, setMessages] = useState<ChatMessageItem[]>(() => toUiMessages(chatMessages));
@@ -452,33 +454,40 @@ export function ChatShell() {
           <h2>Session activity</h2>
         </div>
 
+        {/* ── Status ──────────────────────────────── */}
         <section className="context-section">
-          <h3>Current status</h3>
-          <ul className="context-list">
-            {[
-              `Active lane: ${runtime.lane || "—"}`,
-              `Triage reason: ${runtime.triage_reason || "—"}`,
-              `Last model: ${runtime.model_label || "—"}`,
-              `Process: ${runtime.process_id || "—"}`,
-            ].map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
+          <p className="eyebrow">Status</p>
+          <div className="runtime-kv-list">
+            <div className="runtime-kv-row">
+              <span className="runtime-kv-key">Lane</span>
+              <span className="runtime-kv-val">{runtime.lane || "—"}</span>
+            </div>
+            <div className="runtime-kv-row">
+              <span className="runtime-kv-key">Model</span>
+              <span className="runtime-kv-val">{runtime.model_label || "—"}</span>
+            </div>
+            <div className="runtime-kv-row">
+              <span className="runtime-kv-key">Process</span>
+              <code className="runtime-kv-code">{runtime.process_id || "—"}</code>
+            </div>
+            <div className="runtime-kv-row">
+              <span className="runtime-kv-key">Workspace</span>
+              <Tooltip text="~/Desktop/AzulWorkspace" className="chat-path-truncated" position="left">
+                <code className="runtime-kv-code">~/Desktop/AzulWorkspace</code>
+              </Tooltip>
+            </div>
+          </div>
         </section>
 
+        {/* ── Recent memory ───────────────────────── */}
         <section className="context-section">
-          <h3>Recent memory</h3>
-          <p>
-            Preference set: direct answers, focus on concrete steps and process
-            visibility.
-          </p>
-        </section>
-
-        <section className="context-section">
-          <h3>Workspace</h3>
-          <p>
-            Active path: <code>Desktop\AzulWorkspace</code>
-          </p>
+          <p className="eyebrow">Recent memory</p>
+          <article className="subcard" style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: "6px" }}>
+            <p style={{ margin: 0, fontSize: "0.85rem" }}>
+              Direct answers, focus on concrete steps and process visibility.
+            </p>
+            <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>Hatching</span>
+          </article>
         </section>
       </aside>
     </section>
