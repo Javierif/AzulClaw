@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { Toggle } from "../../components/Toggle";
 import { deleteJob, loadJobs, loadRuntime, runJob, saveJob, saveRuntime } from "../../lib/api";
 import type { RuntimeOverview, ScheduledJob } from "../../lib/contracts";
 import { runtimeOverview, scheduledJobs } from "../../lib/mock-data";
@@ -11,6 +12,12 @@ type JobDraft = {
   prompt: string;
   lane: Lane;
   intervalSeconds: string;
+};
+
+const laneDescriptions: Record<string, string> = {
+  auto: "Let AzulClaw choose based on the task complexity",
+  fast: "Always use the fast model — quick, lightweight tasks",
+  slow: "Always use the slow model — deliberate, context-heavy tasks",
 };
 
 export function RuntimeShell() {
@@ -75,27 +82,73 @@ export function RuntimeShell() {
   return (
     <section className="single-panel-layout">
       <div className="card panel-stack">
+
+        {/* ── Header ─────────────────────────────────── */}
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Runtime</p>
-            <h2>Modelos, heartbeats y automatizaciones</h2>
+            <h2>Models, heartbeats and automations</h2>
           </div>
           <div className="filter-row">
             <span className="status-pill">{runtime.jobs_total} jobs</span>
-            <span className="status-pill">{runtime.processes_visible} procesos</span>
+            <span className="status-pill">{runtime.processes_visible} processes</span>
           </div>
         </div>
 
-        <div className="three-column-grid">
+        {/* ── Default lane selector ───────────────────── */}
+        <div className="runtime-lane-bar subcard">
+          <div className="runtime-lane-meta">
+            <p className="eyebrow">Default lane</p>
+            <p className="runtime-lane-hint">
+              {laneDescriptions[runtime.default_lane]}
+            </p>
+          </div>
+          <div className="runtime-lane-options">
+            {laneOptions.map((lane) => (
+              <button
+                key={lane}
+                type="button"
+                className={`runtime-lane-btn${lane === runtime.default_lane ? " runtime-lane-btn-active" : ""}`}
+                onClick={() => setRuntime((current) => ({ ...current, default_lane: lane }))}
+              >
+                <span className="runtime-lane-btn-dot" />
+                {lane}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Model cards ─────────────────────────────── */}
+        <div className="two-column-grid">
           {runtime.models.map((model) => (
-            <section key={model.id} className="subcard">
-              <p className="eyebrow">{model.lane === "fast" ? "Fast Brain" : "Slow Brain"}</p>
-              <h3>{model.label}</h3>
-              <p>{model.description}</p>
-              <p><strong>Proveedor:</strong> {model.provider}</p>
-              <p><strong>Deployment:</strong> {model.deployment}</p>
-              <p><strong>Estado:</strong> {model.available ? "Disponible" : "No disponible"}</p>
-              <label className="toggle-row">
+            <section key={model.id} className="subcard runtime-model-card">
+              <div className="runtime-model-header">
+                <div>
+                  <p className="eyebrow">{model.lane === "fast" ? "Fast Brain" : "Slow Brain"}</p>
+                  <h3 className="runtime-model-name">{model.label}</h3>
+                  <p className="runtime-model-desc">{model.description}</p>
+                </div>
+                <span className={`runtime-status-dot${model.available ? " runtime-status-dot-ok" : " runtime-status-dot-err"}`} title={model.available ? "Available" : "Unavailable"} />
+              </div>
+
+              <div className="runtime-kv-list">
+                <div className="runtime-kv-row">
+                  <span className="runtime-kv-key">Provider</span>
+                  <span className="runtime-kv-val">{model.provider}</span>
+                </div>
+                <div className="runtime-kv-row">
+                  <span className="runtime-kv-key">Deployment</span>
+                  <code className="runtime-kv-code">{model.deployment}</code>
+                </div>
+                <div className="runtime-kv-row">
+                  <span className="runtime-kv-key">Status</span>
+                  <span className={`status-tag ${model.available ? "status-done" : "status-failed"}`}>
+                    {model.available ? "Available" : "Unavailable"}
+                  </span>
+                </div>
+              </div>
+
+              <label className="toggle-row runtime-toggle">
                 <input
                   type="checkbox"
                   checked={model.streaming_enabled}
@@ -110,71 +163,75 @@ export function RuntimeShell() {
                     }))
                   }
                 />
-                Streaming de respuestas
+                Response streaming
               </label>
-              <p><strong>Probe:</strong> {model.probe_detail}</p>
-              {model.last_error ? <p><strong>Ultimo error:</strong> {model.last_error}</p> : null}
+
+              {model.probe_detail ? (
+                <div className="runtime-probe">
+                  <span className="runtime-kv-key">Probe</span>
+                  <code className="inline-code">{model.probe_detail}</code>
+                </div>
+              ) : null}
+
+              {model.last_error ? (
+                <div className="error-block">
+                  <span className="error-block-label">Last error</span>
+                  <code className="error-code">{model.last_error}</code>
+                </div>
+              ) : null}
             </section>
           ))}
-
-          <section className="subcard">
-            <p className="eyebrow">Default lane</p>
-            <h3>Ruta de inferencia</h3>
-            <div className="filter-row">
-              {laneOptions.map((lane) => (
-                <button
-                  key={lane}
-                  type="button"
-                  className={lane === runtime.default_lane ? "primary-button" : "ghost-button"}
-                  onClick={() => setRuntime((current) => ({ ...current, default_lane: lane }))}
-                >
-                  {lane}
-                </button>
-              ))}
-            </div>
-          </section>
         </div>
 
+        {/* ── Heartbeat + New job ──────────────────────── */}
         <div className="two-column-grid">
           <section className="subcard form-section">
-            <div>
-              <p className="eyebrow">Heartbeat</p>
-              <h3>Checklist periodica</h3>
-            </div>
-            <label className="toggle-row">
-              <input
-                type="checkbox"
+            <div className="runtime-section-header">
+              <div>
+                <p className="eyebrow">Heartbeat</p>
+                <h3>Periodic checklist</h3>
+              </div>
+              <Toggle
                 checked={runtime.heartbeat.enabled}
-                onChange={(event) =>
+                label="Enable workspace heartbeat"
+                onChange={(val) =>
                   setRuntime((current) => ({
                     ...current,
-                    heartbeat: { ...current.heartbeat, enabled: event.target.checked },
+                    heartbeat: { ...current.heartbeat, enabled: val },
                   }))
                 }
               />
-              Activar heartbeat del workspace
-            </label>
+            </div>
+
+            <div className="runtime-top-row">
+              <label className="form-field runtime-every-field" style={{ flex: 1 }}>
+                <span>Interval in seconds</span>
+                <div className="runtime-every-wrap">
+                  <input
+                    type="number"
+                    min={60}
+                    disabled={!runtime.heartbeat.enabled}
+                    value={runtime.heartbeat.interval_seconds}
+                    onChange={(event) =>
+                      setRuntime((current) => ({
+                        ...current,
+                        heartbeat: {
+                          ...current.heartbeat,
+                          interval_seconds: Number(event.target.value) || 900,
+                        },
+                      }))
+                    }
+                  />
+                </div>
+              </label>
+            </div>
+
             <label className="form-field">
-              <span>Intervalo en segundos</span>
-              <input
-                type="number"
-                min={60}
-                value={runtime.heartbeat.interval_seconds}
-                onChange={(event) =>
-                  setRuntime((current) => ({
-                    ...current,
-                    heartbeat: {
-                      ...current.heartbeat,
-                      interval_seconds: Number(event.target.value) || 900,
-                    },
-                  }))
-                }
-              />
-            </label>
-            <label className="form-field">
-              <span>Prompt de heartbeat</span>
+              <span>Heartbeat prompt</span>
               <textarea
-                rows={5}
+                rows={4}
+                className="runtime-prompt-textarea"
+                disabled={!runtime.heartbeat.enabled}
                 value={runtime.heartbeat.prompt}
                 onChange={(event) =>
                   setRuntime((current) => ({
@@ -184,86 +241,128 @@ export function RuntimeShell() {
                 }
               />
             </label>
-            <p><strong>Archivo:</strong> {runtime.heartbeat.heartbeat_file}</p>
-            <p><strong>Ultimo resultado:</strong> {runtime.heartbeat.last_result || "sin ejecuciones"}</p>
-            <button type="button" className="primary-button" onClick={() => void handleRuntimeSave()}>
-              Guardar runtime
+
+            <div className="runtime-kv-list">
+              <div className="runtime-kv-row">
+                <span className="runtime-kv-key">File</span>
+                <code className="runtime-kv-code" style={{ maxWidth: "60%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {runtime.heartbeat.heartbeat_file}
+                </code>
+              </div>
+              <div className="runtime-kv-row">
+                <span className="runtime-kv-key">Last result</span>
+                <span className="runtime-kv-val">{runtime.heartbeat.last_result || "no executions yet"}</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              className="primary-button"
+              disabled={!runtime.heartbeat.enabled}
+              onClick={() => void handleRuntimeSave()}
+            >
+              Save runtime
             </button>
           </section>
 
           <section className="subcard form-section">
             <div>
-              <p className="eyebrow">Nuevo job</p>
-              <h3>Cron local</h3>
+              <p className="eyebrow">New job</p>
+              <h3>Local cron</h3>
             </div>
+
+            <div className="runtime-top-row">
+              <label className="form-field" style={{ flex: 1 }}>
+                <span>Brain</span>
+                <div className="runtime-every-wrap">
+                  <select
+                    value={form.lane}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, lane: event.target.value as Lane }))
+                    }
+                  >
+                    {laneOptions.map((lane) => (
+                      <option key={lane} value={lane}>{lane}</option>
+                    ))}
+                  </select>
+                </div>
+              </label>
+              <label className="form-field runtime-every-field">
+                <span>Interval in seconds</span>
+                <div className="runtime-every-wrap">
+                  <input
+                    type="number"
+                    min={60}
+                    value={form.intervalSeconds}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, intervalSeconds: event.target.value }))
+                    }
+                  />
+                </div>
+              </label>
+            </div>
+
             <label className="form-field">
-              <span>Nombre</span>
+              <span>Name</span>
               <input
                 value={form.name}
                 onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
               />
             </label>
+
             <label className="form-field">
               <span>Prompt</span>
               <textarea
-                rows={4}
+                rows={3}
+                className="runtime-prompt-textarea"
                 value={form.prompt}
                 onChange={(event) => setForm((current) => ({ ...current, prompt: event.target.value }))}
               />
             </label>
-            <label className="form-field">
-              <span>Cerebro</span>
-              <select
-                  value={form.lane}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, lane: event.target.value as Lane }))
-                }
-              >
-                {laneOptions.map((lane) => (
-                  <option key={lane} value={lane}>
-                    {lane}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="form-field">
-              <span>Intervalo (segundos)</span>
-              <input
-                type="number"
-                min={60}
-                value={form.intervalSeconds}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, intervalSeconds: event.target.value }))
-                }
-              />
-            </label>
-            <button type="button" className="primary-button" onClick={() => void handleCreateJob()}>
-              Crear job
+
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => void handleCreateJob()}
+              disabled={!form.name.trim() || !form.prompt.trim()}
+            >
+              Create job
             </button>
           </section>
         </div>
 
-        <div className="subcard">
-          <p className="eyebrow">Jobs</p>
-          <h3>Automatizaciones programadas</h3>
-          {jobs.length === 0 ? <p>No hay jobs creados todavia.</p> : null}
-          {jobs.map((job) => (
-            <article key={job.id} className="list-row">
-              <div>
-                <strong>{job.name}</strong>
-                <p>{job.prompt}</p>
-                <p>
-                  {job.schedule_kind === "every"
-                    ? `Cada ${job.interval_seconds}s`
-                    : `En ${job.run_at || "fecha pendiente"}`}
-                </p>
-              </div>
-              <div className="list-row-meta">
-                <span className={`status-tag ${job.enabled ? "status-done" : "status-waiting"}`}>
-                  {job.enabled ? "enabled" : "disabled"}
-                </span>
-                <span>{job.lane}</span>
-                <div className="action-row">
+        {/* ── Scheduled jobs ──────────────────────────── */}
+        <section className="subcard">
+          <div className="panel-heading" style={{ marginBottom: "12px" }}>
+            <div>
+              <p className="eyebrow">Jobs</p>
+              <h3>Scheduled automations</h3>
+            </div>
+            <span className="status-pill">{jobs.length} total</span>
+          </div>
+
+          {jobs.length === 0 ? (
+            <p style={{ color: "var(--muted)", margin: 0 }}>No jobs created yet.</p>
+          ) : (
+            jobs.map((job) => (
+              <article key={job.id} className="list-row">
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <strong>{job.name}</strong>
+                    <span className={`status-tag ${job.enabled ? "status-done" : "status-waiting"}`}>
+                      {job.enabled ? "enabled" : "disabled"}
+                    </span>
+                  </div>
+                  <p style={{ marginTop: "4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{job.prompt}</p>
+                  <p>
+                    {job.schedule_kind === "every"
+                      ? `Every ${job.interval_seconds}s`
+                      : `At ${job.run_at || "pending date"}`}
+                    {" · "}
+                    <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.82rem" }}>{job.lane}</span>
+                  </p>
+                </div>
+                <div className="filter-row" style={{ flexShrink: 0 }}>
                   <button
                     type="button"
                     className="ghost-button"
@@ -283,10 +382,11 @@ export function RuntimeShell() {
                     Delete
                   </button>
                 </div>
-              </div>
-            </article>
-          ))}
-        </div>
+              </article>
+            ))
+          )}
+        </section>
+
       </div>
     </section>
   );
