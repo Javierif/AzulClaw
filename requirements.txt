@@ -5,3 +5,4 @@ colorama
 mcp
 python-dotenv
 agent-framework
+azure-servicebus

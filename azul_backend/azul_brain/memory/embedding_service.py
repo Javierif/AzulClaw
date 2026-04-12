@@ -3,7 +3,7 @@
 import logging
 import os
 
-from agent_framework.openai import OpenAIEmbeddingClient
+from agent_framework.azure import AzureOpenAIEmbeddingClient
 
 LOGGER = logging.getLogger(__name__)
 
@@ -13,7 +13,7 @@ _DEFAULT_EMBEDDING_MODEL = "text-embedding-ada-002"
 class EmbeddingService:
     """Generates text embeddings using Azure OpenAI."""
 
-    def __init__(self, client: OpenAIEmbeddingClient, model: str):
+    def __init__(self, client: AzureOpenAIEmbeddingClient, model: str):
         self._client = client
         self._model = model
 
@@ -32,10 +32,10 @@ class EmbeddingService:
         model = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", _DEFAULT_EMBEDDING_MODEL).strip()
         api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21").strip()
 
-        client = OpenAIEmbeddingClient(
-            model=model,
+        client = AzureOpenAIEmbeddingClient(
+            deployment_name=model,
             api_key=api_key,
-            azure_endpoint=endpoint,
+            endpoint=endpoint,
             api_version=api_version,
         )
         return cls(client=client, model=model)

@@ -18,7 +18,12 @@ class RuntimeConfig:
 
     app_id: str
     app_password: str
+    tenant_id: str
     port: int
+    service_bus_connection_string: str = ""
+    service_bus_inbound_queue: str = "bot-inbound"
+    service_bus_outbound_queue: str = "bot-outbound"
+    service_bus_use_sessions: str = "auto"
 
 
 def load_env_file(env_file_path: Path) -> None:
@@ -59,5 +64,22 @@ def load_runtime_config(base_path: Path) -> RuntimeConfig:
     load_env_file(base_path / ENV_LOCAL_FILENAME)
     app_id = os.environ.get("MicrosoftAppId", "")
     app_password = os.environ.get("MicrosoftAppPassword", "")
+    tenant_id = os.environ.get("MicrosoftAppTenantId", "")
     port = parse_port(os.environ.get("PORT", str(DEFAULT_PORT)))
-    return RuntimeConfig(app_id=app_id, app_password=app_password, port=port)
+    
+    # Service Bus Extensions
+    service_bus_conn = os.environ.get("SERVICE_BUS_CONNECTION_STRING", "")
+    service_bus_inbound = os.environ.get("SERVICE_BUS_INBOUND_QUEUE", "bot-inbound")
+    service_bus_outbound = os.environ.get("SERVICE_BUS_OUTBOUND_QUEUE", "bot-outbound")
+    service_bus_use_sessions = os.environ.get("SERVICE_BUS_USE_SESSIONS", "auto")
+
+    return RuntimeConfig(
+        app_id=app_id, 
+        app_password=app_password, 
+        tenant_id=tenant_id,
+        port=port,
+        service_bus_connection_string=service_bus_conn,
+        service_bus_inbound_queue=service_bus_inbound,
+        service_bus_outbound_queue=service_bus_outbound,
+        service_bus_use_sessions=service_bus_use_sessions,
+    )

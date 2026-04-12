@@ -22,6 +22,7 @@ if __package__ in (None, ""):
     from azul_backend.azul_brain.runtime.process_registry import ProcessRegistry
     from azul_backend.azul_brain.runtime.scheduler import RuntimeScheduler
     from azul_backend.azul_brain.runtime.store import RuntimeStore
+    from azul_backend.azul_brain.channels.servicebus_worker import ServiceBusWorker
 else:
     from .api.routes import register_desktop_routes
     from .bootstrap import build_adapter, build_mcp_client
@@ -32,6 +33,7 @@ else:
     from .runtime.process_registry import ProcessRegistry
     from .runtime.scheduler import RuntimeScheduler
     from .runtime.store import RuntimeStore
+    from .channels.servicebus_worker import ServiceBusWorker
 
 LOGGER = logging.getLogger(__name__)
 CORS_ALLOWED_METHODS = "GET,POST,PUT,DELETE,OPTIONS"
@@ -91,7 +93,7 @@ async def create_app() -> web.Application:
     base_path = Path(__file__).resolve().parent
     runtime_config = load_runtime_config(base_path)
 
-    adapter = build_adapter(runtime_config.app_id, runtime_config.app_password)
+    adapter = build_adapter(runtime_config.app_id, runtime_config.app_password, runtime_config.tenant_id)
     mcp_client = build_mcp_client(base_path)
 
     try:
@@ -126,6 +128,19 @@ async def create_app() -> web.Application:
     app["scheduler"] = scheduler
     app.router.add_post("/api/messages", messages_handler)
     register_desktop_routes(app)
+
+    if runtime_config.service_bus_connection_string:
+        sb_worker = ServiceBusWorker(
+            orchestrator=orchestrator,
+            adapter=adapter,
+            connection_str=runtime_config.service_bus_connection_string,
+            inbound_queue=runtime_config.service_bus_inbound_queue,
+            outbound_queue=runtime_config.service_bus_outbound_queue,
+            use_sessions=runtime_config.service_bus_use_sessions,
+        )
+        await sb_worker.start()
+        app["servicebus_worker"] = sb_worker
+
     return app
 
 
@@ -172,6 +187,12 @@ async def main() -> None:
                 await scheduler.stop()
             except Exception as scheduler_error:
                 LOGGER.warning("Error stopping scheduler: %s", scheduler_error)
+        sb_worker = app.get("servicebus_worker")
+        if sb_worker is not None:
+            try:
+                await sb_worker.stop()
+            except Exception as sb_error:
+                LOGGER.warning("Error stopping ServiceBus worker: %s", sb_error)
         await runner.cleanup()
 
 
