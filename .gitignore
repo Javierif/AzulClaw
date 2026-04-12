@@ -6,6 +6,7 @@ Nemoclaw/
 *.env
 *.env.local
 *.env.*.local
+azure/functions/bot_relay/local.settings.json
 
 # Python
 *.pyc
