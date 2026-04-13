@@ -71,3 +71,4 @@ See [docs/02_setup_and_development.md](docs/02_setup_and_development.md#hybrid-m
 | Desktop Wireframes | [docs/09_desktop_low_fidelity_wireframes.md](docs/09_desktop_low_fidelity_wireframes.md) |
 | Desktop Architecture & Repo Structure | [docs/10_desktop_architecture_and_repo_structure.md](docs/10_desktop_architecture_and_repo_structure.md) |
 | Hybrid memory & env reference | [docs/02_setup_and_development.md](docs/02_setup_and_development.md#hybrid-memory-env) |
+| Azure Bot Deployment Guide | [docs/13_azure_bot_deployment_guide.md](docs/13_azure_bot_deployment_guide.md) |

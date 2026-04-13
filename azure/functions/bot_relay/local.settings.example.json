@@ -1,0 +1,14 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "SERVICE_BUS_CONNECTION_STRING": "Endpoint=sb://<namespace>.servicebus.windows.net/;SharedAccessKeyName=<policy>;SharedAccessKey=<secret>",
+    "SERVICE_BUS_INBOUND_QUEUE": "bot-inbound",
+    "SERVICE_BUS_OUTBOUND_QUEUE": "bot-outbound",
+    "SERVICE_BUS_USE_SESSIONS": "true",
+    "BOT_RELAY_REQUIRE_AUTH": "true",
+    "BOT_SYNC_REPLY_TIMEOUT_SECONDS": "6.8",
+    "MicrosoftAppId": "<bot-app-id>",
+    "MicrosoftAppPassword": "<bot-app-password>"
+  }
+}

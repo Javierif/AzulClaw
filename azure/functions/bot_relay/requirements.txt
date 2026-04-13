@@ -1,0 +1,5 @@
+aiohttp
+azure-functions
+azure-servicebus
+botbuilder-schema==4.17.1
+botframework-connector==4.17.1
