@@ -37,7 +37,7 @@ function formatDate(iso: string): string {
 }
 
 function isDeletable(record: MemoryRecord): boolean {
-  return true;
+  return !record.pinned;
 }
 
 export function MemoryShell() {

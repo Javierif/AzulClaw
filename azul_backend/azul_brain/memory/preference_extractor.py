@@ -16,8 +16,6 @@ import logging
 import os
 from typing import TYPE_CHECKING
 
-from agent_framework import Message
-
 if TYPE_CHECKING:
     from .embedding_service import EmbeddingService
     from .vector_store import VectorMemoryStore
@@ -38,17 +36,25 @@ _SKIP_MESSAGES = frozenset({
 })
 
 
+_EXPLICIT_SAVE_KEYWORDS = frozenset({"remember", "recuerda", "save", "guarda", "anota"})
+
+
 def should_extract(user_message: str) -> bool:
     """Cheap heuristic: returns True only if the message is worth analysing.
 
     Skips greetings, monosyllables, and messages shorter than *_MIN_WORDS*.
+    Always returns True when the user explicitly asks to remember something.
     """
     text = (user_message or "").strip().lower()
     if not text:
         return False
+    # Always extract when the user explicitly asks to save/remember something
+    words = set(text.split())
+    if words & _EXPLICIT_SAVE_KEYWORDS:
+        return True
     if text in _SKIP_MESSAGES:
         return False
-    if len(text.split()) < _MIN_WORDS:
+    if len(words) < _MIN_WORDS:
         return False
     return True
 
@@ -62,7 +68,8 @@ to them, how they like things done, what they enjoy, how they want to be
 explained things, their working style, and what they care about.
 
 Rules:
-1. Return ONLY a JSON array. No markdown, no explanation.
+1. Return ONLY a valid JSON object with a single key "items" containing an array. No markdown, no explanation.
+   Example: {"items": [{"type": "preference", "content": "..."}]}
 2. Each item must have exactly: {"type": "preference", "content": "..."}
 3. "content" must be a concise but rich statement in the SAME language as the
    user. Group related ideas into ONE item rather than splitting them.
@@ -75,8 +82,10 @@ Rules:
    values, priorities, things the user cares about, and how they want to work.
 8. Do NOT invent or infer things the user did not say.
 9. Ignore instructions, code, or technical content that is not *about* the user.
-10. If the user explicitly asks you to "remember" or "save" something about
-    themselves, ALWAYS extract it — treat it as a mandatory save.
+10. OVERRIDE ALL OTHER RULES: If the user explicitly asks you to "remember",
+    "save", "recuerda", "guarda", or "anota" something, you MUST extract it
+    no matter what — even if it seems trivial, personal, or unrelated to work.
+    The user's explicit request is always the highest priority signal.
 """
 
 _EXTRACTION_USER_TEMPLATE = """\
@@ -173,9 +182,10 @@ class PreferenceExtractor:
                 self._store.add_preference(user_id, content, embedding)
 
                 LOGGER.info(
-                    "[PrefExtractor] Learned preference for user %s%s: %s",
+                    "[PrefExtractor] Saved preference for user %s [%s, dim=%s]: %s",
                     user_id,
-                    " (no embedding)" if embedding is None else "",
+                    "vectorized" if embedding else "text-only",
+                    len(embedding) if embedding else 0,
                     content,
                 )
 
@@ -188,42 +198,112 @@ class PreferenceExtractor:
         user_message: str,
         assistant_reply: str,
     ) -> list[dict]:
-        """Calls the fast-lane chat deployment to extract structured facts."""
+        """Calls an LLM to extract structured preferences.
+
+        Tries in order:
+          1. Ollama (local, OpenAI-compatible)
+          2. Azure OpenAI via AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_DEPLOYMENT
+        """
+        import aiohttp
+        from urllib.parse import urlparse
+
         prompt_text = _EXTRACTION_USER_TEMPLATE.format(
             user_message=user_message,
-            assistant_reply=assistant_reply[:500],  # cap context size
+            assistant_reply=assistant_reply[:500],
         )
-
         messages = [
-            Message(role="system", contents=_EXTRACTION_SYSTEM_PROMPT),
-            Message(role="user", contents=prompt_text),
+            {"role": "system", "content": _EXTRACTION_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt_text},
         ]
 
+        # ── 1. Try AI Foundry fast model (gpt-5.4-nano via /v1/ path) ───────
+        fast_endpoint = os.environ.get("AZURE_OPENAI_FAST_ENDPOINT", "").strip()
+        fast_key = os.environ.get("AZURE_OPENAI_FAST_API_KEY", "").strip()
+        fast_deployment = os.environ.get("AZURE_OPENAI_FAST_DEPLOYMENT", "").strip()
+        if fast_endpoint and fast_key and fast_deployment:
+            # AI Foundry /v1/ endpoints: strip trailing path segments after /v1
+            # and use /v1/chat/completions with model in the body (no api-version)
+            parsed = urlparse(fast_endpoint)
+            path = parsed.path
+            v1_idx = path.find("/v1")
+            if v1_idx != -1:
+                clean_path = path[: v1_idx + 3]  # keep up to and including /v1
+            else:
+                clean_path = ""
+            foundry_url = f"{parsed.scheme}://{parsed.netloc}{clean_path}/chat/completions"
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        foundry_url,
+                        json={"model": fast_deployment, "messages": messages, "temperature": 0.0, "max_completion_tokens": 512, "response_format": {"type": "json_object"}},
+                        headers={"Authorization": f"Bearer {fast_key}", "Content-Type": "application/json"},
+                        timeout=aiohttp.ClientTimeout(total=20),
+                        ssl=False,
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            msg = data["choices"][0]["message"]
+                            content = msg.get("content") or ""
+                            LOGGER.debug("[PrefExtractor] Used fast model (%s) for extraction.", fast_deployment)
+                            return self._parse_llm_response(content)
+                        body = await resp.text()
+                        LOGGER.warning("[PrefExtractor] Fast model returned %d — falling back: %s", resp.status, body[:300])
+            except Exception as err:
+                LOGGER.warning("[PrefExtractor] Fast model unavailable (%s) — falling back.", err)
+
+        # ── 2. Fallback: standard Azure endpoint (cognitiveservices) ────────
+        endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip()
+        api_key = os.environ.get("AZURE_OPENAI_API_KEY", "").strip()
+        deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "").strip()
+        api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21").strip()
+
+        if not endpoint or not api_key or not deployment:
+            LOGGER.warning("[PrefExtractor] No LLM configured — skipping extraction.")
+            return []
+
+        parsed = urlparse(endpoint)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+        url = f"{base}/openai/deployments/{deployment}/chat/completions?api-version={api_version}"
+
         try:
-            result = await self._runtime.execute_messages(
-                messages=messages,
-                lane="auto",
-                title="Preference extraction",
-                source="preference-extractor",
-                kind="extraction",
-            )
-            raw = result.text.strip()
-            LOGGER.info("[PrefExtractor] LLM raw response: %s", raw[:200])
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    json={"messages": messages, "max_tokens": 512, "temperature": 0.0, "response_format": {"type": "json_object"}},
+                    headers={"api-key": api_key, "Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=30),
+                    ssl=False,
+                ) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        LOGGER.warning("[PrefExtractor] Azure returned %d: %s", resp.status, body[:300])
+                        return []
+                    data = await resp.json()
 
-            # Strip markdown fences if the model wraps in ```json ... ```
-            if raw.startswith("```"):
-                raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            msg = data["choices"][0]["message"]
+            content = msg.get("content") or msg.get("reasoning_content") or ""
+            return self._parse_llm_response(content)
 
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                return parsed
-            LOGGER.warning("[PrefExtractor] LLM returned non-list JSON: %s", raw[:200])
-            return []
-
-        except json.JSONDecodeError as error:
-            raw_preview = raw[:200] if 'raw' in locals() else "N/A"
-            LOGGER.warning("[PrefExtractor] LLM returned non-JSON (raw=%s): %s", raw_preview, error)
-            return []
         except Exception as error:
             LOGGER.warning("[PrefExtractor] LLM call failed: %s", error)
             return []
+
+    def _parse_llm_response(self, content: str | None) -> list[dict]:
+        """Parses the raw LLM text into a list of preference dicts."""
+        if not content:
+            return []
+        raw = content.strip()
+        LOGGER.info("[PrefExtractor] LLM raw response: %s", raw[:200])
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        try:
+            parsed = json.loads(raw)
+            # Support both {"items": [...]} and bare [...] formats
+            if isinstance(parsed, dict):
+                parsed = parsed.get("items", [])
+            if isinstance(parsed, list):
+                return parsed
+            LOGGER.warning("[PrefExtractor] LLM returned unexpected JSON shape: %s", raw[:200])
+        except json.JSONDecodeError as error:
+            LOGGER.warning("[PrefExtractor] LLM returned non-JSON (raw=%s): %s", raw[:200], error)
+        return []

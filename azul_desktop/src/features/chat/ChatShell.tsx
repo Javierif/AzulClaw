@@ -372,6 +372,8 @@ export function ChatShell({
       }
     } finally {
       flushStreamBuffer();
+      // Remove the pending bubble if it never received a commentary/progress event
+      setMessages((current) => current.filter((item) => item.kind !== "pending"));
       onThinkingChange?.(false);
       setIsSending(false);
     }
@@ -450,18 +452,7 @@ export function ChatShell({
                 disabled={isSending || !draft.trim()}
                 aria-busy={isSending}
               >
-                {isSending ? (
-                  <>
-                    <span className="composer-send-label">Sending</span>
-                    <span className="composer-send-loader" aria-hidden="true">
-                      <span className="composer-send-loader-dot" />
-                      <span className="composer-send-loader-dot" />
-                      <span className="composer-send-loader-dot" />
-                    </span>
-                  </>
-                ) : (
-                  "Send"
-                )}
+                Send
               </button>
             </div>
           </div>

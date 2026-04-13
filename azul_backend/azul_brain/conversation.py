@@ -180,8 +180,11 @@ class ConversationOrchestrator:
             else "The user has granted full autonomy — no confirmation needed for actions.",
         ))
 
-        if profile.skills:
-            featured_slots.append(("profile:skills", f"Active skills the assistant can use: {', '.join(profile.skills)}."))
+        # Exclude built-in capabilities (Memory) — only show real integrations
+        _BUILTIN_SKILLS = {"Memory"}
+        active_integrations = [s for s in profile.skills if s not in _BUILTIN_SKILLS]
+        if active_integrations:
+            featured_slots.append(("profile:skills", f"Active integrations the assistant can use: {', '.join(active_integrations)}."))
 
         seeded = 0
         for feature_key, content in featured_slots:
