@@ -217,12 +217,25 @@ class ServiceBusWorker:
                         asyncio.create_task(self._finish_slow_follow_up(activity, slow_task))
                     )
             else:
-                reply = await self.orchestrator.process_user_message(
-                    user_id=user_id,
-                    user_message=text,
-                    lane="fast",
+                fast_task = asyncio.create_task(
+                    self.orchestrator.process_user_message(
+                        user_id=user_id,
+                        user_message=text,
+                        lane="fast",
+                    )
                 )
-                await self._send_sync_reply(activity, reply.text, correlation_id)
+                try:
+                    reply = await asyncio.wait_for(
+                        asyncio.shield(fast_task),
+                        timeout=SYNC_REPLY_TIMEOUT_SECONDS,
+                    )
+                    await self._send_sync_reply(activity, reply.text, correlation_id)
+                except asyncio.TimeoutError:
+                    timeout_reply = await self._build_slow_timeout_reply(text, route.reason)
+                    await self._send_sync_reply(activity, timeout_reply, correlation_id)
+                    self._track_background_task(
+                        asyncio.create_task(self._finish_slow_follow_up(activity, fast_task))
+                    )
 
         except Exception as error:
             LOGGER.error("[Worker] Error in AI pipeline: %s", error)
