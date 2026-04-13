@@ -4,7 +4,8 @@ import os
 from typing import Any
 
 from agent_framework import Agent, Message, tool
-from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
+from agent_framework.openai import OpenAIChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 
 from ..soul.system_prompt import AZULCLAW_SYSTEM_PROMPT
 from .mcp_plugin import MCPToolsPlugin
@@ -105,7 +106,7 @@ async def create_agent(mcp_client, model_profile=None):
         )
         api_key = os.environ.get("AZUL_FAST_OLLAMA_API_KEY", "").strip() or "ollama"
         chat_client = OpenAIChatClient(
-            deployment_name,
+            model_id=deployment_name,
             api_key=api_key,
             base_url=base_url,
         )
@@ -129,10 +130,10 @@ async def create_agent(mcp_client, model_profile=None):
             or os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21").strip()
         )
 
-        chat_client = OpenAIChatCompletionClient(
-            deployment_name,
+        chat_client = AzureOpenAIChatClient(
+            deployment_name=deployment_name,
             api_key=api_key,
-            azure_endpoint=endpoint,
+            endpoint=endpoint,
             api_version=api_version,
         )
 

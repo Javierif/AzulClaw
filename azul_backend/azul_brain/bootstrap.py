@@ -24,9 +24,9 @@ async def on_turn_error(context: TurnContext, error: Exception) -> None:
     )
     await context.send_activity(f"Exception: {error}")
 
-def build_adapter(app_id: str, app_password: str) -> BotFrameworkAdapter:
+def build_adapter(app_id: str, app_password: str, tenant_id: str = "") -> BotFrameworkAdapter:
     """Builds and configures the Bot Framework adapter."""
-    settings = BotFrameworkAdapterSettings(app_id, app_password)
+    settings = BotFrameworkAdapterSettings(app_id, app_password, channel_auth_tenant=tenant_id)
     adapter = BotFrameworkAdapter(settings)
     adapter.on_turn_error = on_turn_error
     return adapter
