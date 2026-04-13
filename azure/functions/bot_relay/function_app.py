@@ -14,7 +14,10 @@ CONNECTION_STR = os.getenv("SERVICE_BUS_CONNECTION_STRING", "")
 INBOUND_QUEUE = os.getenv("SERVICE_BUS_INBOUND_QUEUE", "bot-inbound")
 OUTBOUND_QUEUE = os.getenv("SERVICE_BUS_OUTBOUND_QUEUE", "bot-outbound")
 USE_SESSIONS = (os.getenv("SERVICE_BUS_USE_SESSIONS", "auto") or "auto").strip().lower()
+REQUIRE_AUTH = (os.getenv("BOT_RELAY_REQUIRE_AUTH", "true") or "true").strip().lower() != "false"
 SYNC_REPLY_TIMEOUT_SECONDS = float(os.getenv("BOT_SYNC_REPLY_TIMEOUT_SECONDS", "6.8"))
+APP_ID = os.getenv("MicrosoftAppId", "")
+APP_PASSWORD = os.getenv("MicrosoftAppPassword", "")
 
 
 def _message_body_to_text(msg) -> str:
@@ -42,13 +45,13 @@ def _fallback_reply(activity_type: str, text: str) -> dict:
         return {
             "type": "message",
             "text": "AzulClaw esta activo. Dime que necesitas.",
-            "speak": "AzulClaw está activo. Dime qué necesitas.",
+            "speak": "AzulClaw esta activo. Dime que necesitas.",
             "inputHint": "acceptingInput",
         }
     if text:
         return {
             "type": "message",
-            "text": "AzulClaw está procesando tu petición.",
+            "text": "AzulClaw esta procesando tu peticion.",
             "speak": "Vale, lo miro ahora mismo.",
             "inputHint": "acceptingInput",
         }
@@ -64,6 +67,39 @@ def _build_http_body(reply: dict, delivery_mode: str) -> str:
     if delivery_mode == "expectReplies":
         return json.dumps({"activities": [reply]}, ensure_ascii=False)
     return json.dumps(reply, ensure_ascii=False)
+
+
+async def _authenticate_request(req_body: dict, auth_header: str) -> tuple[bool, int, str]:
+    if not REQUIRE_AUTH:
+        return True, 200, ""
+
+    if not APP_ID or not APP_PASSWORD:
+        logging.error("Bot relay auth is enabled but Microsoft app credentials are incomplete.")
+        return False, 500, "Bot relay authentication is not configured."
+
+    if not auth_header:
+        return False, 401, "Missing Authorization header."
+
+    try:
+        from botbuilder.schema import Activity
+        from botframework.connector.auth.credential_provider import SimpleCredentialProvider
+        from botframework.connector.auth.jwt_token_validation import JwtTokenValidation
+
+        activity = Activity().deserialize(req_body)
+        await JwtTokenValidation.authenticate_request(
+            activity,
+            auth_header,
+            SimpleCredentialProvider(APP_ID, APP_PASSWORD),
+        )
+        return True, 200, ""
+    except PermissionError:
+        return False, 401, "Unauthorized."
+    except ImportError as error:
+        logging.error("Bot relay authentication dependencies failed to import: %s", error)
+        return False, 500, "Bot relay authentication dependencies are unavailable."
+    except Exception as error:
+        logging.error("Bot relay authentication failed: %s", error)
+        return False, 403, "Forbidden."
 
 
 async def _await_outbound_with_sessions(client: ServiceBusClient, correlation_id: str) -> dict | None:
@@ -153,14 +189,19 @@ async def messages(req: func.HttpRequest) -> func.HttpResponse:
     activity_type = (req_body.get("type") or "").strip()
     channel_id = (req_body.get("channelId") or "").strip()
     text = (req_body.get("text") or "").strip()
+    auth_header = req.headers.get("Authorization", "")
+
+    is_authorized, auth_status, auth_message = await _authenticate_request(req_body, auth_header)
+    if not is_authorized:
+        return func.HttpResponse(auth_message, status_code=auth_status)
 
     logging.info(
-        "Incoming activity correlation=%s channel=%s type=%s deliveryMode=%s text=%s",
+        "Incoming activity correlation=%s channel=%s type=%s deliveryMode=%s text_length=%s",
         correlation_id,
         channel_id or "<empty>",
         activity_type or "<empty>",
         delivery_mode or "<empty>",
-        text[:80],
+        len(text),
     )
 
     try:
@@ -171,7 +212,6 @@ async def messages(req: func.HttpRequest) -> func.HttpResponse:
                     ServiceBusMessage(
                         json.dumps(req_body),
                         correlation_id=correlation_id,
-                        session_id=correlation_id if USE_SESSIONS != "false" else None,
                         content_type="application/json",
                     )
                 )
@@ -187,7 +227,12 @@ async def messages(req: func.HttpRequest) -> func.HttpResponse:
         reply = _fallback_reply(activity_type, text)
     else:
         reply.setdefault("inputHint", "acceptingInput")
-        logging.info("Sync reply received for %s: %s", correlation_id, reply.get("text", "")[:120])
+        logging.info(
+            "Sync reply received for %s type=%s text_length=%s",
+            correlation_id,
+            reply.get("type", "<empty>"),
+            len((reply.get("text") or "").strip()),
+        )
 
     return func.HttpResponse(
         body=_build_http_body(reply, delivery_mode),

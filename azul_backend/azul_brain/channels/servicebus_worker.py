@@ -62,6 +62,7 @@ class ServiceBusWorker:
         self.client: ServiceBusClient | None = None
         self._running = False
         self._task: asyncio.Task | None = None
+        self._background_tasks: set[asyncio.Task] = set()
 
     async def _enqueue_sync_reply(self, text: str, correlation_id: str) -> None:
         """Stores the sync reply in the outbound queue for the Azure Function."""
@@ -139,6 +140,30 @@ class ServiceBusWorker:
             LOGGER.warning("[Worker] Could not build slow timeout commentary: %s", error)
             return SLOW_TIMEOUT_TEXT
 
+    def _track_background_task(self, task: asyncio.Task) -> None:
+        """Keeps detached follow-up tasks alive and logs failures."""
+        self._background_tasks.add(task)
+
+        def _on_done(done_task: asyncio.Task) -> None:
+            self._background_tasks.discard(done_task)
+            try:
+                done_task.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception as error:
+                LOGGER.error("[Worker] Background task failed: %s", error)
+
+        task.add_done_callback(_on_done)
+
+    async def _finish_slow_follow_up(self, activity: dict, slow_task: asyncio.Task) -> None:
+        """Sends the late proactive reply after the inbound message has been completed."""
+        final_reply = await slow_task
+        if activity.get("channelId") == "alexa":
+            LOGGER.info("[Worker] Skipping late proactive reply for Alexa after timeout.")
+            return
+
+        await send_proactive_reply(self.adapter, activity, final_reply.text)
+
     async def _handle_non_message_activity(self, activity: dict, correlation_id: str) -> bool:
         """Answers channel open events so voice channels never receive an empty payload."""
         activity_type = (activity.get("type") or "").strip()
@@ -197,14 +222,9 @@ class ServiceBusWorker:
                 except asyncio.TimeoutError:
                     timeout_reply = await self._build_slow_timeout_reply(text, route.reason)
                     await self._send_sync_reply(activity, timeout_reply, correlation_id)
-
-                    final_reply = await slow_task
-                    if activity.get("channelId") == "alexa":
-                        LOGGER.info(
-                            "[Worker] Skipping late proactive reply for Alexa after timeout."
-                        )
-                    else:
-                        await send_proactive_reply(self.adapter, activity, final_reply.text)
+                    self._track_background_task(
+                        asyncio.create_task(self._finish_slow_follow_up(activity, slow_task))
+                    )
             else:
                 reply = await self.orchestrator.process_user_message(
                     user_id=user_id,
@@ -260,6 +280,13 @@ class ServiceBusWorker:
             self._task.cancel()
             try:
                 await self._task
+            except asyncio.CancelledError:
+                pass
+        for task in list(self._background_tasks):
+            task.cancel()
+        for task in list(self._background_tasks):
+            try:
+                await task
             except asyncio.CancelledError:
                 pass
         if self.client:

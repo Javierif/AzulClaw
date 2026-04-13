@@ -1,7 +1,7 @@
 """Proactive messaging for Bot Framework."""
 
 from botbuilder.core import BotFrameworkAdapter, TurnContext
-from botbuilder.schema import Activity, ConversationReference
+from botbuilder.schema import Activity
 
 async def send_proactive_reply(adapter: BotFrameworkAdapter, original_activity: dict, text: str) -> None:
     """Uses a ConversationReference to push a message back to the channel asynchronously."""

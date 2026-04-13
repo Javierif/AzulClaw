@@ -5,7 +5,7 @@ This folder contains the Azure-side pieces used to expose AzulClaw safely to pub
 ## What is here
 
 - `functions/bot_relay`
-  Public Azure Function that receives Bot Framework traffic and relays it to AzulClaw through Azure Service Bus.
+  Public Azure Function that validates Bot Framework traffic and relays it to AzulClaw through Azure Service Bus.
 
 ## Current public routes
 
@@ -18,6 +18,12 @@ Example:
 
 - `https://<your-function-app>.azurewebsites.net/health`
 - `https://<your-function-app>.azurewebsites.net/api/messages`
+
+## Security and Service Bus notes
+
+- `POST /api/messages` expects a valid Bot Framework `Authorization` header before any payload is enqueued.
+- For local-only troubleshooting, auth can be disabled explicitly with `BOT_RELAY_REQUIRE_AUTH=false`.
+- Keep sessions enabled only on `bot-outbound`; `bot-inbound` should stay without sessions.
 
 ## Deployment guide
 
