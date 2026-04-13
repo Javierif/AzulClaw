@@ -17,6 +17,7 @@ REQUIRE_AUTH = (os.getenv("BOT_RELAY_REQUIRE_AUTH", "true") or "true").strip().l
 SYNC_REPLY_TIMEOUT_SECONDS = float(os.getenv("BOT_SYNC_REPLY_TIMEOUT_SECONDS", "6.8"))
 APP_ID = os.getenv("MicrosoftAppId", "")
 APP_PASSWORD = os.getenv("MicrosoftAppPassword", "")
+_SERVICEBUS_CLIENT: ServiceBusClient | None = None
 
 
 def _message_body_to_text(msg) -> str:
@@ -66,6 +67,13 @@ def _build_http_body(reply: dict, delivery_mode: str) -> str:
     if delivery_mode == "expectReplies":
         return json.dumps({"activities": [reply]}, ensure_ascii=False)
     return json.dumps(reply, ensure_ascii=False)
+
+
+def _get_servicebus_client() -> ServiceBusClient:
+    global _SERVICEBUS_CLIENT
+    if _SERVICEBUS_CLIENT is None:
+        _SERVICEBUS_CLIENT = ServiceBusClient.from_connection_string(CONNECTION_STR)
+    return _SERVICEBUS_CLIENT
 
 
 def _raise_sessions_required(correlation_id: str) -> None:
@@ -214,19 +222,19 @@ async def messages(req: func.HttpRequest) -> func.HttpResponse:
     )
 
     try:
-        async with ServiceBusClient.from_connection_string(CONNECTION_STR) as client:
-            sender = client.get_queue_sender(queue_name=INBOUND_QUEUE)
-            async with sender:
-                await sender.send_messages(
-                    ServiceBusMessage(
-                        json.dumps(req_body),
-                        correlation_id=correlation_id,
-                        content_type="application/json",
-                    )
+        client = _get_servicebus_client()
+        sender = client.get_queue_sender(queue_name=INBOUND_QUEUE)
+        async with sender:
+            await sender.send_messages(
+                ServiceBusMessage(
+                    json.dumps(req_body),
+                    correlation_id=correlation_id,
+                    content_type="application/json",
                 )
-            logging.info("Enqueued %s to %s", correlation_id, INBOUND_QUEUE)
+            )
+        logging.info("Enqueued %s to %s", correlation_id, INBOUND_QUEUE)
 
-            reply = await _await_outbound_reply(client, correlation_id)
+        reply = await _await_outbound_reply(client, correlation_id)
     except Exception as error:
         logging.error("Relay error for %s: %s", correlation_id, error)
         reply = None

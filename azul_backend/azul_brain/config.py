@@ -81,7 +81,7 @@ def load_runtime_config(base_path: Path) -> RuntimeConfig:
     app_password = os.environ.get("MicrosoftAppPassword", "")
     tenant_id = os.environ.get("MicrosoftAppTenantId", "")
     port = parse_port(os.environ.get("PORT", str(DEFAULT_PORT)))
-    
+
     # Service Bus Extensions
     service_bus_conn = os.environ.get("SERVICE_BUS_CONNECTION_STRING", "")
     service_bus_inbound = os.environ.get("SERVICE_BUS_INBOUND_QUEUE", "bot-inbound")
@@ -94,8 +94,8 @@ def load_runtime_config(base_path: Path) -> RuntimeConfig:
     )
 
     return RuntimeConfig(
-        app_id=app_id, 
-        app_password=app_password, 
+        app_id=app_id,
+        app_password=app_password,
         tenant_id=tenant_id,
         port=port,
         service_bus_connection_string=service_bus_conn,
