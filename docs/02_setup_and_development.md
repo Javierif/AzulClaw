@@ -1,6 +1,6 @@
 ﻿# AzulClaw: Guía de Configuración y Desarrollo Local
 
-**Fecha de ultima revision:** 11 de Abril de 2026.
+**Fecha de ultima revision:** 12 de Abril de 2026.
 **Objetivo:** Permitir a un nuevo desarrollador levantar el entorno de desarrollo de AzulClaw desde cero en Windows.
 
 ---
@@ -149,16 +149,58 @@ Este script ejecuta un *smoke test* que:
 
 ## 5. Variables de Entorno
 
-Actualmente el proyecto funciona en modo local sin credenciales. Para conectar con Azure Bot Service en producción, se necesitarán estas variables:
+El proceso principal carga **`azul_backend/azul_brain/.env.local`** al arrancar (no sobrescribe variables que ya existan en el entorno). Como plantilla puedes copiar el ejemplo versionado:
 
-| Variable | Descripción | Valor por defecto |
+```powershell
+copy azul_backend\azul_brain\.env.example azul_backend\azul_brain\.env.local
+```
+
+En macOS o Linux:
+
+```bash
+cp azul_backend/azul_brain/.env.example azul_backend/azul_brain/.env.local
+```
+
+### 5.1 Azure OpenAI y carriles *fast* / *slow*
+
+| Variable | Descripción |
+|---|---|
+| `AZURE_OPENAI_ENDPOINT` | URL base del recurso Azure OpenAI. |
+| `AZURE_OPENAI_API_KEY` | Clave del recurso. |
+| `AZURE_OPENAI_API_VERSION` | Versión de API (por defecto `2024-10-21`). |
+| `AZURE_OPENAI_DEPLOYMENT` | Despliegue por defecto del asistente (también usado como *slow* si no defines `AZURE_OPENAI_SLOW_DEPLOYMENT`). |
+| `AZURE_OPENAI_FAST_DEPLOYMENT` | Despliegue del carril **rápido** (heartbeats, tareas baratas, **extracción en segundo plano de preferencias**). Valor típico en nuestro entorno: `gpt-5.4-nano`. Si está vacío, se usa `AZURE_OPENAI_FALLBACK_DEPLOYMENT` o `gpt-4o-mini`. |
+| `AZURE_OPENAI_SLOW_DEPLOYMENT` | Despliegue del carril **lento** (respuestas principales más pesadas). Opcional si ya tienes `AZURE_OPENAI_DEPLOYMENT`. |
+| `AZURE_OPENAI_FAST_ENDPOINT`, `AZURE_OPENAI_FAST_API_KEY`, `AZURE_OPENAI_FAST_API_VERSION` | Opcionales: otro recurso Azure solo para el carril rápido. Si faltan, se reutilizan `AZURE_OPENAI_ENDPOINT` y `AZURE_OPENAI_API_KEY`. |
+| `AZURE_OPENAI_SLOW_*` | Igual que los anteriores, para el carril lento. |
+| `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | Nombre del despliegue de embeddings (por defecto `text-embedding-3-large`). |
+| `MicrosoftAppId` / `MicrosoftAppPassword` | Bot Framework en producción; vacíos = emulador local. |
+| `PORT` | Puerto HTTP del cerebro (por defecto `3978`). |
+
+> **Importante:** NUNCA subir credenciales a Git. Solo `.env.example` (sin secretos) puede versionarse.
+
+<a id="hybrid-memory-env"></a>
+
+### 5.2 Memoria híbrida y variables relacionadas
+
+La memoria a largo plazo vive en **SQLite** (ruta por defecto `<workspace_root>/.azul/azul_memory.db`; el `workspace_root` se lee del perfil de hatching en `memory/hatching_profile.json`). Incluye:
+
+- Tabla de **memorias** con embedding en BLOB y búsqueda **FTS5** (BM25) sobre el texto.
+- Fusión **híbrida** (RRF ponderado: por defecto 70 % vector / 30 % texto).
+- Historial reciente de chat en la misma base (`SafeMemory` siempre activo usando esa ruta resuelta).
+
+| Variable | Descripción | Por defecto |
 |---|---|---|
-| `MicrosoftAppId` | ID de la aplicación registrada en Azure Bot Service | `""` (vacío = modo local) |
-| `MicrosoftAppPassword` | Contraseña/secret del Bot Registration | `""` |
-| `AZURE_OPENAI_ENDPOINT` | URL del recurso Azure OpenAI (Fase 4) | No configurado aún |
-| `AZURE_OPENAI_API_KEY` | Clave del recurso Azure OpenAI (Fase 4) | No configurado aún |
+| `AZUL_MEMORY_DB_PATH` | Ruta del fichero SQLite compartido (vector + FTS5 + historial). | `<workspace_root>/.azul/azul_memory.db` |
+| `AZUL_EMBEDDING_DIM` | Dimensión del vector; debe coincidir con el modelo de embedding desplegado. | `3072` |
+| `VECTOR_MEMORY_ENABLED` | `false` desactiva por completo el almacén vectorial. | `true` |
+| `AZUL_HYBRID_VECTOR_WEIGHT` / `AZUL_HYBRID_TEXT_WEIGHT` | Pesos en la fusión RRF híbrida. | `0.7` / `0.3` |
+| `AZUL_PREFERENCE_EXTRACTION_ENABLED` | `false` desactiva el extractor en segundo plano. | `true` |
+| `MEMORY_MAX_MESSAGES` | Máximo de mensajes en el deque de corto plazo por usuario. | `50` |
 
-> **Importante:** NUNCA subir estas variables a Git. Usar un archivo `.env` local o Azure Key Vault en producción.
+**Extracción *fire-and-forget*:** tras cada turno, si el mensaje del usuario supera un filtro barato, se lanza una tarea asíncrona que invoca el modelo del carril **rápido** (`AZURE_OPENAI_FAST_DEPLOYMENT`, p. ej. `gpt-5.4-nano`) para obtener JSON con preferencias y hechos; se deduplican, se embeden y se guardan en SQLite. No retrasa la respuesta visible al usuario.
+
+**Nota de implementación:** los vectores se calculan con similitud coseno en Python sobre BLOBs SQLite (sin exigir la extensión `sqlite-vec` en desarrollo). El paquete `sqlite-vec` figura en `requirements.txt` por si se quiere evolucionar a KNN nativo más adelante.
 
 ---
 

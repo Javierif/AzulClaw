@@ -7,6 +7,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from azul_backend.workspace_layout import ensure_workspace_scaffold
+
 from ..api.hatching_store import HatchingStore
 from .store import (
     SYSTEM_HEARTBEAT_JOB_ID,
@@ -158,8 +160,9 @@ class RuntimeScheduler:
     def _load_heartbeat_text(self) -> str:
         """Reads HEARTBEAT.md from the workspace, filtering comments and headers."""
         profile = HatchingStore().load()
-        workspace_root = Path(profile.workspace_root)
+        workspace_root = Path(profile.workspace_root).expanduser()
         workspace_root.mkdir(parents=True, exist_ok=True)
+        ensure_workspace_scaffold(workspace_root)
         heartbeat_path = workspace_root / "HEARTBEAT.md"
         if not heartbeat_path.exists():
             heartbeat_path.write_text(

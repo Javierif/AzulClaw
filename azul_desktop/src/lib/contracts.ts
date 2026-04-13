@@ -31,9 +31,11 @@ export interface ProcessSummary {
 export interface MemoryRecord {
   id: string;
   title: string;
+  content?: string;
   kind: "preference" | "episodic" | "semantic" | "session";
   source: string;
   pinned?: boolean;
+  created_at?: string;
 }
 
 export interface ChatExchange {
@@ -95,6 +97,10 @@ export interface HatchingProfile {
   completed_at: string;
   skills: string[];
   skill_configs: Record<string, Record<string, string>>;
+  /** Effective SQLite path (server-computed; not stored in profile JSON). */
+  memory_db_path?: string;
+  /** Present on ``POST /api/desktop/data-wipe`` responses only. */
+  restart_required?: boolean;
 }
 
 export interface RuntimeModelStatus {

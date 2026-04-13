@@ -17,6 +17,7 @@ from .cortex.fast.commentary import (
 )
 from .cortex.fast.triage import TriageDecision, classify_message
 from .memory.embedding_service import EmbeddingService
+from .memory.preference_extractor import PreferenceExtractor
 from .memory.safe_memory import SafeMemory
 from .memory.vector_store import VectorMemoryStore
 from .runtime.agent_runtime import AgentRuntimeManager
@@ -66,59 +67,148 @@ class ConversationOrchestrator:
     def __init__(self, mcp_client, runtime_manager: AgentRuntimeManager):
         self.mcp_client = mcp_client
         self.runtime_manager = runtime_manager
-        self.memory = SafeMemory.from_env()
+        self._setup_memory_layers()
 
+    def _setup_memory_layers(self) -> None:
+        """Initialises SafeMemory, embeddings, vector store, and preference extractor."""
+        self.memory = SafeMemory.from_env()
         self.embedding_service = None
         self.vector_memory = None
+        self.preference_extractor = None
+
+        # Vector store always starts — it works text-only (BM25) even without embeddings.
         try:
-            self.embedding_service = EmbeddingService.from_env()
             self.vector_memory = VectorMemoryStore.from_env()
-            LOGGER.info("[Memory] Vector memory enabled.")
+            LOGGER.info("[Memory] Vector memory (SQLite) enabled.")
         except Exception as error:
             LOGGER.warning("[Memory] Vector memory disabled: %s", error)
 
+        # Embedding service is optional — vector search upgrades automatically when present.
+        if self.vector_memory is not None:
+            try:
+                self.embedding_service = EmbeddingService.from_env()
+                LOGGER.info("[Memory] Embedding service enabled.")
+            except Exception as error:
+                LOGGER.info("[Memory] Embedding service unavailable, using text-only storage: %s", error)
+
+        # Extractor only needs the vector store — it stores text even without embeddings.
+        if self.vector_memory is not None:
+            try:
+                self.preference_extractor = PreferenceExtractor(
+                    runtime_manager=self.runtime_manager,
+                    embedding_service=self.embedding_service,  # may be None
+                    vector_store=self.vector_memory,
+                )
+                LOGGER.info("[Memory] Preference extractor enabled.")
+            except Exception as error:
+                LOGGER.warning("[Memory] Preference extractor disabled: %s", error)
+
+    def reload_persistent_memory(self) -> None:
+        """Re-open SQLite using the current hatching profile (e.g. after onboarding)."""
+        if self.vector_memory is not None:
+            try:
+                self.vector_memory.close()
+            except Exception as error:
+                LOGGER.warning("[Memory] Error closing vector store: %s", error)
+            self.vector_memory = None
+
+        self.memory.close()
+        self._setup_memory_layers()
+
     async def persist_with_vector_memory(self, user_id: str, role: str, content: str) -> None:
-        """Persists to short-term memory and, if applicable, indexes in vector memory."""
+        """Persists to short-term conversation history (SafeMemory only).
+
+        Raw conversation turns are NOT indexed in the vector store — only
+        extracted preferences and facts go there (via PreferenceExtractor).
+        """
         self.memory.add_message(user_id, role, content)
 
-        if (
-            self.embedding_service is None
-            or self.vector_memory is None
-            or should_skip_vectorization(content)
-        ):
-            return
-
-        try:
-            embedding = await self.embedding_service.embed_text(content)
-            if embedding:
-                self.vector_memory.add_memory(
-                    user_id=user_id,
-                    role=role,
-                    content=content,
-                    embedding=embedding,
-                    source="chat",
-                )
-        except Exception as error:
-            LOGGER.warning("[Memory] Error indexing vector memory: %s", error)
-
     async def retrieve_semantic_memories(self, user_id: str, query_text: str) -> list[dict]:
-        """Retrieves relevant semantic memories to enrich the prompt."""
-        if self.embedding_service is None or self.vector_memory is None:
+        """Retrieves relevant memories. Uses hybrid search when embeddings are available,
+        falls back to BM25 text-only search when the embedding service is not configured."""
+        if self.vector_memory is None:
             return []
 
         try:
-            query_embedding = await self.embedding_service.embed_text(query_text)
-            if not query_embedding:
-                return []
-            return self.vector_memory.search_similar(
-                user_id=user_id,
-                query_embedding=query_embedding,
-                limit=5,
-                min_similarity=0.28,
-                candidate_pool=150,
-            )
+            if self.embedding_service is not None:
+                query_embedding = await self.embedding_service.embed_text(query_text)
+                if query_embedding:
+                    return self.vector_memory.search_hybrid(
+                        user_id=user_id,
+                        query_embedding=query_embedding,
+                        query_text=query_text,
+                        limit=5,
+                        min_similarity=0.28,
+                    )
+            # Fallback: BM25 text search when no embedding service or embedding failed
+            return self.vector_memory.search_text(user_id=user_id, query_text=query_text, limit=5)
         except Exception as error:
             LOGGER.warning("[Memory] Error retrieving vector memory: %s", error)
+            return []
+
+    async def seed_profile_facts(self, user_id: str = "desktop-user") -> None:
+        """Seeds hatching profile preferences as memories. Called once after onboarding."""
+        if self.vector_memory is None:
+            return
+        from .api.hatching_store import HatchingStore
+        profile = HatchingStore().load()
+        if not profile.is_hatched:
+            LOGGER.debug("[Memory] Skipping profile seeding for user %s — onboarding not complete", user_id)
+            return
+
+        # Each entry: (stable feature_key, content). Using upsert so re-running this
+        # after onboarding edits updates the existing featured row in place.
+        featured_slots: list[tuple[str, str]] = []
+
+        if profile.role.strip():
+            featured_slots.append(("profile:role", f"The user wants this assistant to be: {profile.role.strip()}"))
+
+        if profile.mission.strip():
+            featured_slots.append(("profile:mission", f"The user's main goal is: {profile.mission.strip()}"))
+
+        style_parts = [p for p in [profile.tone, profile.style, profile.autonomy] if p.strip()]
+        if style_parts:
+            featured_slots.append((
+                "profile:style",
+                f"The user prefers communication that is {', '.join(style_parts).lower()}.",
+            ))
+
+        featured_slots.append((
+            "profile:confirmation",
+            "The user wants to be asked for confirmation before sensitive or destructive actions."
+            if profile.confirm_sensitive_actions
+            else "The user has granted full autonomy — no confirmation needed for actions.",
+        ))
+
+        # Exclude built-in capabilities (Memory) — only show real integrations
+        _BUILTIN_SKILLS = {"Memory"}
+        active_integrations = [s for s in profile.skills if s not in _BUILTIN_SKILLS]
+        if active_integrations:
+            featured_slots.append(("profile:skills", f"Active integrations the assistant can use: {', '.join(active_integrations)}."))
+
+        seeded = 0
+        for feature_key, content in featured_slots:
+            if not content.strip():
+                continue
+            try:
+                embedding: list[float] | None = None
+                if self.embedding_service is not None:
+                    result = await self.embedding_service.embed_text(content)
+                    embedding = result if result else None
+                self.vector_memory.upsert_featured(user_id, feature_key, content, embedding)
+                seeded += 1
+            except Exception as error:
+                LOGGER.warning("[Memory] Failed to upsert featured slot '%s': %s", feature_key, error)
+        LOGGER.info("[Memory] Upserted %d featured profile slots for user %s", seeded, user_id)
+
+    def retrieve_user_knowledge(self, user_id: str) -> list[dict]:
+        """Returns atemporal preferences and facts learned about the user."""
+        if self.vector_memory is None:
+            return []
+        try:
+            return self.vector_memory.get_user_knowledge(user_id, limit=30)
+        except Exception as error:
+            LOGGER.warning("[Memory] Error retrieving user knowledge: %s", error)
             return []
 
     async def invoke_messages(
@@ -292,9 +382,31 @@ class ConversationOrchestrator:
         history: list[dict],
         semantic_memories: list[dict],
         user_message: str,
+        user_knowledge: list[dict] | None = None,
     ) -> list[Message]:
         """Converts history and context into real messages for the framework."""
         messages: list[Message] = []
+
+        # Inject user knowledge split by source so the LLM knows which takes precedence
+        if user_knowledge:
+            explicit = [k for k in user_knowledge if k.get("source") == "extractor"]
+            baseline = [k for k in user_knowledge if k.get("source") == "hatching-profile"]
+
+            sections: list[str] = []
+            if explicit:
+                lines = "\n".join(f"- {k['content']}" for k in explicit if k.get("content"))
+                sections.append("What the user has told you directly (higher priority):\n" + lines)
+            if baseline:
+                lines = "\n".join(f"- {k['content']}" for k in baseline if k.get("content"))
+                sections.append("Initial setup preferences (use as baseline, explicit statements above override these):\n" + lines)
+
+            if sections:
+                messages.append(
+                    Message(
+                        role="system",
+                        contents="\n\n".join(sections),
+                    )
+                )
 
         for item in history:
             role = item.get("role", "user")
@@ -312,7 +424,11 @@ class ConversationOrchestrator:
                     continue
                 source = str(memory.get("source", "chat"))
                 similarity = float(memory.get("similarity", 0.0))
-                memory_lines.append(f"- ({source}, sim={similarity:.2f}) {content}")
+                hybrid_score = memory.get("hybrid_score")
+                if hybrid_score is not None:
+                    memory_lines.append(f"- ({source}, hybrid={hybrid_score:.4f}) {content}")
+                else:
+                    memory_lines.append(f"- ({source}, sim={similarity:.2f}) {content}")
 
             if memory_lines:
                 messages.append(
@@ -357,9 +473,10 @@ class ConversationOrchestrator:
         effective_lane = route.lane
         history = self.memory.get_history(user_id, limit=12)
         semantic_memories = await self.retrieve_semantic_memories(user_id, user_message)
-        messages = self.build_agent_messages(history, semantic_memories, user_message)
+        user_knowledge = self.retrieve_user_knowledge(user_id)
+        messages = self.build_agent_messages(history, semantic_memories, user_message, user_knowledge)
 
-        LOGGER.info("[Brain] Message received. History=%s", len(history))
+        LOGGER.info("[Brain] Message received. History=%s Knowledge=%s", len(history), len(user_knowledge))
         reply = await self.invoke_messages(
             messages,
             user_message,
@@ -371,6 +488,9 @@ class ConversationOrchestrator:
         if store_memory:
             await self.persist_with_vector_memory(user_id, "user", user_message)
             await self.persist_with_vector_memory(user_id, "assistant", reply.text)
+            # Fire-and-forget preference extraction (skip if message contains credentials)
+            if self.preference_extractor and not should_skip_vectorization(user_message):
+                self.preference_extractor.fire_and_forget(user_id, user_message, reply.text)
 
         return reply.text
 
@@ -380,9 +500,10 @@ class ConversationOrchestrator:
         effective_lane = route.lane
         history = self.memory.get_history(user_id, limit=12)
         semantic_memories = await self.retrieve_semantic_memories(user_id, user_message)
-        messages = self.build_agent_messages(history, semantic_memories, user_message)
+        user_knowledge = self.retrieve_user_knowledge(user_id)
+        messages = self.build_agent_messages(history, semantic_memories, user_message, user_knowledge)
 
-        LOGGER.info("[Brain] Message received. History=%s", len(history))
+        LOGGER.info("[Brain] Message received. History=%s Knowledge=%s", len(history), len(user_knowledge))
         reply = await self.invoke_messages(
             messages,
             user_message,
@@ -393,6 +514,9 @@ class ConversationOrchestrator:
 
         await self.persist_with_vector_memory(user_id, "user", user_message)
         await self.persist_with_vector_memory(user_id, "assistant", reply.text)
+        # Fire-and-forget preference extraction (skip if message contains credentials)
+        if self.preference_extractor and not should_skip_vectorization(user_message):
+            self.preference_extractor.fire_and_forget(user_id, user_message, reply.text)
         reply.triage_reason = route.reason
         return reply
 
@@ -436,7 +560,8 @@ class ConversationOrchestrator:
             )
         history = self.memory.get_history(user_id, limit=12)
         semantic_memories = await self.retrieve_semantic_memories(user_id, user_message)
-        messages = self.build_agent_messages(history, semantic_memories, user_message)
+        user_knowledge = self.retrieve_user_knowledge(user_id)
+        messages = self.build_agent_messages(history, semantic_memories, user_message, user_knowledge)
         context_commentary = "I now have the necessary context. Preparing the full response."
         if effective_lane == "slow" and on_commentary is not None:
             await on_commentary(context_commentary)
@@ -483,6 +608,9 @@ class ConversationOrchestrator:
 
         await self.persist_with_vector_memory(user_id, "user", user_message)
         await self.persist_with_vector_memory(user_id, "assistant", reply.text)
+        # Fire-and-forget preference extraction (skip if message contains credentials)
+        if self.preference_extractor and not should_skip_vectorization(user_message):
+            self.preference_extractor.fire_and_forget(user_id, user_message, reply.text)
         reply.triage_reason = route.reason
         if effective_lane == "slow" and on_progress is not None:
             await on_progress(

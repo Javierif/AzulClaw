@@ -103,7 +103,7 @@ export const defaultHatchingProfile: HatchingProfile = {
   confirm_sensitive_actions: true,
   is_hatched: false,
   completed_at: "",
-  skills: ["Email", "Telegram", "Workspace", "Memory"],
+  skills: ["Email", "Telegram", "Workspace"],
   skill_configs: {},
 };
 

@@ -5,7 +5,7 @@ import { loadWorkspace } from "../../lib/api";
 import { workspaceEntries } from "../../lib/mock-data";
 
 export function WorkspaceShell() {
-  const [workspaceRoot, setWorkspaceRoot] = useState("C:\\Users\\javie\\Desktop\\AzulWorkspace");
+  const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [entries, setEntries] = useState(workspaceEntries);
 
   useEffect(() => {

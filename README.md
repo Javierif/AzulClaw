@@ -16,7 +16,7 @@ azul_backend/
 │   ├── cortex/          # Agent setup and MCP tool adapter
 │   ├── api/             # Desktop app endpoints (chat, memory, workspace, hatching)
 │   ├── bot/             # Azure Bot Framework activity handler
-│   ├── memory/          # Short-term and vector memory
+│   ├── memory/          # Persistent hybrid memory (SQLite + FTS5 + embeddings)
 │   └── soul/            # System prompt
 └── azul_hands_mcp/      # Secure filesystem MCP server (path traversal guard)
 
@@ -41,6 +41,19 @@ cp azul_backend/azul_brain/.env.example azul_backend/azul_brain/.env.local
 python -m azul_backend.azul_brain.main_launcher
 ```
 
+## Persistent hybrid memory
+
+Long-term recall uses a single SQLite database (default `<workspace_root>/.azul/azul_memory.db`, overridable via `AZUL_MEMORY_DB_PATH`):
+
+- **Vector search** — cosine similarity over stored embeddings (dimension 3072 by default, aligned with `text-embedding-3-large`).
+- **Keyword search** — BM25-style ranking via SQLite FTS5 on message text.
+- **Hybrid retrieval** — results are merged with weighted [Reciprocal Rank Fusion](https://en.wikipedia.org/wiki/Reciprocal_rank_fusion) (default 70% vector / 30% text; tunable with `AZUL_HYBRID_VECTOR_WEIGHT` / `AZUL_HYBRID_TEXT_WEIGHT`).
+- **Short-term chat** — recent turns are also written through `SafeMemory` into the same DB when `AZUL_MEMORY_DB_PATH` is set.
+
+After each turn, a **preference extractor** may run in the background (fire-and-forget): it calls the **fast** Azure lane (`lane="fast"`) to pull structured preferences and facts from the dialogue, embeds them, and stores them in SQLite. Configure the fast deployment with `AZURE_OPENAI_FAST_DEPLOYMENT` (for example `gpt-5.4-nano` on your Azure resource). It does not block the user-visible reply.
+
+See [docs/02_setup_and_development.md](docs/02_setup_and_development.md#hybrid-memory-env) for all related environment variables.
+
 ## Security
 
 - Do not commit `.env.local` or any credentials.
@@ -57,4 +70,5 @@ python -m azul_backend.azul_brain.main_launcher
 | Desktop Interface Design | [docs/08_desktop_interface_design.md](docs/08_desktop_interface_design.md) |
 | Desktop Wireframes | [docs/09_desktop_low_fidelity_wireframes.md](docs/09_desktop_low_fidelity_wireframes.md) |
 | Desktop Architecture & Repo Structure | [docs/10_desktop_architecture_and_repo_structure.md](docs/10_desktop_architecture_and_repo_structure.md) |
+| Hybrid memory & env reference | [docs/02_setup_and_development.md](docs/02_setup_and_development.md#hybrid-memory-env) |
 | Azure Bot Deployment Guide | [docs/13_azure_bot_deployment_guide.md](docs/13_azure_bot_deployment_guide.md) |

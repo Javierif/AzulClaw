@@ -5,4 +5,5 @@ colorama
 mcp
 python-dotenv
 agent-framework
+sqlite-vec
 azure-servicebus

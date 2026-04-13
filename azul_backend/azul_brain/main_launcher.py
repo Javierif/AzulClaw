@@ -14,6 +14,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(project_root))
 
     from azul_backend.azul_brain.api.routes import register_desktop_routes
+    from azul_backend.azul_brain.api.services import get_workspace_root
     from azul_backend.azul_brain.bootstrap import build_adapter, build_mcp_client
     from azul_backend.azul_brain.bot.azul_bot import AzulBot
     from azul_backend.azul_brain.config import HOST, load_runtime_config
@@ -25,6 +26,7 @@ if __package__ in (None, ""):
     from azul_backend.azul_brain.channels.servicebus_worker import ServiceBusWorker
 else:
     from .api.routes import register_desktop_routes
+    from .api.services import get_workspace_root
     from .bootstrap import build_adapter, build_mcp_client
     from .bot.azul_bot import AzulBot
     from .config import HOST, load_runtime_config
@@ -128,6 +130,16 @@ async def create_app() -> web.Application:
     app["scheduler"] = scheduler
     app.router.add_post("/api/messages", messages_handler)
     register_desktop_routes(app)
+
+    try:
+        ws = get_workspace_root()
+        LOGGER.info("[Workspace] Sandbox ready at %s", ws.resolve())
+    except Exception as error:
+        LOGGER.warning("[Workspace] Startup prepare failed: %s", error)
+
+    # Seed onboarding profile preferences on every startup (idempotent — skips existing rows)
+    if hasattr(orchestrator, "seed_profile_facts"):
+        asyncio.create_task(orchestrator.seed_profile_facts())
 
     if runtime_config.service_bus_connection_string:
         sb_worker = ServiceBusWorker(

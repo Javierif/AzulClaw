@@ -2809,6 +2809,11 @@ textarea {
   to   { transform: scale(1);   opacity: 1; }
 }
 
+@keyframes hw-pulse {
+  0%, 100% { transform: scale(1);    filter: drop-shadow(0 16px 48px rgba(37, 99, 235, 0.55)); }
+  50%       { transform: scale(1.06); filter: drop-shadow(0 20px 56px rgba(37, 99, 235, 0.80)); }
+}
+
 .hw-summary-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

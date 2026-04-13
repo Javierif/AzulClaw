@@ -1,0 +1,13 @@
+{
+  "name": "azulclaw",
+  "private": true,
+  "description": "AzulClaw monorepo — run backend and desktop from the repo root",
+  "scripts": {
+    "backend": "python3 -m azul_backend.azul_brain.main_launcher",
+    "backend:win": "python -m azul_backend.azul_brain.main_launcher",
+    "frontend": "npm run dev --prefix azul_desktop",
+    "desktop": "npm run dev --prefix azul_desktop",
+    "tauri": "npm run tauri:dev --prefix azul_desktop",
+    "workspace:info": "python3 scripts/print_workspace.py"
+  }
+}
