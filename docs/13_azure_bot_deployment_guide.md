@@ -36,7 +36,6 @@ You need to create these resources:
 - Access to configure Azure secrets:
   - `MicrosoftAppId`
   - `MicrosoftAppPassword`
-  - `MicrosoftAppTenantId` when applicable
   - `SERVICE_BUS_CONNECTION_STRING`
 
 ## 1. Create Azure Service Bus
@@ -50,9 +49,9 @@ You need to create these resources:
 Notes:
 
 - The local worker uses `correlation_id` to match each request with its reply.
-- The current deployment uses sessions only on `bot-outbound`.
+- The current deployment requires sessions on `bot-outbound` for synchronous request/reply.
 - Keep `bot-inbound` without sessions because the local worker consumes it with a non-session receiver.
-- If you use sessions, keep `SERVICE_BUS_USE_SESSIONS=true` or `auto`.
+- Keep `SERVICE_BUS_USE_SESSIONS=true`.
 
 Official reference:
 - Azure Service Bus sessions: https://learn.microsoft.com/en-us/azure/service-bus-messaging/message-sessions
@@ -107,12 +106,11 @@ Configure these variables in `Function App > Application Settings`:
 SERVICE_BUS_CONNECTION_STRING
 SERVICE_BUS_INBOUND_QUEUE=bot-inbound
 SERVICE_BUS_OUTBOUND_QUEUE=bot-outbound
-SERVICE_BUS_USE_SESSIONS=auto
+SERVICE_BUS_USE_SESSIONS=true
 BOT_RELAY_REQUIRE_AUTH=true
 BOT_SYNC_REPLY_TIMEOUT_SECONDS=6.8
 MicrosoftAppId
 MicrosoftAppPassword
-MicrosoftAppTenantId
 ```
 
 Notes:
@@ -120,6 +118,7 @@ Notes:
 - `BOT_SYNC_REPLY_TIMEOUT_SECONDS` defines how long the Function waits for a reply from the local worker before falling back.
 - `6.8` seconds leaves room inside Alexa's skill timeout window.
 - `BOT_RELAY_REQUIRE_AUTH=true` makes the relay reject requests without a valid Bot Framework bearer token.
+- `MicrosoftAppTenantId` is not required by the relay Function auth path; it only applies to the local runtime when you use tenant-scoped Bot Framework auth there.
 
 Safe local example:
 
@@ -152,7 +151,7 @@ If `/health` returns `404`, the Function is not published or has not been indexe
 
 If `/api/messages` returns `404`, Azure Bot Service will not be able to talk to your relay.
 
-If `/api/messages` returns `401` or `403` from Azure Bot Service, verify `MicrosoftAppId`, `MicrosoftAppPassword`, `MicrosoftAppTenantId`, and that the Bot is calling the exact configured endpoint.
+If `/api/messages` returns `401` or `403` from Azure Bot Service, verify `MicrosoftAppId`, `MicrosoftAppPassword`, and that the Bot is calling the exact configured endpoint.
 
 ## 6. Configure Azure Bot Service
 
@@ -208,7 +207,7 @@ Required environment variables in the local AzulClaw runtime:
 SERVICE_BUS_CONNECTION_STRING
 SERVICE_BUS_INBOUND_QUEUE=bot-inbound
 SERVICE_BUS_OUTBOUND_QUEUE=bot-outbound
-SERVICE_BUS_USE_SESSIONS=auto
+SERVICE_BUS_USE_SESSIONS=true
 MicrosoftAppId
 MicrosoftAppPassword
 MicrosoftAppTenantId
@@ -285,6 +284,7 @@ Check:
 - the local worker is running
 - `bot-outbound` exists
 - sessions are enabled only on `bot-outbound`
+- `SERVICE_BUS_USE_SESSIONS=true`
 - there are no Service Bus errors in the logs
 
 ### The local worker receives nothing

@@ -23,7 +23,8 @@ Example:
 
 - `POST /api/messages` expects a valid Bot Framework `Authorization` header before any payload is enqueued.
 - For local-only troubleshooting, auth can be disabled explicitly with `BOT_RELAY_REQUIRE_AUTH=false`.
-- Keep sessions enabled only on `bot-outbound`; `bot-inbound` should stay without sessions.
+- Synchronous request/reply requires sessions on `bot-outbound`; keep `SERVICE_BUS_USE_SESSIONS=true`.
+- Keep `bot-inbound` without sessions because the local worker consumes it with a non-session receiver.
 
 ## Deployment guide
 

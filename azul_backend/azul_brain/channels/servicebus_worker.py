@@ -49,7 +49,7 @@ class ServiceBusWorker:
         connection_str: str,
         inbound_queue: str,
         outbound_queue: str,
-        use_sessions: str = "auto",
+        use_sessions: str = "true",
     ):
         self.orchestrator = orchestrator
         self.adapter = adapter
@@ -64,10 +64,23 @@ class ServiceBusWorker:
         self._task: asyncio.Task | None = None
         self._background_tasks: set[asyncio.Task] = set()
 
+    def _require_outbound_sessions(self, correlation_id: str) -> None:
+        """Ensures synchronous request/reply uses isolated Service Bus sessions."""
+        if self.use_sessions == "false":
+            raise RuntimeError(
+                "Synchronous outbound reply handling requires Azure Service Bus sessions "
+                f"to be enabled on queue '{self.outbound_queue}' and SERVICE_BUS_USE_SESSIONS "
+                f"must not be 'false' (correlation_id={correlation_id})."
+            )
+
     async def _enqueue_sync_reply(self, text: str, correlation_id: str) -> None:
         """Stores the sync reply in the outbound queue for the Azure Function."""
         if not correlation_id:
             raise ValueError("Missing correlation_id for sync reply.")
+        if self.client is None:
+            raise RuntimeError("Service Bus client is not available for outbound sync reply.")
+
+        self._require_outbound_sessions(correlation_id)
 
         payload = json.dumps(
             {
@@ -77,44 +90,22 @@ class ServiceBusWorker:
             },
             ensure_ascii=False,
         )
-
-        session_attempts = [True, False] if self.use_sessions == "auto" else [self.use_sessions == "true"]
-        last_error: Exception | None = None
-
-        for use_sessions in session_attempts:
-            try:
-                message_kwargs = {
-                    "content_type": "application/json",
-                    "correlation_id": correlation_id,
-                }
-                if use_sessions:
-                    message_kwargs["session_id"] = correlation_id
-
-                async with ServiceBusClient.from_connection_string(self.connection_str) as client:
-                    sender = client.get_queue_sender(queue_name=self.outbound_queue)
-                    async with sender:
-                        await sender.send_messages(ServiceBusMessage(payload, **message_kwargs))
-
-                LOGGER.info(
-                    "[Worker] Sync reply queued on %s for %s (sessions=%s).",
-                    self.outbound_queue,
-                    correlation_id,
-                    use_sessions,
+        sender = self.client.get_queue_sender(queue_name=self.outbound_queue)
+        async with sender:
+            await sender.send_messages(
+                ServiceBusMessage(
+                    payload,
+                    content_type="application/json",
+                    correlation_id=correlation_id,
+                    session_id=correlation_id,
                 )
-                return
-            except Exception as error:
-                last_error = error
-                if self.use_sessions == "auto" and use_sessions:
-                    LOGGER.warning(
-                        "[Worker] Outbound session send failed for %s, retrying without sessions: %s",
-                        correlation_id,
-                        error,
-                    )
-                    continue
-                raise
+            )
 
-        if last_error is not None:
-            raise last_error
+        LOGGER.info(
+            "[Worker] Sync reply queued on %s for %s (sessions=true).",
+            self.outbound_queue,
+            correlation_id,
+        )
 
     async def _send_sync_reply(self, original_activity: dict, text: str, correlation_id: str) -> None:
         """Pushes the sync response to the outbound queue consumed by the Azure Function."""
@@ -186,7 +177,7 @@ class ServiceBusWorker:
             activity = json.loads(body)
         except Exception as error:
             LOGGER.error("[Worker] Failed to parse Service Bus message: %s", error)
-            return
+            raise ValueError("Malformed inbound activity payload.") from error
 
         correlation_id = msg.correlation_id or msg.session_id or ""
         if await self._handle_non_message_activity(activity, correlation_id):
@@ -255,6 +246,13 @@ class ServiceBusWorker:
                                 try:
                                     await self._handle_message(msg)
                                     await receiver.complete_message(msg)
+                                except ValueError as error:
+                                    LOGGER.warning("[Worker] Dead-lettering inbound message: %s", error)
+                                    await receiver.dead_letter_message(
+                                        msg,
+                                        reason="MalformedInboundActivity",
+                                        error_description=str(error),
+                                    )
                                 except Exception:
                                     await receiver.abandon_message(msg)
                                     raise

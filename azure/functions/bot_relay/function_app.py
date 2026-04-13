@@ -13,7 +13,7 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 CONNECTION_STR = os.getenv("SERVICE_BUS_CONNECTION_STRING", "")
 INBOUND_QUEUE = os.getenv("SERVICE_BUS_INBOUND_QUEUE", "bot-inbound")
 OUTBOUND_QUEUE = os.getenv("SERVICE_BUS_OUTBOUND_QUEUE", "bot-outbound")
-USE_SESSIONS = (os.getenv("SERVICE_BUS_USE_SESSIONS", "auto") or "auto").strip().lower()
+USE_SESSIONS = (os.getenv("SERVICE_BUS_USE_SESSIONS", "true") or "true").strip().lower()
 REQUIRE_AUTH = (os.getenv("BOT_RELAY_REQUIRE_AUTH", "true") or "true").strip().lower() != "false"
 SYNC_REPLY_TIMEOUT_SECONDS = float(os.getenv("BOT_SYNC_REPLY_TIMEOUT_SECONDS", "6.8"))
 APP_ID = os.getenv("MicrosoftAppId", "")
@@ -67,6 +67,14 @@ def _build_http_body(reply: dict, delivery_mode: str) -> str:
     if delivery_mode == "expectReplies":
         return json.dumps({"activities": [reply]}, ensure_ascii=False)
     return json.dumps(reply, ensure_ascii=False)
+
+
+def _raise_sessions_required(correlation_id: str) -> None:
+    raise RuntimeError(
+        "Synchronous outbound reply handling requires Azure Service Bus sessions "
+        f"to be enabled on queue '{OUTBOUND_QUEUE}' and SERVICE_BUS_USE_SESSIONS "
+        f"must not be 'false' (correlation_id={correlation_id})."
+    )
 
 
 async def _authenticate_request(req_body: dict, auth_header: str) -> tuple[bool, int, str]:
@@ -123,50 +131,15 @@ async def _await_outbound_with_sessions(client: ServiceBusClient, correlation_id
         return payload
 
 
-async def _await_outbound_without_sessions(client: ServiceBusClient, correlation_id: str) -> dict | None:
-    receiver = client.get_queue_receiver(
-        queue_name=OUTBOUND_QUEUE,
-        max_wait_time=1,
-        prefetch_count=1,
-    )
-    deadline = asyncio.get_running_loop().time() + SYNC_REPLY_TIMEOUT_SECONDS
-
-    async with receiver:
-        while True:
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                return None
-
-            messages = await receiver.receive_messages(
-                max_wait_time=min(remaining, 1),
-                max_message_count=1,
-            )
-            if not messages:
-                continue
-
-            outbound_msg = messages[0]
-            if (outbound_msg.correlation_id or "") != correlation_id:
-                await receiver.abandon_message(outbound_msg)
-                continue
-
-            payload = json.loads(_message_body_to_text(outbound_msg))
-            await receiver.complete_message(outbound_msg)
-            return payload
-
-
 async def _await_outbound_reply(client: ServiceBusClient, correlation_id: str) -> dict | None:
-    if USE_SESSIONS != "false":
-        try:
-            return await _await_outbound_with_sessions(client, correlation_id)
-        except Exception as error:
-            if USE_SESSIONS == "true":
-                raise
-            logging.warning(
-                "Session receive failed for %s, retrying without sessions: %s",
-                correlation_id,
-                error,
-            )
-    return await _await_outbound_without_sessions(client, correlation_id)
+    if USE_SESSIONS == "false":
+        _raise_sessions_required(correlation_id)
+
+    try:
+        return await _await_outbound_with_sessions(client, correlation_id)
+    except Exception as error:
+        logging.error("Session receive failed for %s on %s: %s", correlation_id, OUTBOUND_QUEUE, error)
+        _raise_sessions_required(correlation_id)
 
 
 @app.route(route="health", methods=["GET"])

@@ -23,7 +23,7 @@ class RuntimeConfig:
     service_bus_connection_string: str = ""
     service_bus_inbound_queue: str = "bot-inbound"
     service_bus_outbound_queue: str = "bot-outbound"
-    service_bus_use_sessions: str = "auto"
+    service_bus_use_sessions: str = "true"
 
 
 def load_env_file(env_file_path: Path) -> None:
@@ -71,7 +71,7 @@ def load_runtime_config(base_path: Path) -> RuntimeConfig:
     service_bus_conn = os.environ.get("SERVICE_BUS_CONNECTION_STRING", "")
     service_bus_inbound = os.environ.get("SERVICE_BUS_INBOUND_QUEUE", "bot-inbound")
     service_bus_outbound = os.environ.get("SERVICE_BUS_OUTBOUND_QUEUE", "bot-outbound")
-    service_bus_use_sessions = os.environ.get("SERVICE_BUS_USE_SESSIONS", "auto")
+    service_bus_use_sessions = os.environ.get("SERVICE_BUS_USE_SESSIONS", "true")
 
     return RuntimeConfig(
         app_id=app_id, 
