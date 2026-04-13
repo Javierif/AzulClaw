@@ -11,9 +11,8 @@ from .proactive_sender import send_proactive_reply
 
 LOGGER = logging.getLogger(__name__)
 
-SYNC_REPLY_TIMEOUT_SECONDS = 5.0
-WELCOME_TEXT = "AzulClaw esta activo. Dime que necesitas."
-EMPTY_TEXT_PROMPT = "Te escucho. Puedes decirme que necesitas."
+WELCOME_TEXT = "AzulClaw est\u00e1 activo. Dime qu\u00e9 necesitas."
+EMPTY_TEXT_PROMPT = "Te escucho. Puedes decirme qu\u00e9 necesitas."
 GENERIC_ERROR_TEXT = "Ha ocurrido un error en mi cerebro."
 SLOW_TIMEOUT_TEXT = "Estoy preparando la respuesta. Vuelve a intentarlo en unos segundos."
 
@@ -50,12 +49,14 @@ class ServiceBusWorker:
         inbound_queue: str,
         outbound_queue: str,
         use_sessions: str = "true",
+        sync_reply_timeout_seconds: float = 6.8,
     ):
         self.orchestrator = orchestrator
         self.adapter = adapter
         self.connection_str = connection_str
         self.inbound_queue = inbound_queue
         self.outbound_queue = outbound_queue
+        self.sync_reply_timeout_seconds = sync_reply_timeout_seconds
         raw_mode = (use_sessions or "auto").strip().lower()
         self.use_sessions = raw_mode if raw_mode in {"auto", "true", "false"} else "auto"
 
@@ -207,7 +208,7 @@ class ServiceBusWorker:
                 try:
                     reply = await asyncio.wait_for(
                         asyncio.shield(slow_task),
-                        timeout=SYNC_REPLY_TIMEOUT_SECONDS,
+                        timeout=self.sync_reply_timeout_seconds,
                     )
                     await self._send_sync_reply(activity, reply.text, correlation_id)
                 except asyncio.TimeoutError:
@@ -227,7 +228,7 @@ class ServiceBusWorker:
                 try:
                     reply = await asyncio.wait_for(
                         asyncio.shield(fast_task),
-                        timeout=SYNC_REPLY_TIMEOUT_SECONDS,
+                        timeout=self.sync_reply_timeout_seconds,
                     )
                     await self._send_sync_reply(activity, reply.text, correlation_id)
                 except asyncio.TimeoutError:

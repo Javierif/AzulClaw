@@ -43,14 +43,14 @@ def _fallback_reply(activity_type: str, text: str) -> dict:
     if activity_type == "conversationUpdate":
         return {
             "type": "message",
-            "text": "AzulClaw esta activo. Dime que necesitas.",
-            "speak": "AzulClaw esta activo. Dime que necesitas.",
+            "text": "AzulClaw est\u00e1 activo. Dime qu\u00e9 necesitas.",
+            "speak": "AzulClaw est\u00e1 activo. Dime qu\u00e9 necesitas.",
             "inputHint": "acceptingInput",
         }
     if text:
         return {
             "type": "message",
-            "text": "AzulClaw esta procesando tu peticion.",
+            "text": "AzulClaw est\u00e1 procesando tu petici\u00f3n.",
             "speak": "Vale, lo miro ahora mismo.",
             "inputHint": "acceptingInput",
         }
@@ -137,8 +137,25 @@ async def _await_outbound_reply(client: ServiceBusClient, correlation_id: str) -
     try:
         return await _await_outbound_with_sessions(client, correlation_id)
     except Exception as error:
-        logging.error("Session receive failed for %s on %s: %s", correlation_id, OUTBOUND_QUEUE, error)
-        _raise_sessions_required(correlation_id)
+        error_text = str(error).lower()
+        if (
+            "session" in error_text
+            and (
+                "require" in error_text
+                or "enabled" in error_text
+                or "accept" in error_text
+                or "disabled" in error_text
+                or "sessionful" in error_text
+            )
+        ):
+            _raise_sessions_required(correlation_id)
+
+        logging.exception(
+            "Session receive failed for %s on %s; returning no synchronous reply.",
+            correlation_id,
+            OUTBOUND_QUEUE,
+        )
+        return None
 
 
 @app.route(route="health", methods=["GET"])

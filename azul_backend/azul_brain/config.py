@@ -24,6 +24,7 @@ class RuntimeConfig:
     service_bus_inbound_queue: str = "bot-inbound"
     service_bus_outbound_queue: str = "bot-outbound"
     service_bus_use_sessions: str = "true"
+    bot_sync_reply_timeout_seconds: float = 6.8
 
 
 def load_env_file(env_file_path: Path) -> None:
@@ -59,6 +60,20 @@ def parse_port(raw_port: str, default_port: int = DEFAULT_PORT) -> int:
         return default_port
 
 
+def parse_float(raw_value: str, default_value: float, variable_name: str) -> float:
+    """Converts an env var to float with a safe fallback."""
+    try:
+        return float(raw_value)
+    except ValueError:
+        LOGGER.warning(
+            "Invalid %s value ('%s'). Falling back to default %s.",
+            variable_name,
+            raw_value,
+            default_value,
+        )
+        return default_value
+
+
 def load_runtime_config(base_path: Path) -> RuntimeConfig:
     """Loads environment variables and returns typed runtime configuration."""
     load_env_file(base_path / ENV_LOCAL_FILENAME)
@@ -72,6 +87,11 @@ def load_runtime_config(base_path: Path) -> RuntimeConfig:
     service_bus_inbound = os.environ.get("SERVICE_BUS_INBOUND_QUEUE", "bot-inbound")
     service_bus_outbound = os.environ.get("SERVICE_BUS_OUTBOUND_QUEUE", "bot-outbound")
     service_bus_use_sessions = os.environ.get("SERVICE_BUS_USE_SESSIONS", "true")
+    bot_sync_reply_timeout_seconds = parse_float(
+        os.environ.get("BOT_SYNC_REPLY_TIMEOUT_SECONDS", "6.8"),
+        6.8,
+        "BOT_SYNC_REPLY_TIMEOUT_SECONDS",
+    )
 
     return RuntimeConfig(
         app_id=app_id, 
@@ -82,4 +102,5 @@ def load_runtime_config(base_path: Path) -> RuntimeConfig:
         service_bus_inbound_queue=service_bus_inbound,
         service_bus_outbound_queue=service_bus_outbound,
         service_bus_use_sessions=service_bus_use_sessions,
+        bot_sync_reply_timeout_seconds=bot_sync_reply_timeout_seconds,
     )

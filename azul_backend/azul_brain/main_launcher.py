@@ -137,6 +137,7 @@ async def create_app() -> web.Application:
             inbound_queue=runtime_config.service_bus_inbound_queue,
             outbound_queue=runtime_config.service_bus_outbound_queue,
             use_sessions=runtime_config.service_bus_use_sessions,
+            sync_reply_timeout_seconds=runtime_config.bot_sync_reply_timeout_seconds,
         )
         await sb_worker.start()
         app["servicebus_worker"] = sb_worker
