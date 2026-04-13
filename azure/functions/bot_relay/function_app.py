@@ -69,6 +69,13 @@ def _build_http_body(reply: dict, delivery_mode: str) -> str:
     return json.dumps(reply, ensure_ascii=False)
 
 
+def _should_wait_for_sync_reply(channel_id: str, delivery_mode: str) -> bool:
+    """Returns whether the relay should wait for a synchronous reply body."""
+    if delivery_mode == "expectReplies":
+        return True
+    return (channel_id or "").strip().lower() == "alexa"
+
+
 def _get_servicebus_client() -> ServiceBusClient:
     global _SERVICEBUS_CLIENT
     if _SERVICEBUS_CLIENT is None:
@@ -234,10 +241,22 @@ async def messages(req: func.HttpRequest) -> func.HttpResponse:
             )
         logging.info("Enqueued %s to %s", correlation_id, INBOUND_QUEUE)
 
-        reply = await _await_outbound_reply(client, correlation_id)
+        if _should_wait_for_sync_reply(channel_id, delivery_mode):
+            reply = await _await_outbound_reply(client, correlation_id)
+        else:
+            logging.info(
+                "Skipping synchronous HTTP reply wait for %s on channel=%s deliveryMode=%s.",
+                correlation_id,
+                channel_id or "<empty>",
+                delivery_mode or "<empty>",
+            )
+            reply = None
     except Exception as error:
         logging.error("Relay error for %s: %s", correlation_id, error)
         reply = None
+
+    if reply is None and not _should_wait_for_sync_reply(channel_id, delivery_mode):
+        return func.HttpResponse(status_code=200)
 
     if reply is None:
         logging.warning("No sync reply received for %s before timeout.", correlation_id)

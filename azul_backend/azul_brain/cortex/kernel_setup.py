@@ -7,6 +7,11 @@ from agent_framework import Agent, Message, tool
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.azure import AzureOpenAIChatClient
 
+from ..foundry_url import (
+    is_foundry_endpoint,
+    normalize_azure_openai_endpoint,
+    normalize_foundry_base_url,
+)
 from ..soul.system_prompt import AZULCLAW_SYSTEM_PROMPT
 from .mcp_plugin import MCPToolsPlugin
 
@@ -130,12 +135,19 @@ async def create_agent(mcp_client, model_profile=None):
             or os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21").strip()
         )
 
-        chat_client = AzureOpenAIChatClient(
-            deployment_name=deployment_name,
-            api_key=api_key,
-            endpoint=endpoint,
-            api_version=api_version,
-        )
+        if is_foundry_endpoint(endpoint):
+            chat_client = OpenAIChatClient(
+                model_id=deployment_name,
+                api_key=api_key,
+                base_url=normalize_foundry_base_url(endpoint),
+            )
+        else:
+            chat_client = AzureOpenAIChatClient(
+                deployment_name=deployment_name,
+                api_key=api_key,
+                endpoint=normalize_azure_openai_endpoint(endpoint),
+                api_version=api_version,
+            )
 
     agent = Agent(
         client=chat_client,

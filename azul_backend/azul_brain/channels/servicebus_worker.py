@@ -74,6 +74,13 @@ class ServiceBusWorker:
                 f"must not be 'false' (correlation_id={correlation_id})."
             )
 
+    def _should_use_sync_outbound_reply(self, activity: dict) -> bool:
+        """Uses sync reply only for channels that require an inline HTTP response."""
+        delivery_mode = (activity.get("deliveryMode") or "").strip()
+        if delivery_mode == "expectReplies":
+            return True
+        return (activity.get("channelId") or "").strip().lower() == "alexa"
+
     async def _enqueue_sync_reply(self, text: str, correlation_id: str) -> None:
         """Stores the sync reply in the outbound queue for the Azure Function."""
         if not correlation_id:
@@ -110,6 +117,17 @@ class ServiceBusWorker:
 
     async def _send_sync_reply(self, original_activity: dict, text: str, correlation_id: str) -> None:
         """Pushes the sync response to the outbound queue consumed by the Azure Function."""
+        if not self._should_use_sync_outbound_reply(original_activity):
+            try:
+                await send_proactive_reply(self.adapter, original_activity, text)
+                LOGGER.info(
+                    "[Worker] Direct channel reply sent via Bot Framework for %s.",
+                    (original_activity.get("channelId") or "").strip().lower() or "<empty>",
+                )
+            except Exception as error:
+                LOGGER.error("[Worker] Direct channel reply failed: %s", error)
+            return
+
         try:
             await self._enqueue_sync_reply(text, correlation_id)
         except Exception as error:

@@ -4,6 +4,13 @@ import logging
 import os
 
 from agent_framework.azure import AzureOpenAIEmbeddingClient
+from agent_framework.openai import OpenAIEmbeddingClient
+
+from ..foundry_url import (
+    is_foundry_endpoint,
+    normalize_azure_openai_endpoint,
+    normalize_foundry_base_url,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -13,7 +20,7 @@ _DEFAULT_EMBEDDING_MODEL = "text-embedding-ada-002"
 class EmbeddingService:
     """Generates text embeddings using Azure OpenAI."""
 
-    def __init__(self, client: AzureOpenAIEmbeddingClient, model: str):
+    def __init__(self, client: AzureOpenAIEmbeddingClient | OpenAIEmbeddingClient, model: str):
         self._client = client
         self._model = model
 
@@ -32,12 +39,19 @@ class EmbeddingService:
         model = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", _DEFAULT_EMBEDDING_MODEL).strip()
         api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21").strip()
 
-        client = AzureOpenAIEmbeddingClient(
-            deployment_name=model,
-            api_key=api_key,
-            endpoint=endpoint,
-            api_version=api_version,
-        )
+        if is_foundry_endpoint(endpoint):
+            client = OpenAIEmbeddingClient(
+                model_id=model,
+                api_key=api_key,
+                base_url=normalize_foundry_base_url(endpoint),
+            )
+        else:
+            client = AzureOpenAIEmbeddingClient(
+                deployment_name=model,
+                api_key=api_key,
+                endpoint=normalize_azure_openai_endpoint(endpoint),
+                api_version=api_version,
+            )
         return cls(client=client, model=model)
 
     async def embed_text(self, text: str) -> list[float]:

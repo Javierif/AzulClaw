@@ -47,6 +47,21 @@ def load_env_file(env_file_path: Path) -> None:
             os.environ[key] = value
 
 
+def load_env_files(base_path: Path) -> None:
+    """Loads .env.local from the current directory and its parents without overriding env vars."""
+    candidates: list[Path] = []
+    current = base_path.resolve()
+
+    while True:
+        candidates.append(current / ENV_LOCAL_FILENAME)
+        if current.parent == current:
+            break
+        current = current.parent
+
+    for env_file_path in reversed(candidates):
+        load_env_file(env_file_path)
+
+
 def parse_port(raw_port: str, default_port: int = DEFAULT_PORT) -> int:
     """Converts PORT to an integer with a safe fallback."""
     try:
@@ -76,7 +91,7 @@ def parse_float(raw_value: str, default_value: float, variable_name: str) -> flo
 
 def load_runtime_config(base_path: Path) -> RuntimeConfig:
     """Loads environment variables and returns typed runtime configuration."""
-    load_env_file(base_path / ENV_LOCAL_FILENAME)
+    load_env_files(base_path)
     app_id = os.environ.get("MicrosoftAppId", "")
     app_password = os.environ.get("MicrosoftAppPassword", "")
     tenant_id = os.environ.get("MicrosoftAppTenantId", "")
