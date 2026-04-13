@@ -152,7 +152,6 @@ class PreferenceExtractor:
                 return
 
             for item in items:
-                item_type = item.get("type", "fact")
                 content = (item.get("content") or "").strip()
                 if not content:
                     continue
@@ -174,8 +173,8 @@ class PreferenceExtractor:
                 self._store.add_preference(user_id, content, embedding)
 
                 LOGGER.info(
-                    "[PrefExtractor] Learned %s for user %s%s: %s",
-                    item_type, user_id,
+                    "[PrefExtractor] Learned preference for user %s%s: %s",
+                    user_id,
                     " (no embedding)" if embedding is None else "",
                     content,
                 )

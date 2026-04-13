@@ -75,6 +75,8 @@ class VectorMemoryStore:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.row_factory = sqlite3.Row
 
         self._init_schema()
@@ -405,7 +407,7 @@ class VectorMemoryStore:
         return self._get_by_category(user_id, "fact", limit)
 
     def get_user_knowledge(self, user_id: str, limit: int = 100) -> list[dict]:
-        """Returns saved user preferences."""
+        """Returns saved user preferences (intentionally excludes facts — only preferences are stored)."""
         rows = self._conn.execute(
             """
             SELECT id, content, source, category, created_at

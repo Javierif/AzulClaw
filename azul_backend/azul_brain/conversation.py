@@ -124,21 +124,24 @@ class ConversationOrchestrator:
         self.memory.add_message(user_id, role, content)
 
     async def retrieve_semantic_memories(self, user_id: str, query_text: str) -> list[dict]:
-        """Retrieves relevant semantic memories using hybrid search (vector + BM25)."""
-        if self.embedding_service is None or self.vector_memory is None:
+        """Retrieves relevant memories. Uses hybrid search when embeddings are available,
+        falls back to BM25 text-only search when the embedding service is not configured."""
+        if self.vector_memory is None:
             return []
 
         try:
-            query_embedding = await self.embedding_service.embed_text(query_text)
-            if not query_embedding:
-                return []
-            return self.vector_memory.search_hybrid(
-                user_id=user_id,
-                query_embedding=query_embedding,
-                query_text=query_text,
-                limit=5,
-                min_similarity=0.28,
-            )
+            if self.embedding_service is not None:
+                query_embedding = await self.embedding_service.embed_text(query_text)
+                if query_embedding:
+                    return self.vector_memory.search_hybrid(
+                        user_id=user_id,
+                        query_embedding=query_embedding,
+                        query_text=query_text,
+                        limit=5,
+                        min_similarity=0.28,
+                    )
+            # Fallback: BM25 text search when no embedding service or embedding failed
+            return self.vector_memory.search_text(user_id=user_id, query_text=query_text, limit=5)
         except Exception as error:
             LOGGER.warning("[Memory] Error retrieving vector memory: %s", error)
             return []
@@ -149,6 +152,9 @@ class ConversationOrchestrator:
             return
         from .api.hatching_store import HatchingStore
         profile = HatchingStore().load()
+        if not profile.is_hatched:
+            LOGGER.debug("[Memory] Skipping profile seeding for user %s — onboarding not complete", user_id)
+            return
 
         # Build natural-language preference sentences from the onboarding answers
         candidates: list[str] = []

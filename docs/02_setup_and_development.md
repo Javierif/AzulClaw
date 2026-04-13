@@ -183,15 +183,15 @@ cp azul_backend/azul_brain/.env.example azul_backend/azul_brain/.env.local
 
 ### 5.2 Memoria híbrida y variables relacionadas
 
-La memoria a largo plazo vive en **SQLite** (ruta por defecto `memory/azul_memory.db` desde la raíz del repo). Incluye:
+La memoria a largo plazo vive en **SQLite** (ruta por defecto `<workspace_root>/.azul/azul_memory.db`; el `workspace_root` se lee del perfil de hatching en `memory/hatching_profile.json`). Incluye:
 
 - Tabla de **memorias** con embedding en BLOB y búsqueda **FTS5** (BM25) sobre el texto.
 - Fusión **híbrida** (RRF ponderado: por defecto 70 % vector / 30 % texto).
-- Historial reciente de chat en la misma base cuando `AZUL_MEMORY_DB_PATH` está definido (`SafeMemory`).
+- Historial reciente de chat en la misma base (`SafeMemory` siempre activo usando esa ruta resuelta).
 
 | Variable | Descripción | Por defecto |
 |---|---|---|
-| `AZUL_MEMORY_DB_PATH` | Ruta del fichero SQLite compartido (vector + FTS5 + historial). | `memory/azul_memory.db` |
+| `AZUL_MEMORY_DB_PATH` | Ruta del fichero SQLite compartido (vector + FTS5 + historial). | `<workspace_root>/.azul/azul_memory.db` |
 | `AZUL_EMBEDDING_DIM` | Dimensión del vector; debe coincidir con el modelo de embedding desplegado. | `3072` |
 | `VECTOR_MEMORY_ENABLED` | `false` desactiva por completo el almacén vectorial. | `true` |
 | `AZUL_HYBRID_VECTOR_WEIGHT` / `AZUL_HYBRID_TEXT_WEIGHT` | Pesos en la fusión RRF híbrida. | `0.7` / `0.3` |

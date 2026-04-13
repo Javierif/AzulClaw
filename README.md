@@ -43,7 +43,7 @@ python -m azul_backend.azul_brain.main_launcher
 
 ## Persistent hybrid memory
 
-Long-term recall uses a single SQLite database (default `memory/azul_memory.db`):
+Long-term recall uses a single SQLite database (default `<workspace_root>/.azul/azul_memory.db`, overridable via `AZUL_MEMORY_DB_PATH`):
 
 - **Vector search** — cosine similarity over stored embeddings (dimension 3072 by default, aligned with `text-embedding-3-large`).
 - **Keyword search** — BM25-style ranking via SQLite FTS5 on message text.

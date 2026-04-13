@@ -139,8 +139,10 @@ Explicit user statements always override onboarding defaults.
 The DB lives at `<workspace_root>/.azul/azul_memory.db`. The `workspace_root` is read from `hatching_profile.json` at `<repo>/memory/hatching_profile.json`. If you're seeing an empty DB, confirm you're querying the right path:
 
 ```bash
-sqlite3 /path/to/repo/memory/azul_memory.db ".tables"
-sqlite3 /path/to/repo/memory/azul_memory.db "SELECT content, source FROM memories;"
+sqlite3 <workspace_root>/.azul/azul_memory.db ".tables"
+sqlite3 <workspace_root>/.azul/azul_memory.db "SELECT content, source FROM memories;"
+# e.g. sqlite3 ~/Documents/dev/AzulWorkspace/.azul/azul_memory.db ".tables"
+# actual path stored in memory/hatching_profile.json → workspace_root field
 ```
 
 ### Embeddings are optional
@@ -160,7 +162,7 @@ Settings → wipe requires typing the phrase `RESET_ALL_LOCAL_DATA` exactly. Thi
 `seed_profile_facts()` uses exact-content deduplication — it won't insert the same sentence twice. If you change the onboarding profile and want the new values seeded, wipe the `hatching-profile` rows first:
 
 ```bash
-sqlite3 /path/to/repo/memory/azul_memory.db \
+sqlite3 <workspace_root>/.azul/azul_memory.db \
   "DELETE FROM memories WHERE source = 'hatching-profile';"
 ```
 
@@ -181,6 +183,6 @@ Then restart the backend and re-save the hatching profile from Settings.
 
 ```bash
 # Quick DB check after step 4
-sqlite3 /path/to/repo/memory/azul_memory.db \
+sqlite3 <workspace_root>/.azul/azul_memory.db \
   "SELECT content, source, created_at FROM memories ORDER BY created_at DESC LIMIT 5;"
 ```
