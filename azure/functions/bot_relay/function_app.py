@@ -125,14 +125,34 @@ async def _await_outbound_with_sessions(client: ServiceBusClient, correlation_id
             return None
 
         outbound_msg = messages[0]
-        payload = json.loads(_message_body_to_text(outbound_msg))
+        body_text = _message_body_to_text(outbound_msg)
+        try:
+            payload = json.loads(body_text)
+        except json.JSONDecodeError as error:
+            logging.error(
+                "Invalid JSON in outbound message for correlation_id=%s on queue=%s: %s",
+                correlation_id,
+                OUTBOUND_QUEUE,
+                error,
+            )
+            await receiver.dead_letter_message(
+                outbound_msg,
+                reason="InvalidJson",
+                error_description=f"Outbound message body is not valid JSON: {error}",
+            )
+            return None
+
         await receiver.complete_message(outbound_msg)
         return payload
 
 
 async def _await_outbound_reply(client: ServiceBusClient, correlation_id: str) -> dict | None:
     if USE_SESSIONS == "false":
-        _raise_sessions_required(correlation_id)
+        logging.info(
+            "Skipping synchronous outbound wait for %s because SERVICE_BUS_USE_SESSIONS=false.",
+            correlation_id,
+        )
+        return None
 
     try:
         return await _await_outbound_with_sessions(client, correlation_id)

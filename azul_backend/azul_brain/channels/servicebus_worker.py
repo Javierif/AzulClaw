@@ -192,9 +192,14 @@ class ServiceBusWorker:
             await self._send_sync_reply(activity, EMPTY_TEXT_PROMPT, correlation_id)
             return
 
-        LOGGER.info("[Worker] Processing channel activity from %s: %s...", user_id, text[:50])
-
         route = self.orchestrator.resolve_route(text)
+        LOGGER.info(
+            "[Worker] Processing channel activity from %s (correlation_id=%s, text_length=%d, lane=%s).",
+            user_id,
+            correlation_id,
+            len(text),
+            route.lane,
+        )
 
         try:
             if route.lane == "slow":
@@ -242,34 +247,94 @@ class ServiceBusWorker:
             LOGGER.error("[Worker] Error in AI pipeline: %s", error)
             await self._send_sync_reply(activity, GENERIC_ERROR_TEXT, correlation_id)
 
+    async def _process_inbound_message(
+        self,
+        receiver,
+        msg,
+        semaphore: asyncio.Semaphore,
+    ) -> None:
+        """Processes and settles one inbound message, then releases its concurrency slot."""
+        try:
+            await self._handle_message(msg)
+            await receiver.complete_message(msg)
+        except ValueError as error:
+            LOGGER.warning("[Worker] Dead-lettering inbound message: %s", error)
+            await receiver.dead_letter_message(
+                msg,
+                reason="MalformedInboundActivity",
+                error_description=str(error),
+            )
+        except Exception:
+            await receiver.abandon_message(msg)
+            raise
+        finally:
+            semaphore.release()
+
     async def _listen_loop(self) -> None:
         """Main listening loop."""
+        max_concurrent_calls = 5
         while self._running:
             try:
                 self.client = ServiceBusClient.from_connection_string(self.connection_str)
                 async with self.client:
                     receiver = self.client.get_queue_receiver(
                         queue_name=self.inbound_queue,
-                        prefetch_count=5,
+                        prefetch_count=max_concurrent_calls,
                     )
                     async with receiver:
                         LOGGER.info("[Worker] Service Bus inbound connection ESTABLISHED.")
-                        while self._running:
-                            messages = await receiver.receive_messages(max_wait_time=5, max_message_count=5)
-                            for msg in messages:
-                                try:
-                                    await self._handle_message(msg)
-                                    await receiver.complete_message(msg)
-                                except ValueError as error:
-                                    LOGGER.warning("[Worker] Dead-lettering inbound message: %s", error)
-                                    await receiver.dead_letter_message(
-                                        msg,
-                                        reason="MalformedInboundActivity",
-                                        error_description=str(error),
+                        semaphore = asyncio.Semaphore(max_concurrent_calls)
+                        in_flight_tasks: set[asyncio.Task] = set()
+                        fatal_error: Exception | None = None
+
+                        def _handle_task_done(task: asyncio.Task) -> None:
+                            nonlocal fatal_error
+                            in_flight_tasks.discard(task)
+                            try:
+                                exception = task.exception()
+                            except asyncio.CancelledError:
+                                return
+                            if exception is not None and fatal_error is None:
+                                fatal_error = exception
+
+                        try:
+                            while self._running:
+                                if fatal_error is not None:
+                                    raise fatal_error
+
+                                messages = await receiver.receive_messages(
+                                    max_wait_time=5,
+                                    max_message_count=max_concurrent_calls,
+                                )
+                                for msg in messages:
+                                    if fatal_error is not None:
+                                        raise fatal_error
+
+                                    await semaphore.acquire()
+                                    if fatal_error is not None:
+                                        semaphore.release()
+                                        raise fatal_error
+
+                                    task = asyncio.create_task(
+                                        self._process_inbound_message(receiver, msg, semaphore)
                                     )
-                                except Exception:
-                                    await receiver.abandon_message(msg)
-                                    raise
+                                    in_flight_tasks.add(task)
+                                    task.add_done_callback(_handle_task_done)
+                        finally:
+                            if in_flight_tasks:
+                                if not self._running:
+                                    for task in list(in_flight_tasks):
+                                        task.cancel()
+                                results = await asyncio.gather(*in_flight_tasks, return_exceptions=True)
+                                if fatal_error is None:
+                                    for result in results:
+                                        if isinstance(result, Exception) and not isinstance(
+                                            result, asyncio.CancelledError
+                                        ):
+                                            fatal_error = result
+                                            break
+                            if fatal_error is not None:
+                                raise fatal_error
             except asyncio.CancelledError:
                 break
             except Exception as error:
