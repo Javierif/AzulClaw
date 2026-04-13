@@ -118,11 +118,18 @@ class VectorMemoryStore:
                 content     TEXT NOT NULL,
                 source      TEXT DEFAULT 'chat',
                 category    TEXT DEFAULT 'conversation',
+                feature_key TEXT,
                 embedding   BLOB,
                 created_at  TEXT DEFAULT (datetime('now')),
                 updated_at  TEXT DEFAULT (datetime('now'))
             )
         """)
+        # Migration: add feature_key to existing DBs that predate this column
+        try:
+            cur.execute("ALTER TABLE memories ADD COLUMN feature_key TEXT")
+        except Exception:
+            pass  # column already exists
+
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_memories_user
             ON memories(user_id)
@@ -130,6 +137,10 @@ class VectorMemoryStore:
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_memories_category
             ON memories(user_id, category)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_memories_feature_key
+            ON memories(user_id, feature_key)
         """)
 
         # FTS5 index for BM25 full-text search
@@ -174,6 +185,7 @@ class VectorMemoryStore:
         embedding: list[float] | None,
         source: str = "chat",
         category: str = "conversation",
+        feature_key: str | None = None,
     ) -> str:
         """Stores a memory entry. Embedding may be None for text-only (BM25-searchable) records.
 
@@ -184,13 +196,56 @@ class VectorMemoryStore:
 
         self._conn.execute(
             """
-            INSERT INTO memories (id, user_id, role, content, source, category, embedding)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO memories (id, user_id, role, content, source, category, feature_key, embedding)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (memory_id, user_id, role, content, source, category, vec_blob),
+            (memory_id, user_id, role, content, source, category, feature_key, vec_blob),
         )
         self._conn.commit()
         return memory_id
+
+    def upsert_featured(
+        self,
+        user_id: str,
+        feature_key: str,
+        content: str,
+        embedding: list[float] | None,
+    ) -> str:
+        """Inserts or updates a featured preference by its stable feature_key.
+
+        Featured preferences represent the most important things to know about the
+        user (goals, communication style, autonomy). They are always shown at the
+        top of the memory list and updated in place when the user's preferences change.
+        Returns the memory id.
+        """
+        vec_blob = _serialize_vector(embedding) if embedding else None
+        existing = self._conn.execute(
+            "SELECT id FROM memories WHERE user_id = ? AND feature_key = ?",
+            (user_id, feature_key),
+        ).fetchone()
+
+        if existing:
+            self._conn.execute(
+                """
+                UPDATE memories
+                SET content = ?, embedding = ?, updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (content, vec_blob, existing["id"]),
+            )
+            self._conn.commit()
+            LOGGER.debug("[VectorStore] Updated featured memory %s: %s", feature_key, content[:60])
+            return existing["id"]
+
+        return self.add_memory(
+            user_id=user_id,
+            role="system",
+            content=content,
+            embedding=embedding,
+            source="featured",
+            category="preference",
+            feature_key=feature_key,
+        )
 
     def add_preference(
         self,
@@ -407,13 +462,15 @@ class VectorMemoryStore:
         return self._get_by_category(user_id, "fact", limit)
 
     def get_user_knowledge(self, user_id: str, limit: int = 100) -> list[dict]:
-        """Returns saved user preferences (intentionally excludes facts — only preferences are stored)."""
+        """Returns saved user preferences. Featured memories (feature_key IS NOT NULL) come first."""
         rows = self._conn.execute(
             """
-            SELECT id, content, source, category, created_at
+            SELECT id, content, source, category, feature_key, created_at
             FROM memories
             WHERE user_id = ? AND category = 'preference'
-            ORDER BY created_at DESC
+            ORDER BY
+                CASE WHEN feature_key IS NOT NULL THEN 0 ELSE 1 END,
+                created_at DESC
             LIMIT ?
             """,
             (user_id, limit),

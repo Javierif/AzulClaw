@@ -19,7 +19,8 @@ const KIND_COLOR: Record<string, string> = {
 };
 
 const SOURCE_LABEL: Record<string, string> = {
-  "hatching-profile": "Onboarding",
+  "featured": "Featured",
+  "hatching-profile": "Featured",
   "extractor": "Auto-learned",
   "extracted": "Auto-learned",
   "user": "You said",
@@ -71,7 +72,13 @@ export function MemoryShell() {
     }
   }
 
-  const learned = records.filter((r) => r.kind === "preference" || r.kind === "semantic" || r.kind === "fact" as string);
+  const learned = records
+    .filter((r) => r.kind === "preference" || r.kind === "semantic" || r.kind === "fact" as string)
+    .sort((a, b) => {
+      const aFeatured = a.source === "featured" || a.source === "hatching-profile" ? 0 : 1;
+      const bFeatured = b.source === "featured" || b.source === "hatching-profile" ? 0 : 1;
+      return aFeatured - bFeatured;
+    });
 
   return (
     <section className="detail-layout" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>

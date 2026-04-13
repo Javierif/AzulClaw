@@ -156,45 +156,47 @@ class ConversationOrchestrator:
             LOGGER.debug("[Memory] Skipping profile seeding for user %s — onboarding not complete", user_id)
             return
 
-        # Build natural-language preference sentences from the onboarding answers
-        candidates: list[str] = []
+        # Each entry: (stable feature_key, content). Using upsert so re-running this
+        # after onboarding edits updates the existing featured row in place.
+        featured_slots: list[tuple[str, str]] = []
 
         if profile.role.strip():
-            candidates.append(f"The user wants this assistant to be: {profile.role.strip()}")
+            featured_slots.append(("profile:role", f"The user wants this assistant to be: {profile.role.strip()}"))
 
         if profile.mission.strip():
-            candidates.append(f"The user's main goal is: {profile.mission.strip()}")
+            featured_slots.append(("profile:mission", f"The user's main goal is: {profile.mission.strip()}"))
 
         style_parts = [p for p in [profile.tone, profile.style, profile.autonomy] if p.strip()]
         if style_parts:
-            candidates.append(
-                f"The user prefers communication that is {', '.join(style_parts).lower()}."
-            )
+            featured_slots.append((
+                "profile:style",
+                f"The user prefers communication that is {', '.join(style_parts).lower()}.",
+            ))
 
-        if profile.confirm_sensitive_actions:
-            candidates.append("The user wants to be asked for confirmation before sensitive or destructive actions.")
-        else:
-            candidates.append("The user has granted full autonomy — no confirmation needed for actions.")
+        featured_slots.append((
+            "profile:confirmation",
+            "The user wants to be asked for confirmation before sensitive or destructive actions."
+            if profile.confirm_sensitive_actions
+            else "The user has granted full autonomy — no confirmation needed for actions.",
+        ))
 
         if profile.skills:
-            candidates.append(f"Active skills the assistant can use: {', '.join(profile.skills)}.")
+            featured_slots.append(("profile:skills", f"Active skills the assistant can use: {', '.join(profile.skills)}."))
+
         seeded = 0
-        for content in candidates:
-            value = content.split(": ", 1)[-1].strip()
-            if not value:
-                continue
-            if self.vector_memory.preference_exists(user_id, content):
+        for feature_key, content in featured_slots:
+            if not content.strip():
                 continue
             try:
                 embedding: list[float] | None = None
                 if self.embedding_service is not None:
                     result = await self.embedding_service.embed_text(content)
                     embedding = result if result else None
-                self.vector_memory.add_preference(user_id, content, embedding, source="hatching-profile")
+                self.vector_memory.upsert_featured(user_id, feature_key, content, embedding)
                 seeded += 1
             except Exception as error:
-                LOGGER.warning("[Memory] Failed to seed fact '%s': %s", content[:60], error)
-        LOGGER.info("[Memory] Seeded %d profile facts for user %s", seeded, user_id)
+                LOGGER.warning("[Memory] Failed to upsert featured slot '%s': %s", feature_key, error)
+        LOGGER.info("[Memory] Upserted %d featured profile slots for user %s", seeded, user_id)
 
     def retrieve_user_knowledge(self, user_id: str) -> list[dict]:
         """Returns atemporal preferences and facts learned about the user."""

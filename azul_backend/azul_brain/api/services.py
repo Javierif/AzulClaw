@@ -104,14 +104,15 @@ def summarize_memory(orchestrator, user_id: str) -> list[dict]:
                 kind = "preference" if category == "preference" else "semantic"
                 full_content = item["content"]
                 short_title = full_content if len(full_content) <= 72 else f"{full_content[:69]}..."
+                is_featured = item.get("feature_key") is not None
                 records.append(
                     {
                         "id": item["id"],
                         "title": short_title,
                         "content": full_content,
                         "kind": kind,
-                        "source": item.get("source", "extracted"),
-                        "pinned": item.get("source") == "hatching-profile",
+                        "source": "featured" if is_featured else item.get("source", "extractor"),
+                        "pinned": is_featured,
                         "created_at": item.get("created_at", ""),
                     }
                 )
