@@ -8,8 +8,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 from agent_framework import Agent, Message, tool
-from agent_framework.openai import OpenAIChatClient
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
 
 from ..soul.system_prompt import AZULCLAW_SYSTEM_PROMPT
 from .mcp_plugin import MCPToolsPlugin
@@ -110,7 +109,11 @@ class FoundryAgent:
         self._model = model
 
     def _messages_payload(self, messages: list[Message]) -> list[dict]:
-        return [{"role": m.role, "content": m.contents} for m in messages]
+        result = []
+        for m in messages:
+            parts = [c.text for c in m.contents if getattr(c, "type", None) == "text" and c.text]
+            result.append({"role": m.role, "content": "".join(parts)})
+        return result
 
     async def invoke_messages(self, messages: list[Message]) -> _Result:
         payload = {
@@ -265,10 +268,10 @@ async def create_agent(mcp_client, model_profile=None):
         or os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21").strip()
     )
 
-    chat_client = AzureOpenAIChatClient(
-        deployment_name=deployment_name,
+    chat_client = OpenAIChatCompletionClient(
+        model=deployment_name,
         api_key=api_key,
-        endpoint=endpoint,
+        azure_endpoint=endpoint,
         api_version=api_version,
     )
     agent = Agent(

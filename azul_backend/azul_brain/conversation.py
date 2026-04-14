@@ -2,8 +2,11 @@
 
 import asyncio
 import logging
+import os
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from agent_framework import Message
 
@@ -35,6 +38,7 @@ class ConversationReply:
     process_id: str = ""
     lane: str = "auto"
     triage_reason: str = ""
+    conversation_title: str | None = None
 
 
 def extract_result_text(result) -> str:
@@ -43,6 +47,49 @@ def extract_result_text(result) -> str:
     if isinstance(value, str):
         return value
     return str(result)
+
+
+_TRIVIAL_QUERY = re.compile(
+    r"^\s*(?:hi|hello|hey|hola|good\s+\w+|thanks?|thank\s+you|ok|okay|bye|ciao|sup|yo|howdy)"
+    r"[\W\s]{0,20}$",
+    re.I,
+)
+
+
+def _is_trivial_query(text: str) -> bool:
+    """Returns True for greetings and small-talk that don't benefit from memory retrieval."""
+    stripped = (text or "").strip()
+    if len(stripped.split()) < 4:
+        return bool(_TRIVIAL_QUERY.match(stripped))
+    return False
+
+
+_PLACEHOLDER_TITLES = frozenset(
+    {
+        "",
+        "new conversation",
+        "new chat",
+        "main conversation",
+    }
+)
+
+
+def _is_placeholder_conversation_title(title: str | None) -> bool:
+    """True when the row still has a generic default title (not user-meaningful)."""
+    t = (title or "").strip().lower()
+    return t in _PLACEHOLDER_TITLES
+
+
+def _looks_like_bad_generated_title(title: str) -> bool:
+    """Heuristic: model returned a greeting or generic label instead of a topic."""
+    t = (title or "").strip().lower()
+    if not t:
+        return True
+    if "conversation starter" in t or "chat with" in t:
+        return True
+    if t.startswith(("hello:", "hi:", "hey:", "hola:")):
+        return True
+    return False
 
 
 def should_skip_vectorization(text: str) -> bool:
@@ -115,18 +162,116 @@ class ConversationOrchestrator:
         self.memory.close()
         self._setup_memory_layers()
 
-    async def persist_with_vector_memory(self, user_id: str, role: str, content: str) -> None:
+    async def persist_with_vector_memory(
+        self,
+        user_id: str,
+        role: str,
+        content: str,
+        conversation_id: str | None = None,
+    ) -> None:
         """Persists to short-term conversation history (SafeMemory only).
 
         Raw conversation turns are NOT indexed in the vector store — only
         extracted preferences and facts go there (via PreferenceExtractor).
         """
-        self.memory.add_message(user_id, role, content)
+        self.memory.add_message(user_id, role, content, conversation_id=conversation_id)
+
+    def _should_generate_conversation_title(
+        self,
+        conversation_id: str | None,
+        user_message: str,
+        *,
+        is_first_turn: bool,
+    ) -> bool:
+        """Sidebar title once: first substantive turn, or next substantive turn if still placeholder."""
+        if not conversation_id:
+            return False
+        if _is_trivial_query(user_message):
+            return False
+        if is_first_turn:
+            return True
+        current = self.memory.get_conversation_title(conversation_id)
+        return _is_placeholder_conversation_title(current)
+
+    def _finalize_generated_title(self, title: str, source_message: str) -> str:
+        """Drop generic model outputs; prefer a short clip of the user's question."""
+        cleaned = (title or "").strip().strip('"').strip()
+        if cleaned and not _looks_like_bad_generated_title(cleaned):
+            return cleaned
+        fallback = source_message[:60].strip()
+        return fallback
+
+    async def _refine_conversation_title_with_llm(
+        self,
+        conversation_id: str,
+        user_message: str,
+        assistant_reply: str,
+    ) -> None:
+        """LLM sidebar title from the first exchange (question + answer excerpt)."""
+        import aiohttp
+
+        endpoint = os.environ.get("AZURE_OPENAI_FAST_ENDPOINT", "").strip()
+        api_key = os.environ.get("AZURE_OPENAI_FAST_API_KEY", "").strip()
+        deployment = os.environ.get("AZURE_OPENAI_FAST_DEPLOYMENT", "").strip()
+        if not endpoint or not api_key or not deployment:
+            return
+
+        parsed = urlparse(endpoint)
+        v1_idx = parsed.path.find("/v1")
+        clean_path = parsed.path[: v1_idx + 3] if v1_idx != -1 else ""
+        url = f"{parsed.scheme}://{parsed.netloc}{clean_path}/chat/completions"
+
+        ans = (assistant_reply or "").strip()
+        if len(ans) > 1200:
+            ans = ans[:1200] + "…"
+
+        title_prompt = (
+            "You name chat threads for a sidebar list.\n\n"
+            f"User asked:\n\"\"\"{user_message[:500]}\"\"\"\n\n"
+            f"Assistant answered (excerpt):\n\"\"\"{ans}\"\"\"\n\n"
+            "Write ONE short title (4–7 words) summarizing the topic or outcome of this exchange. "
+            "Prefer concrete subject matter (e.g. weather in Barcelona, Python error) over generic words. "
+            "Do not start with Hello, Hi, or Hey. "
+            "Do not use 'Conversation Starter', 'New chat', 'Chat', or 'Main conversation'. "
+            "Reply with the title only, no quotes."
+        )
+        payload = {
+            "model": deployment,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": title_prompt,
+                }
+            ],
+            "max_completion_tokens": 30,
+        }
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url, json=payload, headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=15), ssl=False,
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        raw = (data["choices"][0]["message"].get("content") or "").strip()
+                        title = self._finalize_generated_title(raw, user_message)
+                        if title:
+                            self.memory.update_conversation_title(conversation_id, title)
+                            return
+        except Exception as error:
+            LOGGER.debug("[Brain] Title generation failed: %s", error)
 
     async def retrieve_semantic_memories(self, user_id: str, query_text: str) -> list[dict]:
         """Retrieves relevant memories. Uses hybrid search when embeddings are available,
-        falls back to BM25 text-only search when the embedding service is not configured."""
+        falls back to BM25 text-only search when the embedding service is not configured.
+        Skips retrieval entirely for trivial greetings and small-talk."""
         if self.vector_memory is None:
+            return []
+        if _is_trivial_query(query_text):
             return []
 
         try:
@@ -138,7 +283,7 @@ class ConversationOrchestrator:
                         query_embedding=query_embedding,
                         query_text=query_text,
                         limit=5,
-                        min_similarity=0.28,
+                        min_similarity=0.5,
                     )
             # Fallback: BM25 text search when no embedding service or embedding failed
             return self.vector_memory.search_text(user_id=user_id, query_text=query_text, limit=5)
@@ -526,6 +671,7 @@ class ConversationOrchestrator:
         user_message: str,
         *,
         lane: str = "auto",
+        conversation_id: str | None = None,
         on_delta: Callable[[str], Awaitable[None]],
         on_commentary: Callable[[str], Awaitable[None]] | None = None,
         on_progress: Callable[[dict], Awaitable[None]] | None = None,
@@ -558,7 +704,11 @@ class ConversationOrchestrator:
                     blueprint=progress_blueprint,
                 )
             )
-        history = self.memory.get_history(user_id, limit=12)
+        if conversation_id:
+            history = self.memory.get_conversation_messages(conversation_id, limit=12)
+        else:
+            history = self.memory.get_history(user_id, limit=12)
+        is_first_turn = len(history) == 0
         semantic_memories = await self.retrieve_semantic_memories(user_id, user_message)
         user_knowledge = self.retrieve_user_knowledge(user_id)
         messages = self.build_agent_messages(history, semantic_memories, user_message, user_knowledge)
@@ -606,11 +756,24 @@ class ConversationOrchestrator:
                 except asyncio.CancelledError:
                     pass
 
-        await self.persist_with_vector_memory(user_id, "user", user_message)
-        await self.persist_with_vector_memory(user_id, "assistant", reply.text)
+        await self.persist_with_vector_memory(user_id, "user", user_message, conversation_id=conversation_id)
+        await self.persist_with_vector_memory(user_id, "assistant", reply.text, conversation_id=conversation_id)
         # Fire-and-forget preference extraction (skip if message contains credentials)
         if self.preference_extractor and not should_skip_vectorization(user_message):
             self.preference_extractor.fire_and_forget(user_id, user_message, reply.text)
+        # Title from first substantive exchange (skip greeting-only first turns).
+        # Quick clip first; then await fast LLM so the stream "done" carries the final title.
+        if self._should_generate_conversation_title(
+            conversation_id, user_message, is_first_turn=is_first_turn
+        ):
+            quick = self._finalize_generated_title("", user_message)
+            if quick:
+                self.memory.update_conversation_title(conversation_id, quick)
+            await self._refine_conversation_title_with_llm(
+                conversation_id, user_message, reply.text
+            )
+        if conversation_id:
+            reply.conversation_title = self.memory.get_conversation_title(conversation_id)
         reply.triage_reason = route.reason
         if effective_lane == "slow" and on_progress is not None:
             await on_progress(
