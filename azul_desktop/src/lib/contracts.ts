@@ -44,6 +44,12 @@ export interface ChatExchange {
   content: string;
 }
 
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  updated_at: string;
+}
+
 export interface ThinkingStep {
   id: string;
   label: string;
@@ -81,6 +87,9 @@ export interface ChatStreamEvent {
   runtime?: ChatRuntimeMeta;
   message?: string;
   progress?: ThinkingProgress;
+  conversation_id?: string;
+  /** Present on ``done`` when the server has a conversation row title (sidebar + top bar). */
+  conversation_title?: string;
 }
 
 export interface HatchingProfile {
