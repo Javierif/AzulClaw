@@ -7,27 +7,21 @@ import azure.functions as func
 from azure.servicebus import ServiceBusMessage
 from azure.servicebus.aio import ServiceBusClient
 
+from access_control import evaluate_telegram_access, parse_csv_allowlist
+
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 CONNECTION_STR = os.getenv("SERVICE_BUS_CONNECTION_STRING", "")
 INBOUND_QUEUE = os.getenv("SERVICE_BUS_INBOUND_QUEUE", "bot-inbound")
 OUTBOUND_QUEUE = os.getenv("SERVICE_BUS_OUTBOUND_QUEUE", "bot-outbound")
-USE_SESSIONS = (os.getenv("SERVICE_BUS_USE_SESSIONS", "true") or "true").strip().lower()
+SESSION_MODE = (os.getenv("SERVICE_BUS_USE_SESSIONS", "auto") or "auto").strip().lower()
 REQUIRE_AUTH = (os.getenv("BOT_RELAY_REQUIRE_AUTH", "true") or "true").strip().lower() != "false"
 SYNC_REPLY_TIMEOUT_SECONDS = float(os.getenv("BOT_SYNC_REPLY_TIMEOUT_SECONDS", "6.8"))
 APP_ID = os.getenv("MicrosoftAppId", "")
 APP_PASSWORD = os.getenv("MicrosoftAppPassword", "")
 _SERVICEBUS_CLIENT: ServiceBusClient | None = None
-TELEGRAM_ALLOWED_USER_IDS = frozenset(
-    part.strip()
-    for part in (os.getenv("TELEGRAM_ALLOWED_USER_IDS", "") or "").split(",")
-    if part.strip()
-)
-TELEGRAM_ALLOWED_CHAT_IDS = frozenset(
-    part.strip()
-    for part in (os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "") or "").split(",")
-    if part.strip()
-)
+TELEGRAM_ALLOWED_USER_IDS = parse_csv_allowlist(os.getenv("TELEGRAM_ALLOWED_USER_IDS", ""))
+TELEGRAM_ALLOWED_CHAT_IDS = parse_csv_allowlist(os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", ""))
 
 
 def _message_body_to_text(msg) -> str:
@@ -86,49 +80,6 @@ def _should_wait_for_sync_reply(channel_id: str, delivery_mode: str) -> bool:
     return (channel_id or "").strip().lower() == "alexa"
 
 
-def _first_non_empty(*values) -> str:
-    for value in values:
-        if value is None:
-            continue
-        text = str(value).strip()
-        if text:
-            return text
-    return ""
-
-
-def _evaluate_telegram_access(activity: dict) -> tuple[bool, str, str, str]:
-    """Checks Telegram allowlists before the activity reaches Service Bus."""
-    channel_id = (activity.get("channelId") or "").strip().lower()
-    if channel_id != "telegram":
-        return True, "", "", ""
-    if not TELEGRAM_ALLOWED_USER_IDS and not TELEGRAM_ALLOWED_CHAT_IDS:
-        return True, "", "", ""
-
-    from_block = activity.get("from") or {}
-    conversation_block = activity.get("conversation") or {}
-    channel_data = activity.get("channelData") or {}
-    message_block = channel_data.get("message") if isinstance(channel_data, dict) else {}
-    if not isinstance(message_block, dict):
-        message_block = {}
-
-    user_id = _first_non_empty(
-        from_block.get("id") if isinstance(from_block, dict) else "",
-        channel_data.get("from", {}).get("id") if isinstance(channel_data.get("from"), dict) else "",
-        message_block.get("from", {}).get("id") if isinstance(message_block.get("from"), dict) else "",
-    )
-    chat_id = _first_non_empty(
-        conversation_block.get("id") if isinstance(conversation_block, dict) else "",
-        channel_data.get("chat", {}).get("id") if isinstance(channel_data.get("chat"), dict) else "",
-        message_block.get("chat", {}).get("id") if isinstance(message_block.get("chat"), dict) else "",
-    )
-
-    if TELEGRAM_ALLOWED_USER_IDS and user_id not in TELEGRAM_ALLOWED_USER_IDS:
-        return False, user_id, chat_id, "telegram user not allowlisted"
-    if TELEGRAM_ALLOWED_CHAT_IDS and chat_id not in TELEGRAM_ALLOWED_CHAT_IDS:
-        return False, user_id, chat_id, "telegram chat not allowlisted"
-    return True, user_id, chat_id, ""
-
-
 def _get_servicebus_client() -> ServiceBusClient:
     global _SERVICEBUS_CLIENT
     if _SERVICEBUS_CLIENT is None:
@@ -136,11 +87,28 @@ def _get_servicebus_client() -> ServiceBusClient:
     return _SERVICEBUS_CLIENT
 
 
+def _is_session_capability_error(error: Exception) -> bool:
+    """Returns True when the queue rejects session-based operations."""
+    error_text = str(error).lower()
+    return "session" in error_text and any(
+        marker in error_text
+        for marker in ("require", "enabled", "accept", "disabled", "sessionful", "sessionless")
+    )
+
+
+def _disable_auto_session_mode(reason: str) -> None:
+    """Turns auto mode into non-session mode after capability detection fails."""
+    global SESSION_MODE
+    if SESSION_MODE == "auto":
+        logging.warning("Disabling sync session mode automatically: %s", reason)
+        SESSION_MODE = "false"
+
+
 def _raise_sessions_required(correlation_id: str) -> None:
     raise RuntimeError(
         "Synchronous outbound reply handling requires Azure Service Bus sessions "
         f"to be enabled on queue '{OUTBOUND_QUEUE}' and SERVICE_BUS_USE_SESSIONS "
-        f"must not be 'false' (correlation_id={correlation_id})."
+        f"must be 'true' or 'auto' with a session-enabled queue (correlation_id={correlation_id})."
     )
 
 
@@ -215,7 +183,7 @@ async def _await_outbound_with_sessions(client: ServiceBusClient, correlation_id
 
 
 async def _await_outbound_reply(client: ServiceBusClient, correlation_id: str) -> dict | None:
-    if USE_SESSIONS == "false":
+    if SESSION_MODE == "false":
         logging.info(
             "Skipping synchronous outbound wait for %s because SERVICE_BUS_USE_SESSIONS=false.",
             correlation_id,
@@ -225,17 +193,10 @@ async def _await_outbound_reply(client: ServiceBusClient, correlation_id: str) -
     try:
         return await _await_outbound_with_sessions(client, correlation_id)
     except Exception as error:
-        error_text = str(error).lower()
-        if (
-            "session" in error_text
-            and (
-                "require" in error_text
-                or "enabled" in error_text
-                or "accept" in error_text
-                or "disabled" in error_text
-                or "sessionful" in error_text
-            )
-        ):
+        if _is_session_capability_error(error):
+            if SESSION_MODE == "auto":
+                _disable_auto_session_mode(str(error))
+                return None
             _raise_sessions_required(correlation_id)
 
         logging.exception(
@@ -272,13 +233,17 @@ async def messages(req: func.HttpRequest) -> func.HttpResponse:
     if not is_authorized:
         return func.HttpResponse(auth_message, status_code=auth_status)
 
-    is_allowed, telegram_user_id, telegram_chat_id, deny_reason = _evaluate_telegram_access(req_body)
-    if not is_allowed:
+    decision = evaluate_telegram_access(
+        req_body,
+        TELEGRAM_ALLOWED_USER_IDS,
+        TELEGRAM_ALLOWED_CHAT_IDS,
+    )
+    if not decision.authorized:
         logging.warning(
             "Rejected unauthorized Telegram activity before queue user_id=%s chat_id=%s reason=%s",
-            telegram_user_id or "<empty>",
-            telegram_chat_id or "<empty>",
-            deny_reason,
+            decision.user_id or "<empty>",
+            decision.chat_id or "<empty>",
+            decision.reason,
         )
         return func.HttpResponse(status_code=200)
 

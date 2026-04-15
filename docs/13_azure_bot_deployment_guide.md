@@ -158,7 +158,7 @@ MicrosoftAppPassword
 | `SERVICE_BUS_CONNECTION_STRING` | Gives the Function access to the Service Bus namespace |
 | `SERVICE_BUS_INBOUND_QUEUE` | Queue used for inbound activities |
 | `SERVICE_BUS_OUTBOUND_QUEUE` | Queue used for correlated synchronous replies |
-| `SERVICE_BUS_USE_SESSIONS` | Controls whether the isolated session-based sync reply path is used. `auto` or `true` enables it when the queue supports sessions; `false` disables it. |
+| `SERVICE_BUS_USE_SESSIONS` | Controls whether the isolated session-based sync reply path is used. `true` forces it, `false` disables it, and `auto` starts with session-based sync replies but disables that path automatically if the queue rejects session operations. |
 | `BOT_RELAY_REQUIRE_AUTH` | When `true`, the Function requires valid Bot Framework authentication |
 | `BOT_SYNC_REPLY_TIMEOUT_SECONDS` | Maximum time the Function waits for a synchronous reply before returning a fallback response |
 | `TELEGRAM_ALLOWED_USER_IDS` | Optional Telegram sender allowlist applied before queueing |
@@ -168,7 +168,7 @@ MicrosoftAppPassword
 
 - `BOT_SYNC_REPLY_TIMEOUT_SECONDS=6.8` is chosen to leave headroom inside stricter voice-channel reply windows.
 - `SERVICE_BUS_USE_SESSIONS=false` is valid if you do not need the isolated synchronous reply path.
-- `SERVICE_BUS_USE_SESSIONS=auto` is a good default when you want the system to use sessions where supported without documenting them as globally mandatory.
+- `SERVICE_BUS_USE_SESSIONS=auto` is a good default when you want the system to attempt the isolated sync path first and then fall back cleanly if the queue is not session-enabled.
 - a non-session deployment is fully acceptable for Telegram-centric setups and other channel mixes that rely on proactive replies.
 - `MicrosoftAppTenantId` is not required by the Function's Bot Framework auth path in the current implementation.
 - If you want Telegram fully restricted to your own account, set `TELEGRAM_ALLOWED_USER_IDS` here and set the same value again in the local AzulClaw runtime.

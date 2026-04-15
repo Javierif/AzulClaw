@@ -215,7 +215,7 @@ Why this matters:
 - the local host does **not** need to expose an inbound webhook
 - enterprise firewalls are typically much happier with outbound broker connections than with public inbound HTTP services
 
-This is the protocol you were referring to: it is **AMQP**, not SMP.
+The transport protocol used between the local runtime and Azure Service Bus is **AMQP 1.0**.
 
 ### 7.3 Local runtime internals
 
@@ -256,6 +256,8 @@ If `SERVICE_BUS_USE_SESSIONS=false`, the system still works, but this isolated s
 - the worker cannot enqueue a session-based sync reply
 - the worker falls back to the proactive Bot Framework reply path where applicable
 - channels that require a strict inline reply body may receive the configured fallback response instead of a correlated synchronous answer
+
+If `SERVICE_BUS_USE_SESSIONS=auto`, the system starts by attempting the isolated session-based sync path and disables that path automatically if the queue rejects session operations.
 
 This means a non-session deployment is still a supported operating mode for channel mixes that do not depend on the isolated inline reply path.
 

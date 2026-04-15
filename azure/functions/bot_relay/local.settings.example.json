@@ -5,7 +5,7 @@
     "SERVICE_BUS_CONNECTION_STRING": "Endpoint=sb://<namespace>.servicebus.windows.net/;SharedAccessKeyName=<policy>;SharedAccessKey=<secret>",
     "SERVICE_BUS_INBOUND_QUEUE": "bot-inbound",
     "SERVICE_BUS_OUTBOUND_QUEUE": "bot-outbound",
-    "SERVICE_BUS_USE_SESSIONS": "true",
+    "SERVICE_BUS_USE_SESSIONS": "auto",
     "BOT_RELAY_REQUIRE_AUTH": "true",
     "BOT_SYNC_REPLY_TIMEOUT_SECONDS": "6.8",
     "TELEGRAM_ALLOWED_USER_IDS": "123456789",

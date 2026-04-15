@@ -71,13 +71,32 @@ class ServiceBusWorker:
         self._background_tasks: set[asyncio.Task] = set()
 
     def _require_outbound_sessions(self, correlation_id: str) -> None:
-        """Ensures synchronous request/reply uses isolated Service Bus sessions."""
+        """Ensures sync session mode is not explicitly disabled."""
         if self.use_sessions == "false":
             raise RuntimeError(
                 "Synchronous outbound reply handling requires Azure Service Bus sessions "
                 f"to be enabled on queue '{self.outbound_queue}' and SERVICE_BUS_USE_SESSIONS "
-                f"must not be 'false' (correlation_id={correlation_id})."
+                f"must be 'true' or 'auto' with a session-enabled queue (correlation_id={correlation_id})."
             )
+
+    @staticmethod
+    def _is_session_capability_error(error: Exception) -> bool:
+        """Returns True when the queue rejects session-based operations."""
+        error_text = str(error).lower()
+        return "session" in error_text and any(
+            marker in error_text
+            for marker in ("require", "enabled", "accept", "disabled", "sessionful", "sessionless")
+        )
+
+    def _disable_auto_session_mode(self, reason: str) -> None:
+        """Turns auto mode into non-session mode after a capability error."""
+        if self.use_sessions == "auto":
+            LOGGER.warning(
+                "[Worker] Disabling sync session mode automatically on %s: %s",
+                self.outbound_queue,
+                reason,
+            )
+            self.use_sessions = "false"
 
     def _should_use_sync_outbound_reply(self, activity: dict) -> bool:
         """Uses sync reply only for channels that require an inline HTTP response."""
@@ -123,25 +142,27 @@ class ServiceBusWorker:
     async def _send_sync_reply(self, original_activity: dict, text: str, correlation_id: str) -> None:
         """Pushes the sync response to the outbound queue consumed by the Azure Function."""
         if not self._should_use_sync_outbound_reply(original_activity):
-            try:
-                await send_proactive_reply(self.adapter, original_activity, text)
-                LOGGER.info(
-                    "[Worker] Direct channel reply sent via Bot Framework for %s.",
-                    (original_activity.get("channelId") or "").strip().lower() or "<empty>",
-                )
-            except Exception as error:
-                LOGGER.error("[Worker] Direct channel reply failed: %s", error)
+            await send_proactive_reply(self.adapter, original_activity, text)
+            LOGGER.info(
+                "[Worker] Direct channel reply sent via Bot Framework for %s.",
+                (original_activity.get("channelId") or "").strip().lower() or "<empty>",
+            )
             return
 
+        sync_error: Exception | None = None
         try:
             await self._enqueue_sync_reply(text, correlation_id)
         except Exception as error:
+            sync_error = error
+            if self.use_sessions == "auto" and self._is_session_capability_error(error):
+                self._disable_auto_session_mode(str(error))
             LOGGER.error("[Worker] Failed to enqueue sync reply: %s", error)
             try:
                 await send_proactive_reply(self.adapter, original_activity, text)
                 LOGGER.info("[Worker] Fallback proactive reply sent via Service Url.")
             except Exception as proactive_error:
                 LOGGER.error("[Worker] Proactive fallback also failed: %s", proactive_error)
+                raise proactive_error from sync_error
 
     async def _build_slow_timeout_reply(self, text: str, reason: str) -> str:
         """Builds a short spoken acknowledgement if the slow answer exceeds the sync SLA."""
@@ -240,6 +261,7 @@ class ServiceBusWorker:
         )
 
         try:
+            reply_text: str
             if route.lane == "slow":
                 slow_task = asyncio.create_task(
                     self.orchestrator.process_user_message(
@@ -253,10 +275,9 @@ class ServiceBusWorker:
                         asyncio.shield(slow_task),
                         timeout=self.sync_reply_timeout_seconds,
                     )
-                    await self._send_sync_reply(activity, reply.text, correlation_id)
+                    reply_text = reply.text
                 except asyncio.TimeoutError:
-                    timeout_reply = await self._build_slow_timeout_reply(text, route.reason)
-                    await self._send_sync_reply(activity, timeout_reply, correlation_id)
+                    reply_text = await self._build_slow_timeout_reply(text, route.reason)
                     self._track_background_task(
                         asyncio.create_task(self._finish_slow_follow_up(activity, slow_task))
                     )
@@ -273,17 +294,18 @@ class ServiceBusWorker:
                         asyncio.shield(fast_task),
                         timeout=self.sync_reply_timeout_seconds,
                     )
-                    await self._send_sync_reply(activity, reply.text, correlation_id)
+                    reply_text = reply.text
                 except asyncio.TimeoutError:
-                    timeout_reply = await self._build_slow_timeout_reply(text, route.reason)
-                    await self._send_sync_reply(activity, timeout_reply, correlation_id)
+                    reply_text = await self._build_slow_timeout_reply(text, route.reason)
                     self._track_background_task(
                         asyncio.create_task(self._finish_slow_follow_up(activity, fast_task))
                     )
 
         except Exception as error:
             LOGGER.error("[Worker] Error in AI pipeline: %s", error)
-            await self._send_sync_reply(activity, GENERIC_ERROR_TEXT, correlation_id)
+            reply_text = GENERIC_ERROR_TEXT
+
+        await self._send_sync_reply(activity, reply_text, correlation_id)
 
     async def _process_inbound_message(
         self,
