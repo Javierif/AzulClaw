@@ -10,6 +10,11 @@ import aiohttp
 from agent_framework import Agent, Message, tool
 from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
 
+from ..foundry_url import (
+    is_foundry_endpoint,
+    normalize_azure_openai_endpoint,
+    normalize_foundry_base_url,
+)
 from ..soul.system_prompt import AZULCLAW_SYSTEM_PROMPT
 from .mcp_plugin import MCPToolsPlugin
 
@@ -35,11 +40,7 @@ def _normalize_openai_base_url(raw_base_url: str) -> str:
 
 
 def _foundry_chat_url(endpoint: str) -> str:
-    """Builds the correct /v1/chat/completions URL for an AI Foundry project endpoint.
-
-    Strips everything after /v1 so we always land on the standard path
-    regardless of what suffix the env var has (e.g. /responses, /completions).
-    """
+    """Builds the correct /v1/chat/completions URL for an AI Foundry project endpoint."""
     parsed = urlparse(endpoint)
     path = parsed.path
     v1_idx = path.find("/v1")
@@ -93,12 +94,7 @@ class _StreamChunk:
 
 
 class FoundryAgent:
-    """Direct aiohttp agent for AI Foundry /v1/ endpoints.
-
-    Bypasses agent_framework to avoid the broken URL construction
-    that results in 400 BadRequest errors from the Responses API path.
-    Does not attach MCP tools — the fast lane is text-only.
-    """
+    """Direct aiohttp agent for AI Foundry /v1/ endpoints."""
 
     def __init__(self, url: str, api_key: str, model: str):
         self._url = url
@@ -110,9 +106,13 @@ class FoundryAgent:
 
     def _messages_payload(self, messages: list[Message]) -> list[dict]:
         result = []
-        for m in messages:
-            parts = [c.text for c in m.contents if getattr(c, "type", None) == "text" and c.text]
-            result.append({"role": m.role, "content": "".join(parts)})
+        for message in messages:
+            parts = [
+                content.text
+                for content in message.contents
+                if getattr(content, "type", None) == "text" and content.text
+            ]
+            result.append({"role": message.role, "content": "".join(parts)})
         return result
 
     async def invoke_messages(self, messages: list[Message]) -> _Result:
@@ -123,8 +123,10 @@ class FoundryAgent:
         }
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                self._url, json=payload, headers=self._headers,
-                timeout=aiohttp.ClientTimeout(total=30), ssl=False,
+                self._url,
+                json=payload,
+                headers=self._headers,
+                timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
                 if resp.status != 200:
                     body = await resp.text()
@@ -146,8 +148,10 @@ class FoundryAgent:
         }
         session = aiohttp.ClientSession()
         resp = await session.post(
-            self._url, json=payload, headers=self._headers,
-            timeout=aiohttp.ClientTimeout(total=60), ssl=False,
+            self._url,
+            json=payload,
+            headers=self._headers,
+            timeout=aiohttp.ClientTimeout(total=60),
         )
         if resp.status != 200:
             body = await resp.text()
@@ -236,7 +240,6 @@ async def create_agent(mcp_client, model_profile=None):
         )
         return AzulAgent(agent)
 
-    # Fast lane: AI Foundry /v1/ endpoint — use direct aiohttp agent
     if lane == "fast":
         endpoint = (
             os.environ.get("AZURE_OPENAI_FAST_ENDPOINT", "").strip()
@@ -250,30 +253,33 @@ async def create_agent(mcp_client, model_profile=None):
         LOGGER.debug("[Kernel] Fast lane using FoundryAgent: %s (%s)", url, deployment_name)
         return FoundryAgent(url=url, api_key=api_key, model=deployment_name)
 
-    # Slow / auto lane: standard Azure cognitiveservices endpoint via agent_framework
-    endpoint_var = "AZURE_OPENAI_SLOW_ENDPOINT"
-    api_key_var = "AZURE_OPENAI_SLOW_API_KEY"
-    api_version_var = "AZURE_OPENAI_SLOW_API_VERSION"
-
     endpoint = (
-        os.environ.get(endpoint_var, "").strip()
+        os.environ.get("AZURE_OPENAI_SLOW_ENDPOINT", "").strip()
         or _require_env("AZURE_OPENAI_ENDPOINT")
     )
     api_key = (
-        os.environ.get(api_key_var, "").strip()
+        os.environ.get("AZURE_OPENAI_SLOW_API_KEY", "").strip()
         or _require_env("AZURE_OPENAI_API_KEY")
     )
     api_version = (
-        os.environ.get(api_version_var, "").strip()
+        os.environ.get("AZURE_OPENAI_SLOW_API_VERSION", "").strip()
         or os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21").strip()
     )
 
-    chat_client = OpenAIChatCompletionClient(
-        model=deployment_name,
-        api_key=api_key,
-        azure_endpoint=endpoint,
-        api_version=api_version,
-    )
+    if is_foundry_endpoint(endpoint):
+        chat_client = OpenAIChatClient(
+            model_id=deployment_name,
+            api_key=api_key,
+            base_url=normalize_foundry_base_url(endpoint),
+        )
+    else:
+        chat_client = OpenAIChatCompletionClient(
+            model=deployment_name,
+            api_key=api_key,
+            azure_endpoint=normalize_azure_openai_endpoint(endpoint),
+            api_version=api_version,
+        )
+
     agent = Agent(
         client=chat_client,
         instructions=AZULCLAW_SYSTEM_PROMPT,

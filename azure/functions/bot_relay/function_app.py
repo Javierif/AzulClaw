@@ -7,17 +7,35 @@ import azure.functions as func
 from azure.servicebus import ServiceBusMessage
 from azure.servicebus.aio import ServiceBusClient
 
+from access_control import evaluate_telegram_access, parse_csv_allowlist
+
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 CONNECTION_STR = os.getenv("SERVICE_BUS_CONNECTION_STRING", "")
 INBOUND_QUEUE = os.getenv("SERVICE_BUS_INBOUND_QUEUE", "bot-inbound")
 OUTBOUND_QUEUE = os.getenv("SERVICE_BUS_OUTBOUND_QUEUE", "bot-outbound")
-USE_SESSIONS = (os.getenv("SERVICE_BUS_USE_SESSIONS", "true") or "true").strip().lower()
 REQUIRE_AUTH = (os.getenv("BOT_RELAY_REQUIRE_AUTH", "true") or "true").strip().lower() != "false"
 SYNC_REPLY_TIMEOUT_SECONDS = float(os.getenv("BOT_SYNC_REPLY_TIMEOUT_SECONDS", "6.8"))
 APP_ID = os.getenv("MicrosoftAppId", "")
 APP_PASSWORD = os.getenv("MicrosoftAppPassword", "")
 _SERVICEBUS_CLIENT: ServiceBusClient | None = None
+TELEGRAM_ALLOWED_USER_IDS = parse_csv_allowlist(os.getenv("TELEGRAM_ALLOWED_USER_IDS", ""))
+TELEGRAM_ALLOWED_CHAT_IDS = parse_csv_allowlist(os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", ""))
+
+
+def _normalize_session_mode(raw_value: str) -> str:
+    """Normalizes the session mode env var to a supported value."""
+    normalized = (raw_value or "auto").strip().lower()
+    if normalized in {"auto", "true", "false"}:
+        return normalized
+    logging.warning(
+        "Invalid SERVICE_BUS_USE_SESSIONS value '%s'; falling back to 'auto'.",
+        raw_value,
+    )
+    return "auto"
+
+
+SESSION_MODE = _normalize_session_mode(os.getenv("SERVICE_BUS_USE_SESSIONS", "auto"))
 
 
 def _message_body_to_text(msg) -> str:
@@ -69,6 +87,13 @@ def _build_http_body(reply: dict, delivery_mode: str) -> str:
     return json.dumps(reply, ensure_ascii=False)
 
 
+def _should_wait_for_sync_reply(channel_id: str, delivery_mode: str) -> bool:
+    """Returns whether the relay should wait for a synchronous reply body."""
+    if delivery_mode == "expectReplies":
+        return True
+    return (channel_id or "").strip().lower() == "alexa"
+
+
 def _get_servicebus_client() -> ServiceBusClient:
     global _SERVICEBUS_CLIENT
     if _SERVICEBUS_CLIENT is None:
@@ -76,11 +101,28 @@ def _get_servicebus_client() -> ServiceBusClient:
     return _SERVICEBUS_CLIENT
 
 
+def _is_session_capability_error(error: Exception) -> bool:
+    """Returns True when the queue rejects session-based operations."""
+    error_text = str(error).lower()
+    return "session" in error_text and any(
+        marker in error_text
+        for marker in ("require", "enabled", "accept", "disabled", "sessionful", "sessionless")
+    )
+
+
+def _disable_auto_session_mode(reason: str) -> None:
+    """Turns auto mode into non-session mode after capability detection fails."""
+    global SESSION_MODE
+    if SESSION_MODE == "auto":
+        logging.warning("Disabling sync session mode automatically: %s", reason)
+        SESSION_MODE = "false"
+
+
 def _raise_sessions_required(correlation_id: str) -> None:
     raise RuntimeError(
         "Synchronous outbound reply handling requires Azure Service Bus sessions "
         f"to be enabled on queue '{OUTBOUND_QUEUE}' and SERVICE_BUS_USE_SESSIONS "
-        f"must not be 'false' (correlation_id={correlation_id})."
+        f"must be 'true' or 'auto' with a session-enabled queue (correlation_id={correlation_id})."
     )
 
 
@@ -155,7 +197,7 @@ async def _await_outbound_with_sessions(client: ServiceBusClient, correlation_id
 
 
 async def _await_outbound_reply(client: ServiceBusClient, correlation_id: str) -> dict | None:
-    if USE_SESSIONS == "false":
+    if SESSION_MODE == "false":
         logging.info(
             "Skipping synchronous outbound wait for %s because SERVICE_BUS_USE_SESSIONS=false.",
             correlation_id,
@@ -165,17 +207,10 @@ async def _await_outbound_reply(client: ServiceBusClient, correlation_id: str) -
     try:
         return await _await_outbound_with_sessions(client, correlation_id)
     except Exception as error:
-        error_text = str(error).lower()
-        if (
-            "session" in error_text
-            and (
-                "require" in error_text
-                or "enabled" in error_text
-                or "accept" in error_text
-                or "disabled" in error_text
-                or "sessionful" in error_text
-            )
-        ):
+        if _is_session_capability_error(error):
+            if SESSION_MODE == "auto":
+                _disable_auto_session_mode(str(error))
+                return None
             _raise_sessions_required(correlation_id)
 
         logging.exception(
@@ -212,6 +247,20 @@ async def messages(req: func.HttpRequest) -> func.HttpResponse:
     if not is_authorized:
         return func.HttpResponse(auth_message, status_code=auth_status)
 
+    decision = evaluate_telegram_access(
+        req_body,
+        TELEGRAM_ALLOWED_USER_IDS,
+        TELEGRAM_ALLOWED_CHAT_IDS,
+    )
+    if not decision.authorized:
+        logging.warning(
+            "Rejected unauthorized Telegram activity before queue user_id=%s chat_id=%s reason=%s",
+            decision.user_id or "<empty>",
+            decision.chat_id or "<empty>",
+            decision.reason,
+        )
+        return func.HttpResponse(status_code=200)
+
     logging.info(
         "Incoming activity correlation=%s channel=%s type=%s deliveryMode=%s text_length=%s",
         correlation_id,
@@ -234,10 +283,22 @@ async def messages(req: func.HttpRequest) -> func.HttpResponse:
             )
         logging.info("Enqueued %s to %s", correlation_id, INBOUND_QUEUE)
 
-        reply = await _await_outbound_reply(client, correlation_id)
+        if _should_wait_for_sync_reply(channel_id, delivery_mode):
+            reply = await _await_outbound_reply(client, correlation_id)
+        else:
+            logging.info(
+                "Skipping synchronous HTTP reply wait for %s on channel=%s deliveryMode=%s.",
+                correlation_id,
+                channel_id or "<empty>",
+                delivery_mode or "<empty>",
+            )
+            reply = None
     except Exception as error:
         logging.error("Relay error for %s: %s", correlation_id, error)
         reply = None
+
+    if reply is None and not _should_wait_for_sync_reply(channel_id, delivery_mode):
+        return func.HttpResponse(status_code=200)
 
     if reply is None:
         logging.warning("No sync reply received for %s before timeout.", correlation_id)

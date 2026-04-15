@@ -1,7 +1,7 @@
 """Proactive messaging for Bot Framework."""
 
 from botbuilder.core import BotFrameworkAdapter, TurnContext
-from botbuilder.schema import Activity
+from botbuilder.schema import Activity, TextFormatTypes
 
 
 async def send_proactive_reply(adapter: BotFrameworkAdapter, original_activity: dict, text: str) -> None:
@@ -15,6 +15,7 @@ async def send_proactive_reply(adapter: BotFrameworkAdapter, original_activity: 
         activity = Activity(
             type="message",
             text=text,
+            text_format=TextFormatTypes.plain,
             speak=text,  # Important for Voice Channels like Alexa
             reply_to_id=original_activity.get("id"),
         )

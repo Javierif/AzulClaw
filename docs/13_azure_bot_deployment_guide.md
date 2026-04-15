@@ -1,139 +1,198 @@
 # Azure Bot + Function + Service Bus Deployment Guide
 
-This guide documents the full deployment flow required for anyone to publish their own AzulClaw instance in Azure and connect it to Azure Bot Service and Alexa using a secure Azure Function + Azure Service Bus architecture.
-
-## Goal
-
-The final flow described here is:
+This guide documents the end-to-end deployment flow for publishing **AzulClaw** behind **Azure Bot Service** using the recommended relay architecture:
 
 ```text
-Alexa -> Azure Bot Service -> Azure Function -> Service Bus -> local AzulClaw
-local AzulClaw -> Service Bus -> Azure Function -> Azure Bot Service -> Alexa
+Channel -> Azure Bot Service -> Azure Function -> Azure Service Bus -> Local AzulClaw
+Local AzulClaw -> Azure Service Bus -> Azure Function -> Azure Bot Service -> Channel
 ```
 
-The key design principle is that AzulClaw does not expose a local public endpoint to the internet. The only public entry point is the Azure Function.
+This guide is procedural.
 
-## Required Azure resources
+For the architecture and transport rationale behind the design, read [Azure Bot Connectivity Architecture](12_azure_bot_architecture.md) and [Channels, Transport, and Message Delivery](14_channels_and_transport.md).
 
-You need to create these resources:
+---
 
-1. A Resource Group.
-2. A Storage Account for Azure Functions.
-3. An Azure Function App.
-4. An Azure Service Bus namespace.
+## 1. What this deployment gives you
+
+With this setup:
+
+- Azure Bot Service remains the channel-facing integration layer
+- Azure Function becomes the public Bot Framework endpoint
+- Azure Service Bus becomes the durable transport layer
+- the local AzulClaw runtime stays private and consumes messages over outbound broker connections
+
+That is the intended production-style model for AzulClaw channel delivery.
+
+---
+
+## 2. Prerequisites
+
+You need:
+
+- an Azure subscription
+- a local checkout of AzulClaw
+- Python and the backend dependencies installed for the local runtime
+- permission to create Azure resources
+- Bot Framework credentials:
+  - `MicrosoftAppId`
+  - `MicrosoftAppPassword`
+- an Azure Service Bus connection string
+
+If you plan to use Alexa:
+
+- an Amazon Developer account
+- an Alexa custom skill
+
+If you plan to lock Telegram down to your own account:
+
+- your Telegram numeric user ID
+- optionally one or more Telegram conversation IDs
+
+---
+
+## 3. Azure resources you need
+
+Create or provision the following Azure resources:
+
+1. A Resource Group
+2. A Storage Account for Azure Functions
+3. An Azure Function App
+4. An Azure Service Bus namespace
 5. Two Service Bus queues:
    - `bot-inbound`
    - `bot-outbound`
-6. An Azure Bot.
-7. An Alexa skill connected to the Alexa channel of the Azure Bot.
+6. An Azure Bot
+7. Optionally, an Alexa skill connected to the Azure Bot Alexa channel
 
-## Prerequisites
+---
 
-- An Azure subscription.
-- An Amazon Developer account for Alexa.
-- A working local checkout of AzulClaw.
-- Python and the required dependencies installed for the local runtime.
-- Access to configure Azure secrets:
-  - `MicrosoftAppId`
-  - `MicrosoftAppPassword`
-  - `SERVICE_BUS_CONNECTION_STRING`
+## 4. Prepare Azure Service Bus
 
-## 1. Create Azure Service Bus
+Create the Service Bus namespace first because both the Function and the local runtime depend on it.
 
-1. Create an Azure Service Bus namespace.
-2. Prefer the `Standard` tier.
-3. Create the `bot-inbound` queue.
-4. Create the `bot-outbound` queue.
-5. If you use `Standard`, enable sessions on `bot-outbound`.
+### Queue layout
 
-Notes:
+| Queue | Role | Session requirement |
+|---|---|---|
+| `bot-inbound` | Carries inbound Bot Framework activities from the Function to the local worker | No |
+| `bot-outbound` | Carries correlated synchronous replies from the local worker back to the Function | Optional overall, but required for the isolated synchronous request/reply mode |
 
-- The local worker uses `correlation_id` to match each request with its reply.
-- The current deployment requires sessions on `bot-outbound` for synchronous request/reply.
-- Keep `bot-inbound` without sessions because the local worker consumes it with a non-session receiver.
-- Keep `SERVICE_BUS_USE_SESSIONS=true`.
+### Recommended setup
+
+1. Create the Service Bus namespace.
+2. Prefer the **Standard** tier.
+3. Create `bot-inbound`.
+4. Create `bot-outbound`.
+5. Enable **sessions** on `bot-outbound` if you want the isolated synchronous reply mode.
+6. Keep `bot-inbound` as a non-session queue.
+
+### Why the queues are different
+
+- `bot-inbound` is consumed in parallel by the local worker with a non-session receiver.
+- if sessions are enabled, `bot-outbound` uses `correlation_id` plus session-based isolation so the Function can wait for the correct reply for a specific request.
+- if sessions are disabled, the system can still operate, but the isolated synchronous reply path is not available.
+- channels such as Telegram can still work normally in that mode because they use the proactive reply path rather than depending on an inline correlated HTTP response.
 
 Official reference:
+
 - Azure Service Bus sessions: https://learn.microsoft.com/en-us/azure/service-bus-messaging/message-sessions
 
-## 2. Create the Azure Function App
+---
 
-### Recommended option: Flex Consumption
+## 5. Create the Azure Function App
 
-If you use Flex Consumption:
+The Function App is the public Bot Framework relay. Azure Bot Service should point to it, not to the local machine.
 
-- The runtime is chosen when the Function App is created.
-- Do not try to fix it later by setting `FUNCTIONS_WORKER_RUNTIME` in Application Settings.
-- Create the app directly with the `Python` stack.
+### Recommended hosting option
 
-Official reference:
-- Flex Consumption: https://learn.microsoft.com/en-us/azure/azure-functions/flex-consumption-how-to
+Use **Flex Consumption** or another Azure Functions hosting option that supports the Python runtime you need.
 
-Recommended configuration when creating the app:
+Recommended settings when creating the app:
 
-- Hosting: `Flex Consumption`
 - Runtime stack: `Python`
 - Runtime version: a Python version currently supported by Azure Functions
 - Application Insights: enabled
-- Storage account: dedicated or isolated from unrelated workloads
+- Storage Account: dedicated to the Function workload where practical
 
-## 3. Deploy the Azure Function
+### Important deployment note
 
-The Function project to deploy is located at:
+The Function project in this repository is:
 
 ```text
 azure/functions/bot_relay
 ```
 
-Key files:
+Deploy from that folder, not from the repository root.
+
+Key files in that project:
 
 - `function_app.py`
 - `host.json`
 - `requirements.txt`
 - `local.settings.example.json`
 
-Important:
+---
 
-- Deploy from that folder, not from the repository root.
-- If you publish through the Azure Functions extension in VS Code, confirm that the selected project is `azure/functions/bot_relay`.
-- If you use Flex Consumption, wait until deployment fully completes before validating routes.
+## 6. Configure Azure Function application settings
 
-## 4. Configure Application Settings in Azure Function
-
-Configure these variables in `Function App > Application Settings`:
+Set these variables in **Function App -> Configuration -> Application settings**:
 
 ```text
 SERVICE_BUS_CONNECTION_STRING
 SERVICE_BUS_INBOUND_QUEUE=bot-inbound
 SERVICE_BUS_OUTBOUND_QUEUE=bot-outbound
-SERVICE_BUS_USE_SESSIONS=true
+SERVICE_BUS_USE_SESSIONS=auto
 BOT_RELAY_REQUIRE_AUTH=true
 BOT_SYNC_REPLY_TIMEOUT_SECONDS=6.8
+TELEGRAM_ALLOWED_USER_IDS=123456789
+TELEGRAM_ALLOWED_CHAT_IDS=
 MicrosoftAppId
 MicrosoftAppPassword
 ```
 
-Notes:
+### What each important setting means
 
-- `BOT_SYNC_REPLY_TIMEOUT_SECONDS` defines how long the Function waits for a reply from the local worker before falling back.
-- `6.8` seconds leaves room inside Alexa's skill timeout window.
-- `BOT_RELAY_REQUIRE_AUTH=true` makes the relay reject requests without a valid Bot Framework bearer token.
-- `MicrosoftAppTenantId` is not required by the relay Function auth path; it only applies to the local runtime when you use tenant-scoped Bot Framework auth there.
+| Variable | Purpose |
+|---|---|
+| `SERVICE_BUS_CONNECTION_STRING` | Gives the Function access to the Service Bus namespace |
+| `SERVICE_BUS_INBOUND_QUEUE` | Queue used for inbound activities |
+| `SERVICE_BUS_OUTBOUND_QUEUE` | Queue used for correlated synchronous replies |
+| `SERVICE_BUS_USE_SESSIONS` | Controls whether the isolated session-based sync reply path is used. `true` forces it, `false` disables it, and `auto` starts with session-based sync replies but disables that path automatically if the queue rejects session operations. |
+| `BOT_RELAY_REQUIRE_AUTH` | When `true`, the Function requires valid Bot Framework authentication |
+| `BOT_SYNC_REPLY_TIMEOUT_SECONDS` | Maximum time the Function waits for a synchronous reply before returning a fallback response |
+| `TELEGRAM_ALLOWED_USER_IDS` | Optional Telegram sender allowlist applied before queueing |
+| `TELEGRAM_ALLOWED_CHAT_IDS` | Optional Telegram conversation allowlist applied before queueing |
 
-Safe local example:
+### Notes
 
-- Use `azure/functions/bot_relay/local.settings.example.json` as the template.
-- Do not commit the real `local.settings.json`.
+- `BOT_SYNC_REPLY_TIMEOUT_SECONDS=6.8` is chosen to leave headroom inside stricter voice-channel reply windows.
+- `SERVICE_BUS_USE_SESSIONS=false` is valid if you do not need the isolated synchronous reply path.
+- `SERVICE_BUS_USE_SESSIONS=auto` is a good default when you want the system to attempt the isolated sync path first and then fall back cleanly if the queue is not session-enabled.
+- a non-session deployment is fully acceptable for Telegram-centric setups and other channel mixes that rely on proactive replies.
+- `MicrosoftAppTenantId` is not required by the Function's Bot Framework auth path in the current implementation.
+- If you want Telegram fully restricted to your own account, set `TELEGRAM_ALLOWED_USER_IDS` here and set the same value again in the local AzulClaw runtime.
 
-## 5. Validate that the Function is published
+### Local testing
 
-Minimum validation:
+For local Function testing:
 
-1. `Deployment Center` shows the deployment as completed.
-2. The `GET /health` endpoint returns `200`.
-3. The `POST /api/messages` endpoint returns `401/403` without Bot Framework auth and succeeds only for authenticated Bot traffic.
+- use `azure/functions/bot_relay/local.settings.example.json` as the template
+- do not commit the real `local.settings.json`
 
-With the current code, the expected public routes are:
+---
+
+## 7. Validate that the Azure Function is published
+
+Before connecting Azure Bot Service, confirm the Function really exists and is routable.
+
+### Minimum validation
+
+1. Deployment Center shows the deployment as complete.
+2. `GET /health` returns `200`.
+3. `POST /api/messages` returns `401` or `403` without Bot Framework auth when `BOT_RELAY_REQUIRE_AUTH=true`.
+
+### Expected public routes
 
 ```text
 GET  /health
@@ -143,83 +202,126 @@ POST /api/messages
 Examples:
 
 ```text
-https://<your-app>.azurewebsites.net/health
-https://<your-app>.azurewebsites.net/api/messages
+https://<your-function-app>.azurewebsites.net/health
+https://<your-function-app>.azurewebsites.net/api/messages
 ```
 
-If `/health` returns `404`, the Function is not published or has not been indexed correctly.
+### Interpretation of common failures
 
-If `/api/messages` returns `404`, Azure Bot Service will not be able to talk to your relay.
+If `/health` returns `404`:
 
-If `/api/messages` returns `401` or `403` from Azure Bot Service, verify `MicrosoftAppId`, `MicrosoftAppPassword`, and that the Bot is calling the exact configured endpoint.
+- deployment may still be in progress
+- the wrong project may have been published
+- function indexing may have failed
 
-## 6. Configure Azure Bot Service
+If `/api/messages` returns `404`:
 
-In your Azure Bot:
+- Azure Bot Service will not be able to reach the relay
+- the wrong code version may be deployed
+- the publish path may have been incorrect
+
+If `/api/messages` returns `401` or `403` from Azure Bot Service:
+
+- verify `MicrosoftAppId`
+- verify `MicrosoftAppPassword`
+- verify that the bot is calling the exact configured Function URL
+
+---
+
+## 8. Configure Azure Bot Service
+
+In your Azure Bot resource:
 
 1. Open the bot configuration.
-2. Set the `Messaging Endpoint` to exactly:
+2. Set the **Messaging Endpoint** to:
 
 ```text
 https://<your-function-app>.azurewebsites.net/api/messages
 ```
 
-Do not use `/health` for the bot endpoint.
+Do not use `/health` as the bot endpoint.
 
-## 7. Configure the Alexa channel
+This configuration makes Azure Bot Service send Bot Framework activities to the Function relay rather than directly to AzulClaw.
 
-Alexa configuration has two parts.
+---
+
+## 9. Configure the Alexa channel
+
+Alexa is configured in two places.
 
 ### In Azure Bot Service
 
 1. Open the Azure Bot resource.
 2. Go to `Channels`.
 3. Select `Alexa`.
-4. Enter the `Skill ID` of your Alexa skill.
-5. Save and copy the `Alexa service endpoint URI` generated by Azure.
+4. Enter the Skill ID of your Alexa skill.
+5. Save the configuration.
+6. Copy the Alexa service endpoint URI generated by Azure.
 
 ### In the Alexa Developer Console
 
 1. Create a `Custom` skill.
 2. Use `Provision your own` for the backend.
-3. In `Endpoint`, paste the `Alexa service endpoint URI` generated by Azure Bot Service.
-4. In the interaction model, define:
-   - the `invocationName`
+3. In the skill endpoint, paste the **Azure Bot-generated Alexa endpoint**, not the Function URL.
+4. Define:
+   - the invocation name
    - sample utterances
    - an intent that captures free user input
 
 Official reference:
+
 - Connect a bot to Alexa: https://learn.microsoft.com/en-us/azure/bot-service/bot-service-channel-connect-alexa?view=azure-bot-service-4.0
 
-Important:
+### Important distinction
 
-- The URL pasted into Alexa is not the Azure Function URL.
-- The Alexa skill points to the endpoint generated by Azure Bot Service.
-- The Azure Function is only configured as the Azure Bot `Messaging Endpoint`.
+- Alexa talks to the endpoint generated by Azure Bot Service.
+- Azure Bot Service talks to the Azure Function.
+- The Azure Function talks to Azure Service Bus.
 
-## 8. Configure the local AzulClaw runtime
+Those are three separate integration boundaries.
 
-The local AzulClaw host must be able to consume `bot-inbound` and publish to `bot-outbound`.
+---
 
-Required environment variables in the local AzulClaw runtime:
+## 10. Configure the local AzulClaw runtime
+
+The local runtime must be able to:
+
+- consume `bot-inbound`
+- publish synchronous replies to `bot-outbound`
+- send proactive Bot Framework replies when appropriate
+
+Set these environment variables in the local AzulClaw runtime:
 
 ```text
 SERVICE_BUS_CONNECTION_STRING
 SERVICE_BUS_INBOUND_QUEUE=bot-inbound
 SERVICE_BUS_OUTBOUND_QUEUE=bot-outbound
-SERVICE_BUS_USE_SESSIONS=true
+SERVICE_BUS_USE_SESSIONS=auto
+TELEGRAM_ALLOWED_USER_IDS=123456789
+TELEGRAM_ALLOWED_CHAT_IDS=
 MicrosoftAppId
 MicrosoftAppPassword
 MicrosoftAppTenantId
 ```
 
-Then start the backend:
+### Telegram lockdown note
+
+If you want only your Telegram account to reach AzulClaw:
+
+- set `TELEGRAM_ALLOWED_USER_IDS` in the Azure Function
+- set the same `TELEGRAM_ALLOWED_USER_IDS` in the local runtime
+
+That gives you early rejection in Azure plus local defense in depth.
+
+### Start the backend
 
 ```bash
 python -m azul_backend.azul_brain.main_launcher
 ```
 
-When everything is connected correctly, you should see logs similar to:
+### Expected runtime signals
+
+When the worker is connected correctly, you should see logs similar to:
 
 ```text
 [Worker] Service Bus inbound connection ESTABLISHED.
@@ -227,30 +329,50 @@ When everything is connected correctly, you should see logs similar to:
 [Worker] Sync reply queued on bot-outbound ...
 ```
 
-## 9. Expected conversational behavior
+---
 
-### Fast cases
+## 11. Expected runtime behavior
 
-If the `fast brain` resolves the request inside the synchronous reply window:
+### Fast-path requests
 
-- Azure Function waits for the reply in `bot-outbound`
-- returns that reply to Azure Bot Service
-- Alexa speaks the full answer
+If the request is handled inside the synchronous reply window:
 
-### Slow cases
+- the local worker processes the activity
+- the worker puts a correlated reply on `bot-outbound`
+- the Function returns that reply to Azure Bot Service
+- the channel receives an inline answer
 
-If the response takes too long:
+### Slow-path requests
 
-- Azure Function falls back to a short response
-- Alexa says something brief to avoid timing out
-- full processing can continue in the background
+If the request exceeds the synchronous wait window:
 
-Official reference:
-- Alexa progressive responses and timing: https://developer.amazon.com/es-ES/docs/alexa/custom-skills/progressive-response-api-reference.html
+- the Function returns a fallback response
+- the channel avoids timing out
+- the local runtime may continue processing and deliver a later response through the proactive path where appropriate
 
-## 10. Troubleshooting
+This behavior is particularly important for voice-first integrations such as Alexa.
 
-### `Functions` is empty in the Azure portal
+---
+
+## 12. End-to-end validation checklist
+
+Before considering the deployment healthy, confirm all of the following:
+
+- `GET /health` returns `200`
+- unauthenticated `POST /api/messages` requests are rejected when auth is enabled
+- Azure Bot has the correct `Messaging Endpoint`
+- `bot-inbound` exists and is reachable
+- `bot-outbound` exists and, if you want isolated synchronous replies, has sessions enabled
+- the local runtime consumes `bot-inbound`
+- the local runtime can publish to `bot-outbound`
+- simple channel requests receive a real inline answer
+- Telegram allowlists behave as expected if configured
+
+---
+
+## 13. Troubleshooting
+
+### The Azure portal shows no Functions
 
 Possible causes:
 
@@ -264,61 +386,58 @@ Possible causes:
 Possible causes:
 
 - deployment is still in progress
-- the published app is not the correct app
-- the Function has not been indexed
+- the wrong project was deployed
+- function indexing failed
 
 ### `/api/messages` returns `404`
 
 Possible causes:
 
-- `Messaging Endpoint` is misconfigured
-- an old code version is still deployed
 - the Function was not published correctly
+- the bot is pointing at the wrong URL
+- an older code version is still deployed
 
-### Alexa always says a fallback phrase such as "Vale, lo miro ahora mismo"
+### `/api/messages` returns `401` or `403`
 
-That means the relay did not receive a reply from `bot-outbound` in time.
+Possible causes:
 
-Check:
-
-- the local worker is running
-- `bot-outbound` exists
-- sessions are enabled only on `bot-outbound`
-- `SERVICE_BUS_USE_SESSIONS=true`
-- there are no Service Bus errors in the logs
+- `MicrosoftAppId` is wrong
+- `MicrosoftAppPassword` is wrong
+- Azure Bot Service is calling a different endpoint than the one you configured
 
 ### The local worker receives nothing
 
 Check:
 
 - `SERVICE_BUS_CONNECTION_STRING`
-- correct `bot-inbound` queue name
-- outbound connectivity from the local machine to Azure Service Bus
+- correct queue names
+- outbound connectivity from the local host to Azure Service Bus
 
-### Azure Bot Service responds but Alexa does not speak
+### The channel only hears fallback phrases
+
+That usually means the Function did not receive a synchronous reply from `bot-outbound` before timeout.
 
 Check:
 
-- correct Skill ID in the Alexa channel
-- correct Azure Bot endpoint configured in the Alexa skill
-- published Alexa interaction model
-- whether the relay reply is arriving inside the synchronous time window
+- the local worker is running
+- `bot-outbound` exists
+- if you expect isolated synchronous replies, sessions are enabled on `bot-outbound`
+- `SERVICE_BUS_USE_SESSIONS` matches the mode you actually want
+- there are no Service Bus errors in either the Function logs or local worker logs
 
-## 11. Final checklist
+### Telegram still reaches AzulClaw from another account
 
-Before considering deployment complete, confirm all of the following:
+Check:
 
-- `GET /health` returns `200`
-- `POST /api/messages` returns `200`
-- unauthenticated `POST /api/messages` requests are rejected
-- Azure Bot has the correct `Messaging Endpoint`
-- the Alexa channel is configured with the correct Skill ID
-- the Alexa skill points to the endpoint generated by Azure Bot
-- the local runtime consumes `bot-inbound`
-- the local runtime publishes to `bot-outbound`
-- the user hears a real `fast brain` answer for simple questions
+- `TELEGRAM_ALLOWED_USER_IDS` is configured in the Function
+- the same allowlist is configured in the local runtime
+- the sender ID is really the numeric Telegram user ID you expect
 
-## Related files in this repository
+---
+
+## 14. Files involved in this deployment path
+
+These are the key files in the repository for this deployment:
 
 - `azure/functions/bot_relay/function_app.py`
 - `azure/functions/bot_relay/host.json`
@@ -326,5 +445,7 @@ Before considering deployment complete, confirm all of the following:
 - `azure/functions/bot_relay/local.settings.example.json`
 - `azure/README.md`
 - `docs/12_azure_bot_architecture.md`
+- `docs/14_channels_and_transport.md`
 - `azul_backend/azul_brain/channels/servicebus_worker.py`
+- `azul_backend/azul_brain/channels/access_control.py`
 - `azul_backend/azul_brain/main_launcher.py`

@@ -5,6 +5,8 @@ import logging
 import os
 from pathlib import Path
 
+from .channels.access_control import parse_csv_allowlist
+
 ENV_LOCAL_FILENAME = ".env.local"
 DEFAULT_PORT = 3978
 HOST = "localhost"
@@ -23,8 +25,10 @@ class RuntimeConfig:
     service_bus_connection_string: str = ""
     service_bus_inbound_queue: str = "bot-inbound"
     service_bus_outbound_queue: str = "bot-outbound"
-    service_bus_use_sessions: str = "true"
+    service_bus_use_sessions: str = "auto"
     bot_sync_reply_timeout_seconds: float = 6.8
+    telegram_allowed_user_ids: frozenset[str] = frozenset()
+    telegram_allowed_chat_ids: frozenset[str] = frozenset()
 
 
 def load_env_file(env_file_path: Path) -> None:
@@ -45,6 +49,34 @@ def load_env_file(env_file_path: Path) -> None:
             if not key or key in os.environ:
                 continue
             os.environ[key] = value
+
+
+def find_project_root(start_path: Path) -> Path:
+    """Finds the nearest ancestor that looks like the repository root."""
+    current = start_path.resolve()
+
+    while True:
+        if (current / ".git").exists() or (current / "pyproject.toml").exists():
+            return current
+        if current.parent == current:
+            return start_path.resolve()
+        current = current.parent
+
+
+def load_env_files(base_path: Path) -> None:
+    """Loads .env.local from the current directory up to the project root only."""
+    candidates: list[Path] = []
+    current = base_path.resolve()
+    project_root = find_project_root(base_path)
+
+    while True:
+        candidates.append(current / ENV_LOCAL_FILENAME)
+        if current == project_root:
+            break
+        current = current.parent
+
+    for env_file_path in reversed(candidates):
+        load_env_file(env_file_path)
 
 
 def parse_port(raw_port: str, default_port: int = DEFAULT_PORT) -> int:
@@ -76,7 +108,7 @@ def parse_float(raw_value: str, default_value: float, variable_name: str) -> flo
 
 def load_runtime_config(base_path: Path) -> RuntimeConfig:
     """Loads environment variables and returns typed runtime configuration."""
-    load_env_file(base_path / ENV_LOCAL_FILENAME)
+    load_env_files(base_path)
     app_id = os.environ.get("MicrosoftAppId", "")
     app_password = os.environ.get("MicrosoftAppPassword", "")
     tenant_id = os.environ.get("MicrosoftAppTenantId", "")
@@ -86,11 +118,17 @@ def load_runtime_config(base_path: Path) -> RuntimeConfig:
     service_bus_conn = os.environ.get("SERVICE_BUS_CONNECTION_STRING", "")
     service_bus_inbound = os.environ.get("SERVICE_BUS_INBOUND_QUEUE", "bot-inbound")
     service_bus_outbound = os.environ.get("SERVICE_BUS_OUTBOUND_QUEUE", "bot-outbound")
-    service_bus_use_sessions = os.environ.get("SERVICE_BUS_USE_SESSIONS", "true")
+    service_bus_use_sessions = os.environ.get("SERVICE_BUS_USE_SESSIONS", "auto")
     bot_sync_reply_timeout_seconds = parse_float(
         os.environ.get("BOT_SYNC_REPLY_TIMEOUT_SECONDS", "6.8"),
         6.8,
         "BOT_SYNC_REPLY_TIMEOUT_SECONDS",
+    )
+    telegram_allowed_user_ids = parse_csv_allowlist(
+        os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "")
+    )
+    telegram_allowed_chat_ids = parse_csv_allowlist(
+        os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", "")
     )
 
     return RuntimeConfig(
@@ -103,4 +141,6 @@ def load_runtime_config(base_path: Path) -> RuntimeConfig:
         service_bus_outbound_queue=service_bus_outbound,
         service_bus_use_sessions=service_bus_use_sessions,
         bot_sync_reply_timeout_seconds=bot_sync_reply_timeout_seconds,
+        telegram_allowed_user_ids=telegram_allowed_user_ids,
+        telegram_allowed_chat_ids=telegram_allowed_chat_ids,
     )

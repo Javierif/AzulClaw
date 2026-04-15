@@ -2,6 +2,8 @@ openclaw/
 BlueClaw/
 Nemoclaw/
 
+.vscode/
+
 # Environment / secrets
 *.env
 *.env.local

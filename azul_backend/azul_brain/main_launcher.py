@@ -23,6 +23,7 @@ if __package__ in (None, ""):
     from azul_backend.azul_brain.runtime.process_registry import ProcessRegistry
     from azul_backend.azul_brain.runtime.scheduler import RuntimeScheduler
     from azul_backend.azul_brain.runtime.store import RuntimeStore
+    from azul_backend.azul_brain.channels.access_control import evaluate_telegram_access
     from azul_backend.azul_brain.channels.servicebus_worker import ServiceBusWorker
 else:
     from .api.routes import register_desktop_routes
@@ -35,6 +36,7 @@ else:
     from .runtime.process_registry import ProcessRegistry
     from .runtime.scheduler import RuntimeScheduler
     from .runtime.store import RuntimeStore
+    from .channels.access_control import evaluate_telegram_access
     from .channels.servicebus_worker import ServiceBusWorker
 
 LOGGER = logging.getLogger(__name__)
@@ -74,11 +76,26 @@ async def messages_handler(req: web.Request) -> web.Response:
     """Azure Bot Service messages endpoint."""
     bot = req.app["bot"]
     adapter = req.app["adapter"]
+    runtime_config = req.app["runtime_config"]
 
     if "application/json" not in req.headers.get("Content-Type", ""):
         return web.Response(status=415)
 
     body = await req.json()
+    decision = evaluate_telegram_access(
+        body,
+        runtime_config.telegram_allowed_user_ids,
+        runtime_config.telegram_allowed_chat_ids,
+    )
+    if not decision.authorized:
+        LOGGER.warning(
+            "Rejected unauthorized Telegram activity at local endpoint user_id=%s chat_id=%s reason=%s",
+            decision.user_id or "<empty>",
+            decision.chat_id or "<empty>",
+            decision.reason,
+        )
+        return web.Response(status=200)
+
     activity = Activity().deserialize(body)
     auth_header = req.headers.get("Authorization", "")
     response = await adapter.process_activity(activity, auth_header, bot.on_turn)
@@ -122,6 +139,7 @@ async def create_app() -> web.Application:
     app.on_response_prepare.append(cors_on_prepare)
     app["bot"] = AzulBot(orchestrator)
     app["adapter"] = adapter
+    app["runtime_config"] = runtime_config
     app["mcp_client"] = mcp_client
     app["orchestrator"] = orchestrator
     app["runtime_store"] = runtime_store
@@ -150,6 +168,8 @@ async def create_app() -> web.Application:
             outbound_queue=runtime_config.service_bus_outbound_queue,
             use_sessions=runtime_config.service_bus_use_sessions,
             sync_reply_timeout_seconds=runtime_config.bot_sync_reply_timeout_seconds,
+            telegram_allowed_user_ids=runtime_config.telegram_allowed_user_ids,
+            telegram_allowed_chat_ids=runtime_config.telegram_allowed_chat_ids,
         )
         await sb_worker.start()
         app["servicebus_worker"] = sb_worker
