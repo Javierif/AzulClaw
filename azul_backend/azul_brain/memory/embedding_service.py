@@ -116,7 +116,6 @@ class EmbeddingService:
                     self._local_url,
                     json={"model": self._local_model, "input": text},
                     timeout=aiohttp.ClientTimeout(total=10),
-                    ssl=False,
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()

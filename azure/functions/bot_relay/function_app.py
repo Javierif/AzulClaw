@@ -14,7 +14,6 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 CONNECTION_STR = os.getenv("SERVICE_BUS_CONNECTION_STRING", "")
 INBOUND_QUEUE = os.getenv("SERVICE_BUS_INBOUND_QUEUE", "bot-inbound")
 OUTBOUND_QUEUE = os.getenv("SERVICE_BUS_OUTBOUND_QUEUE", "bot-outbound")
-SESSION_MODE = (os.getenv("SERVICE_BUS_USE_SESSIONS", "auto") or "auto").strip().lower()
 REQUIRE_AUTH = (os.getenv("BOT_RELAY_REQUIRE_AUTH", "true") or "true").strip().lower() != "false"
 SYNC_REPLY_TIMEOUT_SECONDS = float(os.getenv("BOT_SYNC_REPLY_TIMEOUT_SECONDS", "6.8"))
 APP_ID = os.getenv("MicrosoftAppId", "")
@@ -22,6 +21,21 @@ APP_PASSWORD = os.getenv("MicrosoftAppPassword", "")
 _SERVICEBUS_CLIENT: ServiceBusClient | None = None
 TELEGRAM_ALLOWED_USER_IDS = parse_csv_allowlist(os.getenv("TELEGRAM_ALLOWED_USER_IDS", ""))
 TELEGRAM_ALLOWED_CHAT_IDS = parse_csv_allowlist(os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", ""))
+
+
+def _normalize_session_mode(raw_value: str) -> str:
+    """Normalizes the session mode env var to a supported value."""
+    normalized = (raw_value or "auto").strip().lower()
+    if normalized in {"auto", "true", "false"}:
+        return normalized
+    logging.warning(
+        "Invalid SERVICE_BUS_USE_SESSIONS value '%s'; falling back to 'auto'.",
+        raw_value,
+    )
+    return "auto"
+
+
+SESSION_MODE = _normalize_session_mode(os.getenv("SERVICE_BUS_USE_SESSIONS", "auto"))
 
 
 def _message_body_to_text(msg) -> str:

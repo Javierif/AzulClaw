@@ -127,7 +127,6 @@ class FoundryAgent:
                 json=payload,
                 headers=self._headers,
                 timeout=aiohttp.ClientTimeout(total=30),
-                ssl=False,
             ) as resp:
                 if resp.status != 200:
                     body = await resp.text()
@@ -153,7 +152,6 @@ class FoundryAgent:
             json=payload,
             headers=self._headers,
             timeout=aiohttp.ClientTimeout(total=60),
-            ssl=False,
         )
         if resp.status != 200:
             body = await resp.text()

@@ -154,8 +154,17 @@ class ServiceBusWorker:
             await self._enqueue_sync_reply(text, correlation_id)
         except Exception as error:
             sync_error = error
-            if self.use_sessions == "auto" and self._is_session_capability_error(error):
+            is_session_error = self._is_session_capability_error(error)
+            if self.use_sessions == "auto" and is_session_error:
                 self._disable_auto_session_mode(str(error))
+            if is_session_error:
+                LOGGER.error(
+                    "[Worker] Failed to enqueue sync reply for sync-required channel; "
+                    "relying on Function-side fallback response: %s",
+                    error,
+                )
+                return
+
             LOGGER.error("[Worker] Failed to enqueue sync reply: %s", error)
             try:
                 await send_proactive_reply(self.adapter, original_activity, text)
