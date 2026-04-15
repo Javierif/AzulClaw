@@ -8,6 +8,8 @@
     "SERVICE_BUS_USE_SESSIONS": "true",
     "BOT_RELAY_REQUIRE_AUTH": "true",
     "BOT_SYNC_REPLY_TIMEOUT_SECONDS": "6.8",
+    "TELEGRAM_ALLOWED_USER_IDS": "123456789",
+    "TELEGRAM_ALLOWED_CHAT_IDS": "",
     "MicrosoftAppId": "<bot-app-id>",
     "MicrosoftAppPassword": "<bot-app-password>"
   }

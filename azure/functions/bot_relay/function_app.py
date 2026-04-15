@@ -18,6 +18,16 @@ SYNC_REPLY_TIMEOUT_SECONDS = float(os.getenv("BOT_SYNC_REPLY_TIMEOUT_SECONDS", "
 APP_ID = os.getenv("MicrosoftAppId", "")
 APP_PASSWORD = os.getenv("MicrosoftAppPassword", "")
 _SERVICEBUS_CLIENT: ServiceBusClient | None = None
+TELEGRAM_ALLOWED_USER_IDS = frozenset(
+    part.strip()
+    for part in (os.getenv("TELEGRAM_ALLOWED_USER_IDS", "") or "").split(",")
+    if part.strip()
+)
+TELEGRAM_ALLOWED_CHAT_IDS = frozenset(
+    part.strip()
+    for part in (os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "") or "").split(",")
+    if part.strip()
+)
 
 
 def _message_body_to_text(msg) -> str:
@@ -74,6 +84,49 @@ def _should_wait_for_sync_reply(channel_id: str, delivery_mode: str) -> bool:
     if delivery_mode == "expectReplies":
         return True
     return (channel_id or "").strip().lower() == "alexa"
+
+
+def _first_non_empty(*values) -> str:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def _evaluate_telegram_access(activity: dict) -> tuple[bool, str, str, str]:
+    """Checks Telegram allowlists before the activity reaches Service Bus."""
+    channel_id = (activity.get("channelId") or "").strip().lower()
+    if channel_id != "telegram":
+        return True, "", "", ""
+    if not TELEGRAM_ALLOWED_USER_IDS and not TELEGRAM_ALLOWED_CHAT_IDS:
+        return True, "", "", ""
+
+    from_block = activity.get("from") or {}
+    conversation_block = activity.get("conversation") or {}
+    channel_data = activity.get("channelData") or {}
+    message_block = channel_data.get("message") if isinstance(channel_data, dict) else {}
+    if not isinstance(message_block, dict):
+        message_block = {}
+
+    user_id = _first_non_empty(
+        from_block.get("id") if isinstance(from_block, dict) else "",
+        channel_data.get("from", {}).get("id") if isinstance(channel_data.get("from"), dict) else "",
+        message_block.get("from", {}).get("id") if isinstance(message_block.get("from"), dict) else "",
+    )
+    chat_id = _first_non_empty(
+        conversation_block.get("id") if isinstance(conversation_block, dict) else "",
+        channel_data.get("chat", {}).get("id") if isinstance(channel_data.get("chat"), dict) else "",
+        message_block.get("chat", {}).get("id") if isinstance(message_block.get("chat"), dict) else "",
+    )
+
+    if TELEGRAM_ALLOWED_USER_IDS and user_id not in TELEGRAM_ALLOWED_USER_IDS:
+        return False, user_id, chat_id, "telegram user not allowlisted"
+    if TELEGRAM_ALLOWED_CHAT_IDS and chat_id not in TELEGRAM_ALLOWED_CHAT_IDS:
+        return False, user_id, chat_id, "telegram chat not allowlisted"
+    return True, user_id, chat_id, ""
 
 
 def _get_servicebus_client() -> ServiceBusClient:
@@ -218,6 +271,16 @@ async def messages(req: func.HttpRequest) -> func.HttpResponse:
     is_authorized, auth_status, auth_message = await _authenticate_request(req_body, auth_header)
     if not is_authorized:
         return func.HttpResponse(auth_message, status_code=auth_status)
+
+    is_allowed, telegram_user_id, telegram_chat_id, deny_reason = _evaluate_telegram_access(req_body)
+    if not is_allowed:
+        logging.warning(
+            "Rejected unauthorized Telegram activity before queue user_id=%s chat_id=%s reason=%s",
+            telegram_user_id or "<empty>",
+            telegram_chat_id or "<empty>",
+            deny_reason,
+        )
+        return func.HttpResponse(status_code=200)
 
     logging.info(
         "Incoming activity correlation=%s channel=%s type=%s deliveryMode=%s text_length=%s",

@@ -5,6 +5,8 @@ import logging
 import os
 from pathlib import Path
 
+from .channels.access_control import parse_csv_allowlist
+
 ENV_LOCAL_FILENAME = ".env.local"
 DEFAULT_PORT = 3978
 HOST = "localhost"
@@ -25,6 +27,8 @@ class RuntimeConfig:
     service_bus_outbound_queue: str = "bot-outbound"
     service_bus_use_sessions: str = "true"
     bot_sync_reply_timeout_seconds: float = 6.8
+    telegram_allowed_user_ids: frozenset[str] = frozenset()
+    telegram_allowed_chat_ids: frozenset[str] = frozenset()
 
 
 def load_env_file(env_file_path: Path) -> None:
@@ -107,6 +111,12 @@ def load_runtime_config(base_path: Path) -> RuntimeConfig:
         6.8,
         "BOT_SYNC_REPLY_TIMEOUT_SECONDS",
     )
+    telegram_allowed_user_ids = parse_csv_allowlist(
+        os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "")
+    )
+    telegram_allowed_chat_ids = parse_csv_allowlist(
+        os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", "")
+    )
 
     return RuntimeConfig(
         app_id=app_id,
@@ -118,4 +128,6 @@ def load_runtime_config(base_path: Path) -> RuntimeConfig:
         service_bus_outbound_queue=service_bus_outbound,
         service_bus_use_sessions=service_bus_use_sessions,
         bot_sync_reply_timeout_seconds=bot_sync_reply_timeout_seconds,
+        telegram_allowed_user_ids=telegram_allowed_user_ids,
+        telegram_allowed_chat_ids=telegram_allowed_chat_ids,
     )

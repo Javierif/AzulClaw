@@ -7,6 +7,7 @@ import logging
 from azure.servicebus import ServiceBusMessage
 from azure.servicebus.aio import ServiceBusClient
 
+from .access_control import evaluate_telegram_access
 from .proactive_sender import send_proactive_reply
 
 LOGGER = logging.getLogger(__name__)
@@ -50,6 +51,8 @@ class ServiceBusWorker:
         outbound_queue: str,
         use_sessions: str = "true",
         sync_reply_timeout_seconds: float = 6.8,
+        telegram_allowed_user_ids: frozenset[str] = frozenset(),
+        telegram_allowed_chat_ids: frozenset[str] = frozenset(),
     ):
         self.orchestrator = orchestrator
         self.adapter = adapter
@@ -57,6 +60,8 @@ class ServiceBusWorker:
         self.inbound_queue = inbound_queue
         self.outbound_queue = outbound_queue
         self.sync_reply_timeout_seconds = sync_reply_timeout_seconds
+        self.telegram_allowed_user_ids = telegram_allowed_user_ids
+        self.telegram_allowed_chat_ids = telegram_allowed_chat_ids
         raw_mode = (use_sessions or "auto").strip().lower()
         self.use_sessions = raw_mode if raw_mode in {"auto", "true", "false"} else "auto"
 
@@ -199,6 +204,21 @@ class ServiceBusWorker:
             raise ValueError("Malformed inbound activity payload.") from error
 
         correlation_id = msg.correlation_id or msg.session_id or ""
+        decision = evaluate_telegram_access(
+            activity,
+            self.telegram_allowed_user_ids,
+            self.telegram_allowed_chat_ids,
+        )
+        if not decision.authorized:
+            LOGGER.warning(
+                "[Worker] Dropping unauthorized Telegram activity user_id=%s chat_id=%s reason=%s correlation_id=%s",
+                decision.user_id or "<empty>",
+                decision.chat_id or "<empty>",
+                decision.reason,
+                correlation_id or "<empty>",
+            )
+            return
+
         if await self._handle_non_message_activity(activity, correlation_id):
             return
 

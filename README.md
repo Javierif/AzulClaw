@@ -54,6 +54,7 @@ python -m azul_backend.azul_brain.main_launcher
 | Architecture | [docs/01_architecture.md](docs/01_architecture.md) |
 | Setup & Development | [docs/02_setup_and_development.md](docs/02_setup_and_development.md) |
 | Security Model | [docs/03_security_model.md](docs/03_security_model.md) |
+| Channels, Transport & Delivery | [docs/14_channels_and_transport.md](docs/14_channels_and_transport.md) |
 | Desktop Interface Design | [docs/08_desktop_interface_design.md](docs/08_desktop_interface_design.md) |
 | Desktop Wireframes | [docs/09_desktop_low_fidelity_wireframes.md](docs/09_desktop_low_fidelity_wireframes.md) |
 | Desktop Architecture & Repo Structure | [docs/10_desktop_architecture_and_repo_structure.md](docs/10_desktop_architecture_and_repo_structure.md) |
