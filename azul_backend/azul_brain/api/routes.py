@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
@@ -15,7 +16,10 @@ from .services import (
     summarize_memory,
     summarize_processes,
     summarize_runtime,
+    wipe_local_user_data,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 async def health_handler(_: web.Request) -> web.Response:
@@ -59,6 +63,11 @@ async def desktop_chat_stream_handler(req: web.Request) -> web.StreamResponse:
 
     user_id = str(payload.get("user_id", "desktop-user")).strip() or "desktop-user"
     message = str(payload.get("message", "")).strip()
+    conversation_id = str(payload.get("conversation_id", "")).strip() or None
+
+    # If no conversation supplied, get or create an empty one so messages are always scoped
+    if not conversation_id:
+        conversation_id, _ = orchestrator.memory.get_or_create_empty_conversation(user_id)
 
     if not message:
         return web.json_response({"error": "message is required"}, status=400)
@@ -97,16 +106,22 @@ async def desktop_chat_stream_handler(req: web.Request) -> web.StreamResponse:
             user_id,
             message,
             lane="auto",
+            conversation_id=conversation_id,
             on_delta=lambda text: write_event({"type": "delta", "text": text}),
             on_commentary=lambda text: write_event({"type": "commentary", "text": text}),
             on_progress=lambda progress: write_event({"type": "progress", "progress": progress}),
         )
-        history = orchestrator.memory.get_history(user_id, limit=12)
+        history = orchestrator.memory.get_conversation_messages(conversation_id, limit=12)
+        conv_title = reply.conversation_title or orchestrator.memory.get_conversation_title(
+            conversation_id
+        )
         await write_event(
             {
                 "type": "done",
                 "reply": reply.text,
                 "history": history,
+                "conversation_id": conversation_id,
+                "conversation_title": conv_title or "",
                 "runtime": {
                     "lane": reply.lane,
                     "model_id": reply.model_id,
@@ -129,6 +144,45 @@ async def desktop_chat_stream_handler(req: web.Request) -> web.StreamResponse:
     return response
 
 
+async def desktop_conversations_handler(req: web.Request) -> web.Response:
+    """Lists conversations for the desktop user."""
+    orchestrator = req.app["orchestrator"]
+    user_id = req.query.get("user_id", "desktop-user")
+    convs = orchestrator.memory.list_conversations(user_id)
+    return web.json_response({"items": convs})
+
+
+async def desktop_create_conversation_handler(req: web.Request) -> web.Response:
+    """Returns an existing empty conversation or creates one (idempotent)."""
+    orchestrator = req.app["orchestrator"]
+    payload = await req.json()
+    user_id = str(payload.get("user_id", "desktop-user")).strip() or "desktop-user"
+    conv_id, title = orchestrator.memory.get_or_create_empty_conversation(user_id)
+    return web.json_response({"id": conv_id, "title": title})
+
+
+async def desktop_conversation_messages_handler(req: web.Request) -> web.Response:
+    """Returns messages for a specific conversation."""
+    orchestrator = req.app["orchestrator"]
+    conv_id = req.match_info.get("conv_id", "").strip()
+    if not conv_id:
+        return web.json_response({"error": "conv_id required"}, status=400)
+    msgs = orchestrator.memory.get_conversation_messages(conv_id)
+    return web.json_response({"messages": msgs})
+
+
+async def desktop_delete_conversation_handler(req: web.Request) -> web.Response:
+    """Deletes a conversation and all its messages."""
+    orchestrator = req.app["orchestrator"]
+    conv_id = req.match_info.get("conv_id", "").strip()
+    if not conv_id:
+        return web.json_response({"error": "conv_id required"}, status=400)
+    deleted = orchestrator.memory.delete_conversation(conv_id)
+    if not deleted:
+        return web.json_response({"error": "Conversation not found"}, status=404)
+    return web.json_response({"deleted": True, "id": conv_id})
+
+
 async def desktop_processes_handler(_: web.Request) -> web.Response:
     """Returns the process summary visible to the desktop app."""
     return web.json_response({"items": summarize_processes(_.app["process_registry"])})
@@ -139,6 +193,26 @@ async def desktop_memory_handler(req: web.Request) -> web.Response:
     orchestrator = req.app["orchestrator"]
     user_id = req.query.get("user_id", "desktop-user")
     return web.json_response({"items": summarize_memory(orchestrator, user_id)})
+
+
+async def desktop_memory_delete_handler(req: web.Request) -> web.Response:
+    """Deletes a specific memory entry from the vector store."""
+    memory_id = req.match_info.get("memory_id", "").strip()
+    user_id = req.query.get("user_id", "desktop-user")
+
+    if not memory_id:
+        return web.json_response({"error": "memory_id required"}, status=400)
+
+    orchestrator = req.app.get("orchestrator")
+    vector_memory = getattr(orchestrator, "vector_memory", None) if orchestrator else None
+    if vector_memory is None:
+        return web.json_response({"error": "Vector memory unavailable"}, status=503)
+
+    deleted = vector_memory.delete_memory(memory_id, user_id)
+    if not deleted:
+        return web.json_response({"error": "Memory not found"}, status=404)
+
+    return web.json_response({"deleted": True, "id": memory_id})
 
 
 async def desktop_workspace_handler(req: web.Request) -> web.Response:
@@ -159,8 +233,41 @@ async def desktop_hatching_get_handler(_: web.Request) -> web.Response:
 
 async def desktop_hatching_put_handler(req: web.Request) -> web.Response:
     """Saves the Hatching profile sent by the desktop app."""
+    import asyncio
     payload = await req.json()
-    return web.json_response(save_hatching_profile(payload))
+    result = save_hatching_profile(payload)
+    orchestrator = req.app.get("orchestrator")
+    if orchestrator is not None and hasattr(orchestrator, "reload_persistent_memory"):
+        try:
+            orchestrator.reload_persistent_memory()
+        except Exception as error:
+            LOGGER.warning("[Memory] reload after hatching save failed: %s", error)
+        # Seed profile facts when the user completes or re-saves onboarding
+        if result.get("is_hatched") and hasattr(orchestrator, "seed_profile_facts"):
+            asyncio.create_task(orchestrator.seed_profile_facts())
+    return web.json_response(result)
+
+
+async def desktop_data_wipe_handler(req: web.Request) -> web.Response:
+    """Clears SQLite memory and resets hatching (requires brain restart)."""
+    try:
+        payload = await req.json()
+    except json.JSONDecodeError:
+        return web.json_response({"error": "JSON body required"}, status=400)
+
+    try:
+        result = wipe_local_user_data(str(payload.get("confirm", "")))
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+
+    orchestrator = req.app.get("orchestrator")
+    if orchestrator is not None and hasattr(orchestrator, "reload_persistent_memory"):
+        try:
+            orchestrator.reload_persistent_memory()
+        except Exception as error:
+            LOGGER.warning("[Memory] reload after data wipe failed: %s", error)
+
+    return web.json_response(result)
 
 
 async def desktop_runtime_get_handler(req: web.Request) -> web.Response:
@@ -229,11 +336,17 @@ def register_desktop_routes(app: web.Application) -> None:
     app.router.add_get("/api/health", health_handler)
     app.router.add_post("/api/desktop/chat", desktop_chat_handler)
     app.router.add_post("/api/desktop/chat/stream", desktop_chat_stream_handler)
+    app.router.add_get("/api/desktop/conversations", desktop_conversations_handler)
+    app.router.add_post("/api/desktop/conversations", desktop_create_conversation_handler)
+    app.router.add_get("/api/desktop/conversations/{conv_id}/messages", desktop_conversation_messages_handler)
+    app.router.add_delete("/api/desktop/conversations/{conv_id}", desktop_delete_conversation_handler)
     app.router.add_get("/api/desktop/processes", desktop_processes_handler)
     app.router.add_get("/api/desktop/memory", desktop_memory_handler)
+    app.router.add_delete("/api/desktop/memory/{memory_id}", desktop_memory_delete_handler)
     app.router.add_get("/api/desktop/workspace", desktop_workspace_handler)
     app.router.add_get("/api/desktop/hatching", desktop_hatching_get_handler)
     app.router.add_put("/api/desktop/hatching", desktop_hatching_put_handler)
+    app.router.add_post("/api/desktop/data-wipe", desktop_data_wipe_handler)
     app.router.add_get("/api/desktop/runtime", desktop_runtime_get_handler)
     app.router.add_put("/api/desktop/runtime", desktop_runtime_put_handler)
     app.router.add_get("/api/desktop/jobs", desktop_jobs_get_handler)

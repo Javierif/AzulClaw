@@ -3,9 +3,36 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
+
+def _default_workspace_root() -> str:
+    """Sandbox folder for MCP + desktop; override with AZUL_WORKSPACE_ROOT."""
+    override = os.environ.get("AZUL_WORKSPACE_ROOT", "").strip()
+    if override:
+        return override
+    return str(Path.home() / "Documents" / "dev" / "AzulWorkspace")
+
+
+_AZUL_STATE_DIR = ".azul"
+_MEMORY_DB_FILENAME = "azul_memory.db"
+
+
+def resolve_memory_db_path() -> str:
+    """SQLite path shared by vector store, SafeMemory, and episodic store.
+
+    If ``AZUL_MEMORY_DB_PATH`` is set, it wins. Otherwise the file is
+    ``<workspace_root>/.azul/azul_memory.db`` from the hatching profile.
+    """
+    env_path = os.environ.get("AZUL_MEMORY_DB_PATH", "").strip()
+    if env_path:
+        return env_path
+    profile = HatchingStore().load()
+    root = Path(profile.workspace_root).expanduser()
+    return str(root / _AZUL_STATE_DIR / _MEMORY_DB_FILENAME)
 
 
 @dataclass
@@ -19,9 +46,7 @@ class HatchingProfile:
     style: str = "Explanatory"
     autonomy: str = "Moderately autonomous"
 
-    workspace_root: str = field(
-        default_factory=lambda: str(Path.home() / "Desktop" / "AzulWorkspace")
-    )
+    workspace_root: str = field(default_factory=_default_workspace_root)
     confirm_sensitive_actions: bool = True
     is_hatched: bool = False
     completed_at: str = ""

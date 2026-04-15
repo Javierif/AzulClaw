@@ -260,7 +260,7 @@ textarea {
 
 .desktop-topbar {
   display: grid;
-  grid-template-columns: 2fr 1fr 280px;
+  grid-template-columns: minmax(0, 3fr) minmax(260px, 3fr) 280px;
   align-items: end;
   gap: 18px;
   padding: 6px 4px 14px;
@@ -385,7 +385,19 @@ textarea {
   direction: rtl;
 }
 
-.topbar-context {
+.topbar-chat-area {
+  display: flex;
+  flex-direction: row;
+  align-items: end;
+  min-width: 0;
+  width: 100%;
+  grid-column: 2;
+}
+
+.topbar-session-block {
+  min-width: 0;
+  flex: 1;
+  max-width: 100%;
   border-left: 2px solid var(--brand);
   padding-left: 16px;
   padding-bottom: 2px;
@@ -410,6 +422,9 @@ textarea {
   font-weight: 600;
   color: var(--text);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .topbar-mascot {
@@ -464,7 +479,19 @@ textarea {
 }
 
 .context-panel {
-  overflow-y: auto;
+  overflow: hidden;
+}
+
+.context-panel-head {
+  flex-shrink: 0;
+  width: 100%;
+}
+
+.new-chat-btn-full {
+  width: 100%;
+  justify-content: center;
+  min-height: 44px;
+  box-sizing: border-box;
 }
 
 .panel-stack {
@@ -2809,6 +2836,11 @@ textarea {
   to   { transform: scale(1);   opacity: 1; }
 }
 
+@keyframes hw-pulse {
+  0%, 100% { transform: scale(1);    filter: drop-shadow(0 16px 48px rgba(37, 99, 235, 0.55)); }
+  50%       { transform: scale(1.06); filter: drop-shadow(0 20px 56px rgba(37, 99, 235, 0.80)); }
+}
+
 .hw-summary-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -3303,4 +3335,139 @@ textarea {
 
 .hb-error-alert strong {
   color: #ef4444;
+}
+
+/* ── Recent Chats panel ─────────────────────────────────────── */
+
+.context-section-grow {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.recent-chats-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  overflow-y: auto;
+  /* Reserve scrollbar lane so the list width does not jump when overflow appears */
+  scrollbar-gutter: stable;
+}
+
+.recent-chat-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+  width: 100%;
+}
+
+.recent-chat-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.recent-chat-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.recent-chat-item-active {
+  border-color: var(--brand);
+  background: rgba(99, 102, 241, 0.08);
+}
+
+.recent-chat-title {
+  font-size: 0.83rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+.recent-chat-date {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.recent-chat-delete {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.recent-chat-item:hover .recent-chat-delete {
+  opacity: 1;
+}
+
+.recent-chat-delete:hover {
+  color: #ef4444;
+}
+
+.new-chat-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: stretch;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 8px;
+  color: #3b82f6;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0 14px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
+  flex-shrink: 0;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.new-chat-btn:hover {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: #3b82f6;
+  color: #fff;
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.25);
+}
+
+.new-chat-btn:active {
+  background: rgba(59, 130, 246, 0.3);
+}
+
+.new-chat-btn:disabled {
+  opacity: 1;
+  cursor: not-allowed;
+  box-shadow: none;
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.28);
+}
+
+.new-chat-btn:disabled:hover {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.28);
+  color: #3b82f6;
+  box-shadow: none;
 }

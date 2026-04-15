@@ -13,6 +13,7 @@ import { SettingsShell } from "../features/settings/SettingsShell";
 import { SkillsShell } from "../features/skills/SkillsShell";
 import { WorkspaceShell } from "../features/workspace/WorkspaceShell";
 import { loadHatching } from "../lib/api";
+import { DEFAULT_CONVERSATION_TITLE, normalizeConversationTitle } from "../lib/conversation-copy";
 import type { AppView, HatchingProfile } from "../lib/contracts";
 import { defaultHatchingProfile } from "../lib/mock-data";
 
@@ -54,6 +55,9 @@ function renderView(
   onThinkingChange: (thinking: boolean) => void,
   onTypingChange: (typing: boolean) => void,
   onAnswerStart: () => void,
+  onLocalDataWiped: (p: HatchingProfile) => void,
+  onTitleChange: (title: string) => void,
+  onRegisterNewChat: (fn: () => void) => void,
 ) {
   switch (view) {
     case "hatching":
@@ -69,7 +73,7 @@ function renderView(
     case "workspace":
       return <WorkspaceShell />;
     case "settings":
-      return <SettingsShell />;
+      return <SettingsShell onLocalDataWiped={onLocalDataWiped} />;
     case "chat":
     default:
       return (
@@ -77,6 +81,8 @@ function renderView(
           onThinkingChange={onThinkingChange}
           onTypingChange={onTypingChange}
           onAnswerStart={onAnswerStart}
+          onTitleChange={onTitleChange}
+          onRegisterNewChat={onRegisterNewChat}
         />
       );
   }
@@ -87,6 +93,8 @@ export function DesktopApp() {
   const [profile, setProfile] = useState<HatchingProfile>(defaultHatchingProfile);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [topbarLabel, setTopbarLabel] = useState<{ text: string; mode: "thinking" | "typing" } | null>(null);
+  const [conversationTitle, setConversationTitle] = useState(DEFAULT_CONVERSATION_TITLE);
+  const newChatFnRef = useRef<() => void>(() => {});
   const thinkingIntervalRef = useRef<number | null>(null);
   const typingClearRef = useRef<number | null>(null);
   const sentenceIndexRef = useRef(0);
@@ -205,9 +213,16 @@ export function DesktopApp() {
             )}
           </div>
           {activeView === "chat" && (
-            <div className="topbar-context">
-              <p className="topbar-context-eyebrow">Active session</p>
-              <h2 className="topbar-context-title">Main conversation</h2>
+            <div className="topbar-chat-area">
+              <div className="topbar-session-block">
+                <p className="topbar-context-eyebrow">Active session</p>
+                <h2
+                  className="topbar-context-title"
+                  title={normalizeConversationTitle(conversationTitle)}
+                >
+                  {normalizeConversationTitle(conversationTitle)}
+                </h2>
+              </div>
             </div>
           )}
           <div className="topbar-right">
@@ -222,7 +237,20 @@ export function DesktopApp() {
             </span>
           </div>
         </header>
-        {renderView(activeView, profile, setProfile, onThinkingChange, onTypingChange, onAnswerStart)}
+        {renderView(
+          activeView,
+          profile,
+          setProfile,
+          onThinkingChange,
+          onTypingChange,
+          onAnswerStart,
+          (data) => {
+            const { restart_required: _rr, ...rest } = data;
+            setProfile(rest);
+          },
+          setConversationTitle,
+          (fn) => { newChatFnRef.current = fn; },
+        )}
       </main>
     </div>
   );

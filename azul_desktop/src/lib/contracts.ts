@@ -31,15 +31,23 @@ export interface ProcessSummary {
 export interface MemoryRecord {
   id: string;
   title: string;
+  content?: string;
   kind: "preference" | "episodic" | "semantic" | "session";
   source: string;
   pinned?: boolean;
+  created_at?: string;
 }
 
 export interface ChatExchange {
   id: string;
   role: "user" | "assistant";
   content: string;
+}
+
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  updated_at: string;
 }
 
 export interface ThinkingStep {
@@ -79,6 +87,9 @@ export interface ChatStreamEvent {
   runtime?: ChatRuntimeMeta;
   message?: string;
   progress?: ThinkingProgress;
+  conversation_id?: string;
+  /** Present on ``done`` when the server has a conversation row title (sidebar + top bar). */
+  conversation_title?: string;
 }
 
 export interface HatchingProfile {
@@ -95,6 +106,10 @@ export interface HatchingProfile {
   completed_at: string;
   skills: string[];
   skill_configs: Record<string, Record<string, string>>;
+  /** Effective SQLite path (server-computed; not stored in profile JSON). */
+  memory_db_path?: string;
+  /** Present on ``POST /api/desktop/data-wipe`` responses only. */
+  restart_required?: boolean;
 }
 
 export interface RuntimeModelStatus {

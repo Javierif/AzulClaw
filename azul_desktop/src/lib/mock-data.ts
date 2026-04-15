@@ -9,19 +9,7 @@ import type {
   WorkspaceEntry,
 } from "./contracts";
 
-export const chatMessages: ChatExchange[] = [
-  {
-    id: "m1",
-    role: "user",
-    content: "I want to review the Projects folder and summarise the key items.",
-  },
-  {
-    id: "m2",
-    role: "assistant",
-    content:
-      "I'm preparing the workspace context. I'll first read the Projects folder and then generate an actionable summary.",
-  },
-];
+export const chatMessages: ChatExchange[] = [];
 
 export const processItems: ProcessSummary[] = [
   {
@@ -103,7 +91,7 @@ export const defaultHatchingProfile: HatchingProfile = {
   confirm_sensitive_actions: true,
   is_hatched: false,
   completed_at: "",
-  skills: ["Email", "Telegram", "Workspace", "Memory"],
+  skills: ["Email", "Telegram", "Workspace"],
   skill_configs: {},
 };
 

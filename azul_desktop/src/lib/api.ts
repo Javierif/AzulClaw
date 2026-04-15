@@ -2,6 +2,7 @@ import type {
   ChatExchange,
   ChatStreamEvent,
   ChatRuntimeMeta,
+  ConversationSummary,
   HatchingProfile,
   MemoryRecord,
   ProcessSummary,
@@ -58,21 +59,67 @@ export async function sendDesktopMessage(
   }
 }
 
+export async function listConversations(userId = "desktop-user"): Promise<ConversationSummary[]> {
+  try {
+    const data = await fetchJson<{ items: ConversationSummary[] }>(
+      `/api/desktop/conversations?user_id=${encodeURIComponent(userId)}`,
+    );
+    return data.items;
+  } catch {
+    return [];
+  }
+}
+
+export async function createConversation(userId = "desktop-user"): Promise<{ id: string; title: string }> {
+  return fetchJson<{ id: string; title: string }>("/api/desktop/conversations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId }),
+  });
+}
+
+export async function deleteConversation(conversationId: string): Promise<void> {
+  await fetchJson<{ deleted: boolean }>(
+    `/api/desktop/conversations/${encodeURIComponent(conversationId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function getConversationMessages(conversationId: string): Promise<ChatExchange[]> {
+  const data = await fetchJson<{ messages: { role: string; content: string }[] }>(
+    `/api/desktop/conversations/${encodeURIComponent(conversationId)}/messages`,
+  );
+  return data.messages.map((m, i) => ({
+    id: `loaded-${i}`,
+    role: m.role as "user" | "assistant",
+    content: m.content,
+  }));
+}
+
 export async function sendDesktopMessageStream(
   message: string,
   onEvent: (event: ChatStreamEvent) => void,
   userId = "desktop-user",
-): Promise<{ reply: string; history: ChatExchange[]; runtime: ChatRuntimeMeta }> {
+  conversationId?: string,
+): Promise<{
+  reply: string;
+  history: ChatExchange[];
+  runtime: ChatRuntimeMeta;
+  conversation_id?: string;
+  conversation_title?: string;
+}> {
   let receivedContent = false;
   let finalReply = "";
   let finalHistory = chatMessages;
   let finalRuntime = defaultChatRuntime;
+  let finalConversationId: string | undefined;
+  let finalConversationTitle: string | undefined;
 
   try {
     const response = await fetch(`${getApiBase()}/api/desktop/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, message }),
+      body: JSON.stringify({ user_id: userId, message, conversation_id: conversationId }),
     });
     if (!response.ok || !response.body) {
       throw new Error(`HTTP ${response.status}`);
@@ -105,6 +152,8 @@ export async function sendDesktopMessageStream(
           finalReply = event.reply || "";
           finalHistory = event.history || finalHistory;
           finalRuntime = event.runtime || finalRuntime;
+          finalConversationId = event.conversation_id;
+          finalConversationTitle = event.conversation_title;
         }
         if (event.type === "error") {
           throw new Error(event.message || "Streaming failed");
@@ -122,16 +171,30 @@ export async function sendDesktopMessageStream(
         finalReply = event.reply || "";
         finalHistory = event.history || finalHistory;
         finalRuntime = event.runtime || finalRuntime;
+        finalConversationId = event.conversation_id;
+        finalConversationTitle = event.conversation_title;
       }
       if (event.type === "error") {
         throw new Error(event.message || "Streaming failed");
       }
     }
 
-    return { reply: finalReply, history: finalHistory, runtime: finalRuntime };
+    return {
+      reply: finalReply,
+      history: finalHistory,
+      runtime: finalRuntime,
+      conversation_id: finalConversationId,
+      conversation_title: finalConversationTitle,
+    };
   } catch {
     if (receivedContent) {
-      return { reply: finalReply, history: finalHistory, runtime: finalRuntime };
+      return {
+        reply: finalReply,
+        history: finalHistory,
+        runtime: finalRuntime,
+        conversation_id: finalConversationId,
+        conversation_title: finalConversationTitle,
+      };
     }
     return sendDesktopMessage(message, userId);
   }
@@ -160,6 +223,13 @@ export async function loadMemory(userId = "desktop-user"): Promise<MemoryRecord[
   } catch {
     return memoryItems;
   }
+}
+
+export async function deleteMemory(id: string, userId = "desktop-user"): Promise<void> {
+  await fetchJson<{ deleted: boolean }>(
+    `/api/desktop/memory/${encodeURIComponent(id)}?user_id=${encodeURIComponent(userId)}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function loadWorkspace(path = "."): Promise<{
@@ -204,6 +274,40 @@ export async function saveHatching(profile: HatchingProfile): Promise<HatchingPr
   } catch {
     localStorage.setItem("azul_mock_profile", JSON.stringify(profile));
     return profile;
+  }
+}
+
+/** Must match ``WIPE_CONFIRMATION_PHRASE`` in ``azul_brain/api/services.py``. */
+export const DATA_WIPE_CONFIRM_PHRASE = "RESET_ALL_LOCAL_DATA";
+
+export async function wipeLocalUserData(confirm: string): Promise<HatchingProfile> {
+  try {
+    const response = await fetch(`${getApiBase()}/api/desktop/data-wipe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm }),
+    });
+    let data: { error?: string } & Partial<HatchingProfile> = {};
+    try {
+      data = (await response.json()) as { error?: string } & Partial<HatchingProfile>;
+    } catch {
+      /* non-JSON body */
+    }
+    if (!response.ok) {
+      throw new Error(data.error || `Request failed (${response.status})`);
+    }
+    return data as HatchingProfile;
+  } catch (error) {
+    if (error instanceof Error && error.message && !error.message.includes("Failed to fetch")) {
+      throw error;
+    }
+    localStorage.removeItem("azul_mock_profile");
+    return {
+      ...defaultHatchingProfile,
+      is_hatched: false,
+      completed_at: "",
+      restart_required: true,
+    };
   }
 }
 
