@@ -4,72 +4,127 @@
   <img width="600" height="400" alt="AzulClaw" src="https://github.com/user-attachments/assets/c73da31c-f0e1-416e-9da7-ee5e30650857" />
 </p>
 
-> A local-first, secure AI companion that connects a cognitive Azure brain to a sandboxed filesystem — all running on your machine.
+<p align="center">
+  <a href="https://discord.gg/gggT7Bx858">
+    <img alt="Join the AzulClaw Discord community" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white" />
+  </a>
+</p>
 
-## Architecture
+<p align="center">
+  Build AzulClaw with us, share feedback, and follow product progress in the community server.
+</p>
 
-AzulClaw is split into two layers that communicate over a local HTTP API:
+AzulClaw is a local-first AI companion that combines a secure desktop workspace, a Python orchestration layer, and Azure-backed reasoning. The product is designed around one constraint: the assistant must be useful without being allowed to roam freely across the user's machine.
 
+## What AzulClaw is
+
+- A desktop shell built with Tauri, React, and TypeScript.
+- A local Python runtime that handles chat, memory, scheduling, process tracking, and Bot Framework activities.
+- A sandboxed file tool layer exposed through MCP so filesystem access stays isolated and auditable.
+- An optional Azure relay for public channels such as Telegram or Alexa without exposing the local runtime directly.
+
+## Architecture at a glance
+
+```text
+Desktop UI (Tauri + React)
+        |
+        v
+Local HTTP API (aiohttp)
+        |
+        +--> Conversation orchestrator
+        +--> Runtime scheduler and heartbeats
+        +--> SQLite memory
+        +--> Bot Framework adapter
+        |
+        v
+MCP sandbox (filesystem tools inside workspace boundary)
 ```
-azul_backend/
-├── azul_brain/          # Cognitive layer: Azure OpenAI agent, memory, HTTP API, Bot Framework
-│   ├── cortex/          # Agent setup and MCP tool adapter
-│   ├── api/             # Desktop app endpoints (chat, memory, workspace, hatching)
-│   ├── bot/             # Azure Bot Framework activity handler
-│   ├── memory/          # Persistent hybrid memory (SQLite + FTS5 + embeddings)
-│   └── soul/            # System prompt
-└── azul_hands_mcp/      # Secure filesystem MCP server (path traversal guard)
 
-azul_desktop/            # Tauri + React desktop shell
-docs/                    # Technical documentation
-scripts/                 # Setup and development utilities
+For public channels, the production path is:
+
+```text
+Channel -> Azure Bot Service -> Azure Function -> Azure Service Bus -> Local AzulClaw
 ```
 
-## Quick Start
+## Repository layout
 
-```bash
-# 1. Create and activate a virtual environment
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+```text
+AzulClaw/
+|- azul_backend/     Python runtime, memory, channels, MCP integration
+|- azul_desktop/     Desktop shell and frontend views
+|- azure/            Azure relay resources and deployment artifacts
+|- docs/             Canonical product and technical documentation
+|- memory/           Local runtime state generated during development
+|- scripts/          Utility scripts
+|- README.md
+`- requirements.txt
+```
 
-# 2. Install dependencies
+## Quick start
+
+### 1. Install backend dependencies
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+```
 
-# 3. Configure environment (copy and fill in your Azure credentials)
-cp azul_backend/azul_brain/.env.example azul_backend/azul_brain/.env.local
+### 2. Configure the backend
 
-# 4. Start the backend
+```powershell
+Copy-Item azul_backend\azul_brain\.env.example azul_backend\azul_brain\.env.local
+```
+
+Fill in the Azure values you want to use. For local desktop iteration, only the backend config is required.
+
+### 3. Start the backend
+
+```powershell
 python -m azul_backend.azul_brain.main_launcher
 ```
 
-## Persistent hybrid memory
+The local API listens on `http://localhost:3978`.
 
-Long-term recall uses a single SQLite database (default `<workspace_root>/.azul/azul_memory.db`, overridable via `AZUL_MEMORY_DB_PATH`):
+### 4. Start the desktop shell
 
-- **Vector search** — cosine similarity over stored embeddings (dimension 3072 by default, aligned with `text-embedding-3-large`).
-- **Keyword search** — BM25-style ranking via SQLite FTS5 on message text.
-- **Hybrid retrieval** — results are merged with weighted [Reciprocal Rank Fusion](https://en.wikipedia.org/wiki/Reciprocal_rank_fusion) (default 70% vector / 30% text; tunable with `AZUL_HYBRID_VECTOR_WEIGHT` / `AZUL_HYBRID_TEXT_WEIGHT`).
-- **Short-term chat** — recent turns are also written through `SafeMemory` into the same DB when `AZUL_MEMORY_DB_PATH` is set.
+```powershell
+cd azul_desktop
+npm install
+npm run dev
+```
 
-After each turn, a **preference extractor** may run in the background (fire-and-forget): it calls the **fast** Azure lane (`lane="fast"`) to pull structured preferences and facts from the dialogue, embeds them, and stores them in SQLite. Configure the fast deployment with `AZURE_OPENAI_FAST_DEPLOYMENT` (for example `gpt-5.4-nano` on your Azure resource). It does not block the user-visible reply.
+For the native Tauri shell:
 
-See [docs/02_setup_and_development.md](docs/02_setup_and_development.md#hybrid-memory-env) for all related environment variables.
+```powershell
+npm run tauri:dev
+```
 
-## Security
+## Core capabilities
 
-- Do not commit `.env.local` or any credentials.
-- All file access must go through the MCP sandbox and its path validator — direct filesystem access is not allowed.
-- The AzulClaw workspace must remain isolated from the rest of the system.
+- Fast and slow model lanes with automatic triage.
+- Streaming desktop chat over NDJSON.
+- Local persistent memory in SQLite with vector, keyword, and hybrid retrieval.
+- Hatching flow for profile and workspace setup.
+- Workspace browsing restricted to a dedicated sandbox root.
+- Heartbeats and scheduled jobs stored locally.
+- Optional Azure relay for Bot Framework channels.
 
 ## Documentation
 
-| Section | File |
-|---------|------|
-| Architecture | [docs/01_architecture.md](docs/01_architecture.md) |
-| Setup & Development | [docs/02_setup_and_development.md](docs/02_setup_and_development.md) |
-| Security Model | [docs/03_security_model.md](docs/03_security_model.md) |
-| Channels, Transport & Delivery | [docs/14_channels_and_transport.md](docs/14_channels_and_transport.md) |
-| Desktop Interface Design | [docs/08_desktop_interface_design.md](docs/08_desktop_interface_design.md) |
-| Desktop Wireframes | [docs/09_desktop_low_fidelity_wireframes.md](docs/09_desktop_low_fidelity_wireframes.md) |
-| Desktop Architecture & Repo Structure | [docs/10_desktop_architecture_and_repo_structure.md](docs/10_desktop_architecture_and_repo_structure.md) |
-| Hybrid memory & env reference | [docs/02_setup_and_development.md](docs/02_setup_and_development.md#hybrid-memory-env) |
-| Azure Bot Deployment Guide | [docs/13_azure_bot_deployment_guide.md](docs/13_azure_bot_deployment_guide.md) |
+Start with [Documentation Hub](docs/README.md).
+
+Recommended reading order:
+
+1. [Architecture Overview](docs/01_architecture.md)
+2. [Setup and Development](docs/02_setup_and_development.md)
+3. [Security Model](docs/03_security_model.md)
+4. [Component Reference](docs/04_component_reference.md)
+5. [Memory System](docs/15_memory_system.md)
+
+## Notes for contributors
+
+- Keep documentation in English.
+- Treat `docs/` as the canonical source for product and architecture decisions.
+- Do not commit `.env.local`, generated workspace data, or credentials.
+- The MCP sandbox is a security boundary, not a convenience wrapper.

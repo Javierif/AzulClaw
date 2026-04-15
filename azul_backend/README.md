@@ -1,27 +1,48 @@
-# azul_backend
+# Azul Backend
 
-Python backend for AzulClaw.
+`azul_backend/` contains the local Python runtime that powers AzulClaw.
 
-## Contents
+## Responsibilities
 
-- `azul_brain/`: orchestration, memory, bot handler and main runtime
-- `azul_hands_mcp/`: MCP sandbox for secure file operations
+- Host the local HTTP API consumed by the desktop shell.
+- Orchestrate model selection, chat turns, and streaming responses.
+- Persist memory and runtime state on disk.
+- Run heartbeats and scheduled jobs.
+- Handle Bot Framework traffic for local or relayed channels.
+- Connect to the MCP sandbox for workspace file operations.
 
-## Memory stack (`azul_brain/memory/`)
+## Layout
 
-- **`vector_store.py`** — SQLite + FTS5 + embeddings; hybrid search (RRF-weighted vector + BM25).
-- **`safe_memory.py`** — Bounded per-user history with optional write-through to the same SQLite file.
-- **`embedding_service.py`** — Azure OpenAI embeddings (default `text-embedding-3-large`, 3072 dims).
-- **`preference_extractor.py`** — After each turn, schedules JSON extraction on the **fast** Azure deployment (`AZURE_OPENAI_FAST_DEPLOYMENT`, e.g. `gpt-5.4-nano`) and stores deduplicated preferences/facts.
-- **`hybrid_ranker.py`** — Weighted reciprocal rank fusion.
-- **`episodic_store.py`** — Session diary schema/helpers (same DB path convention); wire-up may evolve separately from chat.
+```text
+azul_backend/
+|- azul_brain/       Main runtime
+|- azul_hands_mcp/   Sandboxed filesystem tool server
+|- workspace_layout.py
+`- README.md
+```
 
-Configure via `azul_brain/.env.local`; see root **README** and `docs/02_setup_and_development.md#hybrid-memory-env`.
+## Key modules
 
-## Running
+- `azul_brain/main_launcher.py`
+- `azul_brain/conversation.py`
+- `azul_brain/api/`
+- `azul_brain/runtime/`
+- `azul_brain/channels/`
+- `azul_brain/memory/`
+- `azul_hands_mcp/`
 
-From the repo root:
+## Run locally
 
-```bash
+From the repository root:
+
+```powershell
 python -m azul_backend.azul_brain.main_launcher
 ```
+
+The backend defaults to `http://localhost:3978`.
+
+## Configuration
+
+Primary config lives in `azul_backend/azul_brain/.env.local`.
+
+See [Setup and Development](../docs/02_setup_and_development.md) and [Memory System](../docs/15_memory_system.md).

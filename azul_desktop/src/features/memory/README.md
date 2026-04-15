@@ -1,5 +1,9 @@
-# Memory (desktop UI)
+# Memory
 
-Pantallas para explorar y gestionar lo que el cerebro recuerda.
+The memory feature exposes what AzulClaw has learned and retained locally.
 
-El backend persiste memoria híbrida (SQLite: vectores + FTS5 + historial reciente) y aprende preferencias en segundo plano vía el despliegue rápido de Azure. Detalle técnico: raíz `README.md` y `docs/02_setup_and_development.md` (sección memoria híbrida).
+- `MemoryShell.tsx` lists learned memory records and supports deletion.
+- Data comes from the local SQLite-backed memory layer through `/api/desktop/memory`.
+- The view is intentionally scoped to user-visible durable memory rather than raw conversation history.
+
+Related docs: [Memory System](../../../../docs/15_memory_system.md).
