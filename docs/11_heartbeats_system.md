@@ -1,42 +1,49 @@
-# AzulClaw: Unified Heartbeats System (Scheduler)
+# Heartbeats System
 
-**Last reviewed:** April 2026
+Last reviewed: 2026-04-15
 
-## 1. Overview
+## Purpose
 
-The **Heartbeats** system in AzulClaw is the mechanism that gives the agent "its own initiative." Historically, there were two parallel concepts doing the same thing:
-1. **System Heartbeat**: The system's base "pulse" to check context (reading state files and running a general check prompt).
-2. **Scheduled Jobs**: Recurring tasks created by the user.
+Heartbeats are AzulClaw's unified automation model. They replace the idea of separate "system pulse" and "scheduled jobs" with one scheduler and one persistence model.
 
-To simplify the cognitive architecture, an **architectural unification** has been made. Now, **everything is a Heartbeat**. All routines and automations (including the base system) share a single data model, the same UI view, and the same evaluation loop.
+## Main concepts
 
-## 2. The System Heartbeat (`system-heartbeat`)
+### System heartbeat
 
-The main AzulClaw heartbeat is now treated as a *native/built-in Heartbeat*.
-*   **Indestructible:** It cannot be deleted from the interface (it appears with a 🔒 lock icon).
-*   **Automatic Context Injection:** The execution engine (Scheduler) intercepts the execution of this specific heartbeat (`system: true` with id `system-heartbeat`) and automatically injects the contents of the `HEARTBEAT.md` file (if it exists in the Workspace) alongside the prompt configured in the UI.
-*   **Self-creation:** On brain startup in `store.py`, the `ensure_system_heartbeat_job()` function checks if it exists. If not, it creates it automatically with default values, ensuring the agent never loses its "pulse."
+The built-in heartbeat:
 
-If the agent scans `HEARTBEAT.md` and finds nothing actionable, the thread closes silently returning a `HEARTBEAT_SKIP` instead of invoking an expensive System 2 inference.
+- uses the fixed id `system-heartbeat`
+- cannot be deleted
+- is created automatically if missing
+- checks `HEARTBEAT.md` in the workspace
 
-## 3. Custom Heartbeats (User Jobs)
+If nothing actionable exists, the runtime can skip expensive work instead of forcing a full slow-lane turn.
 
-User automations are handled identically to the main pulse, allowing for reminders, periodic validations, or reports with the following properties:
-*   Frequency (`interval_seconds`).
-*   Specific prompt.
-*   Pause/Resume mechanics.
+### User heartbeats
 
-## 4. Triage and Brain Selection (Lanes)
+User-defined heartbeats share the same scheduler and persistence layer.
 
-In the user interface, when creating a Heartbeat, manually selecting the "Brain" (e.g., forcing System 1 `fast` or System 2 `slow`) is no longer allowed. We maintain an opinionated stance where the _Lane_ is always **Auto**.
-The workload is routed through our internal **Triage** system, where the `fast` agent decides at runtime whether the heartbeat task is trivial enough to solve locally or if it requires delegating to the `slow` model. This abstracts the cognitive load of coordinating LLMs away from the user.
+Supported concepts include:
 
-## 5. Internal Architecture and Key Components
+- prompt
+- enabled state
+- schedule kind
+- next run timestamp
+- run now action
 
-### 5.1 Backend
-*   **`azul_backend/azul_brain/runtime/store.py`**: Holds the unified `ScheduledJob` model. We added the `system: bool` field and protected the deletion of built-in system tasks.
-*   **`azul_backend/azul_brain/runtime/scheduler.py`**: Contains a single `_execute_job()` method to process all heartbeats in turn, avoiding redundancies.
+## Storage
 
-### 5.2 Frontend
-*   All user-facing text refers to translations of **"Heartbeats / Automations"**.
-*   The old system pulse configuration views were merged with the jobs list, creating the unified `HeartbeatsShell.tsx` interface.
+Heartbeat state is stored in the local runtime files under `memory/`, primarily `runtime_jobs.json`.
+
+## Backend implementation
+
+Main files:
+
+- `azul_backend/azul_brain/runtime/store.py`
+- `azul_backend/azul_brain/runtime/scheduler.py`
+
+## Frontend implementation
+
+The desktop shell for this area is:
+
+- `azul_desktop/src/features/heartbeats/HeartbeatsShell.tsx`

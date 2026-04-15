@@ -1,69 +1,46 @@
-# azul_desktop
+# Azul Desktop
 
-Desktop application shell for AzulClaw.
-
-Built with **Tauri, React, TypeScript and Vite** to provide a lightweight native shell with a modern UI and a direct link to the local Python backend.
-
-## Key features
-
-### 1. Hatching
-- Initial wizard to define the agent's identity, tone, autonomy, workspace, and base capabilities.
-- Dashboard to edit that configuration without repeating the full onboarding.
-
-### 2. Chat and operational control
-- **Smart composer:** multiline field with `Enter` to send and `Shift+Enter` for new line.
-- **Quick actions:** access to File, Memory, and Workspace from the composer itself.
-- **Live context:** side panel showing active lane, triage reason, model, and process tied to the current turn.
-- **Dual cognitive streaming:** the main chat uses `POST /api/desktop/chat/stream`. The first visible bubble comes from the `fast` brain; the `slow` route can show a summarised progress card; the final reply arrives via `delta`.
-- **Real send state:** the send button uses a persistent loader.
-
-### 3. Secure integration
-- The UI does not decide critical cognitive logic.
-- The Python backend handles triage, memory, runtime, and streaming.
-- The agent workspace continues to act as a visible, understandable sandbox for the user.
+`azul_desktop/` is the desktop shell for AzulClaw. It provides the visible product surface while the Python backend remains the source of truth for cognition, memory, and runtime behavior.
 
 ## Stack
 
-- **Core:** Tauri 2.x
-- **Frontend:** React 19 + TypeScript + Vite
-- **Styles:** plain CSS with variables, custom layout, and lightweight animations
+- Tauri 2
+- React 19
+- TypeScript
+- Vite
 
-## Development guide
+## Main views
 
-To iterate the UI in web mode:
+- Chat
+- Hatching
+- Heartbeats
+- Memory
+- Workspace
+- Processes
+- Settings
 
-```bash
+## Commands
+
+```powershell
 npm install
 npm run dev
-```
-
-Notes:
-- The dev frontend runs at `http://localhost:1420`.
-- Vite proxies `/api` to the local backend at `http://localhost:3978`.
-- The main chat flow depends on the incremental endpoint `/api/desktop/chat/stream`.
-
-To open the native desktop app:
-
-```bash
 npm run tauri:dev
-```
-
-To build the desktop bundle:
-
-```bash
+npm run build
 npm run tauri:build
 ```
+
+During development, the frontend expects the backend on `http://localhost:3978`.
 
 ## Structure
 
 ```text
 azul_desktop/
-|-- src/
-|   |-- app/          # Main shell
-|   |-- components/   # Shared components
-|   |-- features/     # Product modules
-|   |-- lib/          # Contracts, mocks, and HTTP client
-|   `-- styles/       # Global styles
-|-- src-tauri/        # Tauri native layer
-`-- package.json
+|- src/app/          Application shell
+|- src/components/   Shared UI components
+|- src/features/     Product features by domain
+|- src/lib/          API client, contracts, and helpers
+|- src/styles/       Global styling and theme tokens
+`- src-tauri/        Native wrapper
 ```
+
+See [Desktop Architecture and Repository Structure](../docs/10_desktop_architecture_and_repo_structure.md).
