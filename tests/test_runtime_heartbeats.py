@@ -160,6 +160,22 @@ class RuntimeStoreHeartbeatTests(unittest.TestCase):
             assert marked is not None
             self.assertEqual(marked.next_run_at, "2026-01-01T11:00:00Z")
 
+    def test_cron_job_rejects_non_linux_field_counts(self) -> None:
+        with temp_runtime_dir() as tmp:
+            store = make_store(Path(tmp))
+
+            with self.assertRaisesRegex(ValueError, "5-field cron expression"):
+                store.upsert_job(
+                    {
+                        "name": "Seconds cron",
+                        "prompt": "Run too frequently.",
+                        "lane": "fast",
+                        "schedule_kind": "cron",
+                        "cron_expression": "*/10 * * * * *",
+                        "enabled": True,
+                    }
+                )
+
 
 class DummyOrchestrator:
     def __init__(
@@ -226,6 +242,8 @@ class RuntimeSchedulerHeartbeatTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertTrue(result["ok"])
             self.assertEqual(result["response"], "HEARTBEAT_SKIP")
+            self.assertEqual(result["delivery"], {"kind": "none"})
+            self.assertTrue(result["next_run_at"])
             self.assertEqual(orchestrator.calls, [])
             updated = store.load_jobs()[0]
             self.assertTrue(updated.last_run_at)

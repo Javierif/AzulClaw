@@ -132,12 +132,14 @@ class RuntimeScheduler:
                     heartbeat_text = self._load_heartbeat_text()
                     if not heartbeat_text:
                         # Nothing actionable — skip
-                        self.store.mark_job_run(job.id, run_time)
+                        updated = self.store.mark_job_run(job.id, run_time)
                         return {
                             "job_id": job.id,
                             "reason": reason,
                             "ok": True,
                             "response": "HEARTBEAT_SKIP",
+                            "next_run_at": updated.next_run_at if updated else "",
+                            "delivery": {"kind": "none"},
                         }
                     prompt = f"{job.prompt}\n\nActive checklist:\n{heartbeat_text}"
                     source = "heartbeat"

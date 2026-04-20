@@ -736,6 +736,8 @@ class RuntimeStore:
     def _is_valid_cron_expression(self, cron_expression: str) -> bool:
         if not cron_expression:
             return False
+        if len(cron_expression.split()) != 5:
+            return False
         try:
             from croniter import croniter
         except ModuleNotFoundError as error:
