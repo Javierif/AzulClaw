@@ -184,9 +184,9 @@ class HeartbeatIntentService:
 
         if pending is not None:
             if route.route == "confirm_pending":
-                self.pending_store.pop_for_user(user_id)
                 draft = self._draft_from_dict(pending.draft)
                 job = self._create_job(draft)
+                self.pending_store.pop_for_user(user_id)
                 return HeartbeatIntentOutcome(
                     response=self._created_response(job),
                     job=job,

@@ -181,6 +181,36 @@ class HeartbeatIntentServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(pending_store.load(), [])
             self.assertIn("I created the heartbeat", outcome.response)
 
+    async def test_failed_confirmation_preserves_pending_action(self) -> None:
+        with temp_runtime_dir() as root:
+            store = make_store(root)
+            pending_store = PendingHeartbeatStore(root / "pending.json")
+            pending_store.save_for_user(
+                "desktop-user",
+                HeartbeatDraft(
+                    name="Too frequent",
+                    prompt="Run too frequently.",
+                    cron_expression="*/10 * * * * *",
+                    lane="fast",
+                ),
+            )
+            runtime = FakeRuntimeManager(store, value=HeartbeatRouteModel(route="confirm_pending"))
+            service = HeartbeatIntentService(
+                runtime_manager=runtime,
+                store=store,
+                pending_store=pending_store,
+            )
+
+            with fake_agent_framework_module():
+                with self.assertRaisesRegex(ValueError, "5-field cron expression"):
+                    await service.handle_message("desktop-user", "yes, create it")
+
+            pending = pending_store.get_for_user("desktop-user")
+            self.assertIsNotNone(pending)
+            assert pending is not None
+            self.assertEqual(pending.draft["cron_expression"], "*/10 * * * * *")
+            self.assertEqual(store.load_jobs(), [])
+
     async def test_request_creates_cron_job_immediately_when_confirmation_is_disabled(self) -> None:
         with temp_runtime_dir() as root:
             store = make_store(root)
