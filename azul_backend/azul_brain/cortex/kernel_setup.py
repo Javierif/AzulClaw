@@ -77,11 +77,31 @@ def _response_format_param(response_format):
     return response_format
 
 
+def _stringify_result_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    if hasattr(value, "model_dump_json"):
+        return value.model_dump_json()
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except TypeError:
+        return str(value)
+
+
 class _Result:
     """Minimal container for backwards compatibility with the previous contract."""
 
     def __init__(self, value: Any):
         self.value = value
+
+    @property
+    def text(self) -> str:
+        return _stringify_result_value(self.value)
+
+    def __str__(self) -> str:
+        return self.text
 
 
 class _FoundryStream:

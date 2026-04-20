@@ -32,6 +32,27 @@ class RuntimeTurnResult:
     value: Any = None
 
 
+def _serialize_runtime_text(result: Any, *, fallback: str = "") -> str:
+    text = getattr(result, "text", None)
+    if isinstance(text, str) and text.strip():
+        return text
+
+    value = getattr(result, "value", None)
+    if isinstance(value, str):
+        return value if value.strip() or not fallback else fallback
+    if value is not None:
+        if hasattr(value, "model_dump_json"):
+            return value.model_dump_json()
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except TypeError:
+            return str(value)
+
+    if fallback:
+        return fallback
+    return str(result)
+
+
 class AgentRuntimeManager:
     """Selects profiles, applies fallback, and records executions."""
 
@@ -143,7 +164,7 @@ class AgentRuntimeManager:
                 else:
                     result = await agent.invoke_messages(messages)
                     value = getattr(result, "value", None)
-                    text = value if isinstance(value, str) else str(result)
+                    text = _serialize_runtime_text(result)
                     if text:
                         await on_delta(text)
 
@@ -160,7 +181,13 @@ class AgentRuntimeManager:
                     model_label=model.label,
                     attempts=index,
                 )
-                return RuntimeTurnResult(text=text, model=model, attempts=attempts, process_id=process.id)
+                return RuntimeTurnResult(
+                    text=text,
+                    model=model,
+                    attempts=attempts,
+                    process_id=process.id,
+                    value=value,
+                )
             except Exception as error:
                 error_text = str(error).strip() or error.__class__.__name__
                 attempts.append({"model_id": model.id, "label": model.label, "error": error_text})
@@ -227,12 +254,7 @@ class AgentRuntimeManager:
                 )
                 result = await agent.invoke_messages(messages, response_format=response_format)
                 value = getattr(result, "value", None)
-                if isinstance(value, str):
-                    text = value
-                elif hasattr(value, "model_dump_json"):
-                    text = value.model_dump_json()
-                else:
-                    text = str(value if value is not None else result)
+                text = _serialize_runtime_text(result)
                 self.last_errors.pop(model.id, None)
                 self.cooldowns.pop(model.id, None)
                 self.process_registry.finish(
@@ -362,13 +384,7 @@ class AgentRuntimeManager:
         return ""
 
     def _extract_final_text(self, response: Any, *, fallback: str = "") -> str:
-        text = getattr(response, "text", None)
-        if isinstance(text, str) and text.strip():
-            return text
-        value = getattr(response, "value", None)
-        if isinstance(value, str) and value.strip():
-            return value
-        return fallback or str(response)
+        return _serialize_runtime_text(response, fallback=fallback)
 
     def _probe_azure_model(self, model: RuntimeModelProfile) -> dict[str, str | bool]:
         """Checks whether Azure configuration is sufficient."""

@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 from pathlib import Path
 from typing import Any, Literal
 
@@ -78,6 +80,15 @@ SYSTEM_HEARTBEAT_DEFAULT_PROMPT = (
 SYSTEM_HEARTBEAT_DEFAULT_INTERVAL = 900
 
 
+def _locked_jobs(method):
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._jobs_lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 @dataclass
 class RuntimeSettings:
     """Editable local runtime configuration."""
@@ -141,6 +152,7 @@ class RuntimeStore:
         self.settings_path = settings_path or _default_settings_path()
         self.jobs_path = jobs_path or _default_jobs_path()
         self.process_history_path = process_history_path or _default_process_history_path()
+        self._jobs_lock = threading.RLock()
 
         self.settings_path.parent.mkdir(parents=True, exist_ok=True)
         self.jobs_path.parent.mkdir(parents=True, exist_ok=True)
@@ -295,6 +307,7 @@ class RuntimeStore:
         )
         return merged
 
+    @_locked_jobs
     def load_jobs(self) -> list[ScheduledJob]:
         """Loads persisted jobs from the local cron store."""
         if not self.jobs_path.exists():
@@ -363,6 +376,7 @@ class RuntimeStore:
             )
         return jobs
 
+    @_locked_jobs
     def save_jobs(self, jobs: list[ScheduledJob]) -> list[ScheduledJob]:
         """Persists the full job list."""
         payload = [asdict(job) for job in jobs]
@@ -372,6 +386,7 @@ class RuntimeStore:
         )
         return jobs
 
+    @_locked_jobs
     def upsert_job(self, payload: dict[str, Any]) -> ScheduledJob:
         """Creates or updates a scheduled job."""
         jobs = self.load_jobs()
@@ -468,6 +483,7 @@ class RuntimeStore:
         self.save_jobs(list(by_id.values()))
         return job
 
+    @_locked_jobs
     def delete_job(self, job_id: str) -> bool:
         """Deletes a job by identifier. System jobs cannot be deleted."""
         safe_id = str(job_id).strip()
@@ -479,6 +495,7 @@ class RuntimeStore:
         self.save_jobs(jobs)
         return True
 
+    @_locked_jobs
     def ensure_system_heartbeat_job(self) -> ScheduledJob:
         """Creates or repairs the system heartbeat job if needed."""
         jobs = self.load_jobs()
@@ -557,6 +574,7 @@ class RuntimeStore:
         self.save_jobs(jobs)
         return job
 
+    @_locked_jobs
     def mark_job_run(self, job_id: str, run_time: datetime | None = None) -> ScheduledJob | None:
         """Updates execution and next-fire timestamps."""
         jobs = self.load_jobs()
@@ -614,6 +632,7 @@ class RuntimeStore:
         self.save_jobs(next_jobs)
         return updated
 
+    @_locked_jobs
     def set_job_delivery_conversation(
         self,
         job_id: str,
