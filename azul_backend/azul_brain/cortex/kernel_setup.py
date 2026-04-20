@@ -8,7 +8,8 @@ from urllib.parse import urlparse
 
 import aiohttp
 from agent_framework import Agent, Message, tool
-from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
+from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 
 from ..foundry_url import (
     is_foundry_endpoint,
@@ -273,10 +274,10 @@ async def create_agent(mcp_client, model_profile=None):
             base_url=normalize_foundry_base_url(endpoint),
         )
     else:
-        chat_client = OpenAIChatCompletionClient(
-            model=deployment_name,
+        chat_client = AzureOpenAIChatClient(
+            deployment_name=deployment_name,
             api_key=api_key,
-            azure_endpoint=normalize_azure_openai_endpoint(endpoint),
+            endpoint=normalize_azure_openai_endpoint(endpoint),
             api_version=api_version,
         )
 
