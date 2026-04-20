@@ -8,6 +8,7 @@
   <a href="https://discord.gg/gggT7Bx858">
     <img alt="Join the AzulClaw Discord community" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white" />
   </a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
 </p>
 
 <p align="center">
