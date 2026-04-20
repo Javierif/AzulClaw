@@ -1,6 +1,6 @@
 # Cognitive Design
 
-Last reviewed: 2026-04-15
+Last reviewed: 2026-04-20
 
 ## Purpose
 
@@ -53,9 +53,13 @@ Memory supports cognition in three ways:
 
 ## Heartbeats and autonomy
 
-Heartbeats are scheduled prompts executed by the same core runtime. The system heartbeat is the built-in automation that checks `HEARTBEAT.md` in the workspace.
+Heartbeats are scheduled prompts executed by the local runtime, but not every heartbeat uses the same cognitive envelope.
 
-This means autonomy is not a separate product mode. It is the same orchestration engine applied on a schedule.
+The system heartbeat is the built-in automation that checks `HEARTBEAT.md` in the workspace. It is workspace-aware and can use the normal orchestration path.
+
+User-created heartbeats are different. They are proactive scheduled messages or lightweight tasks, so they run isolated from normal chat history as `cron:<job_id>` and use a no-tools Agent Framework runtime with heartbeat-specific instructions. This prevents a simple reminder from reading workspace files, reacting to unrelated chat context, or asking where to send the message.
+
+This means autonomy is not a single global product mode. It is the scheduling engine plus an execution envelope selected for the type of heartbeat.
 
 ## Design constraints
 
