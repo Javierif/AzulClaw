@@ -95,12 +95,16 @@ class ScheduledJob:
     name: str
     prompt: str
     lane: Literal["auto", "fast", "slow"] = "fast"
-    schedule_kind: Literal["at", "every"] = "every"
+    schedule_kind: Literal["at", "every", "cron"] = "every"
     run_at: str = ""
     interval_seconds: int = 0
+    cron_expression: str = ""
     enabled: bool = True
     system: bool = False
     source: str = "user"
+    delivery_kind: Literal["desktop_chat", "none"] = "desktop_chat"
+    delivery_user_id: str = "desktop-user"
+    delivery_conversation_id: str = ""
     created_at: str = field(default_factory=lambda: to_iso_z(utc_now()))
     updated_at: str = field(default_factory=lambda: to_iso_z(utc_now()))
     last_run_at: str = ""
@@ -318,8 +322,16 @@ class RuntimeStore:
                 lane = "fast"
 
             schedule_kind = str(item.get("schedule_kind", "every")).strip().lower()
-            if schedule_kind not in {"at", "every"}:
+            if schedule_kind not in {"at", "every", "cron"}:
                 schedule_kind = "every"
+
+            is_system_job = bool(item.get("system", False)) or job_id == SYSTEM_HEARTBEAT_JOB_ID
+            source = str(item.get("source", "user")).strip() or "user"
+            if is_system_job:
+                source = "system"
+            delivery_kind = str(item.get("delivery_kind", "desktop_chat")).strip().lower()
+            if delivery_kind not in {"desktop_chat", "none"}:
+                delivery_kind = "desktop_chat"
 
             jobs.append(
                 ScheduledJob(
@@ -335,9 +347,14 @@ class RuntimeStore:
                         min_value=0,
                         max_value=31_536_000,
                     ),
+                    cron_expression=str(item.get("cron_expression", "")).strip(),
                     enabled=bool(item.get("enabled", True)),
-                    system=bool(item.get("system", False)),
-                    source=str(item.get("source", "user")).strip() or "user",
+                    system=is_system_job,
+                    source=source,
+                    delivery_kind=delivery_kind,
+                    delivery_user_id=str(item.get("delivery_user_id", "desktop-user")).strip()
+                    or "desktop-user",
+                    delivery_conversation_id=str(item.get("delivery_conversation_id", "")).strip(),
                     created_at=str(item.get("created_at", "")).strip() or to_iso_z(utc_now()),
                     updated_at=str(item.get("updated_at", "")).strip() or to_iso_z(utc_now()),
                     last_run_at=str(item.get("last_run_at", "")).strip(),
@@ -362,6 +379,7 @@ class RuntimeStore:
 
         job_id = str(payload.get("id", "")).strip() or f"job-{utc_now().strftime('%Y%m%d%H%M%S')}"
         current = by_id.get(job_id)
+        is_system_job = bool(current.system) if current else job_id == SYSTEM_HEARTBEAT_JOB_ID
 
         lane = str(payload.get("lane", current.lane if current else "fast")).strip().lower()
         if lane not in {"auto", "fast", "slow"}:
@@ -370,8 +388,10 @@ class RuntimeStore:
         schedule_kind = str(
             payload.get("schedule_kind", current.schedule_kind if current else "every")
         ).strip().lower()
-        if schedule_kind not in {"at", "every"}:
+        if schedule_kind not in {"at", "every", "cron"}:
             schedule_kind = current.schedule_kind if current else "every"
+        if is_system_job:
+            schedule_kind = "every"
 
         prompt = str(payload.get("prompt", current.prompt if current else "")).strip()
         if not prompt:
@@ -385,18 +405,43 @@ class RuntimeStore:
             max_value=31_536_000,
         )
         run_at = str(payload.get("run_at", current.run_at if current else "")).strip()
+        cron_expression = str(
+            payload.get("cron_expression", current.cron_expression if current else "")
+        ).strip()
+        if is_system_job:
+            run_at = ""
+            cron_expression = ""
 
         if schedule_kind == "at" and parse_iso_datetime(run_at) is None:
             raise ValueError("run_at must be an ISO datetime for 'at' jobs")
         if schedule_kind == "every" and interval_seconds < 60:
             raise ValueError("interval_seconds must be >= 60 for recurring jobs")
+        if schedule_kind == "cron" and not self._is_valid_cron_expression(cron_expression):
+            raise ValueError("cron_expression must be a valid 5-field cron expression")
 
         next_run_at = self._compute_next_run_at(
             schedule_kind=schedule_kind,
             run_at=run_at,
             interval_seconds=interval_seconds,
+            cron_expression=cron_expression,
             previous_last_run_at=current.last_run_at if current else "",
         )
+
+        source = "system" if is_system_job else (current.source if current else "user")
+        delivery_kind = str(
+            payload.get("delivery_kind", current.delivery_kind if current else "desktop_chat")
+        ).strip().lower()
+        if delivery_kind not in {"desktop_chat", "none"}:
+            delivery_kind = current.delivery_kind if current else "desktop_chat"
+        delivery_user_id = str(
+            payload.get("delivery_user_id", current.delivery_user_id if current else "desktop-user")
+        ).strip() or "desktop-user"
+        delivery_conversation_id = str(
+            payload.get(
+                "delivery_conversation_id",
+                current.delivery_conversation_id if current else "",
+            )
+        ).strip()
 
         job = ScheduledJob(
             id=job_id,
@@ -406,7 +451,13 @@ class RuntimeStore:
             schedule_kind=schedule_kind,
             run_at=run_at,
             interval_seconds=interval_seconds,
+            cron_expression=cron_expression,
             enabled=bool(payload.get("enabled", current.enabled if current else True)),
+            system=is_system_job,
+            source=source,
+            delivery_kind=delivery_kind,
+            delivery_user_id=delivery_user_id,
+            delivery_conversation_id=delivery_conversation_id,
             created_at=current.created_at if current else to_iso_z(utc_now()),
             updated_at=to_iso_z(utc_now()),
             last_run_at=current.last_run_at if current else "",
@@ -422,25 +473,57 @@ class RuntimeStore:
         safe_id = str(job_id).strip()
         jobs = self.load_jobs()
         target = next((j for j in jobs if j.id == safe_id), None)
-        if target and target.system:
+        if safe_id == SYSTEM_HEARTBEAT_JOB_ID or (target and target.system):
             raise ValueError("System jobs cannot be deleted")
         jobs = [j for j in jobs if j.id != safe_id]
         self.save_jobs(jobs)
         return True
 
     def ensure_system_heartbeat_job(self) -> ScheduledJob:
-        """Creates the system heartbeat job if it does not exist."""
+        """Creates or repairs the system heartbeat job if needed."""
         jobs = self.load_jobs()
         existing = next((j for j in jobs if j.id == SYSTEM_HEARTBEAT_JOB_ID), None)
-        if existing is not None:
-            return existing
-
         heartbeat_interval = self._bounded_int(
-            os.environ.get("AZUL_HEARTBEAT_INTERVAL_SECONDS", "900"),
+            existing.interval_seconds if existing else os.environ.get("AZUL_HEARTBEAT_INTERVAL_SECONDS", "900"),
             default=SYSTEM_HEARTBEAT_DEFAULT_INTERVAL,
             min_value=60,
             max_value=86_400,
         )
+
+        if existing is not None:
+            repaired = ScheduledJob(
+                id=SYSTEM_HEARTBEAT_JOB_ID,
+                name=existing.name.strip() or "System heartbeat",
+                prompt=existing.prompt.strip() or SYSTEM_HEARTBEAT_DEFAULT_PROMPT,
+                lane=existing.lane if existing.lane in {"auto", "fast", "slow"} else "fast",
+                schedule_kind="every",
+                run_at="",
+                interval_seconds=heartbeat_interval,
+                cron_expression="",
+                enabled=existing.enabled,
+                system=True,
+                source="system",
+                delivery_kind=existing.delivery_kind,
+                delivery_user_id=existing.delivery_user_id or "desktop-user",
+                delivery_conversation_id=existing.delivery_conversation_id,
+                created_at=existing.created_at or to_iso_z(utc_now()),
+                updated_at=existing.updated_at or to_iso_z(utc_now()),
+                last_run_at=existing.last_run_at,
+                next_run_at=existing.next_run_at
+                or self._compute_next_run_at(
+                    schedule_kind="every",
+                    run_at="",
+                    interval_seconds=heartbeat_interval,
+                    cron_expression="",
+                    previous_last_run_at=existing.last_run_at,
+                ),
+            )
+
+            self.save_jobs(
+                [repaired if job.id == SYSTEM_HEARTBEAT_JOB_ID else job for job in jobs]
+            )
+            return repaired
+
         heartbeat_prompt = (
             os.environ.get("AZUL_HEARTBEAT_PROMPT", "").strip()
             or SYSTEM_HEARTBEAT_DEFAULT_PROMPT
@@ -456,9 +539,19 @@ class RuntimeStore:
             lane="fast",
             schedule_kind="every",
             interval_seconds=heartbeat_interval,
+            cron_expression="",
             enabled=heartbeat_enabled,
             system=True,
             source="system",
+            delivery_kind="desktop_chat",
+            delivery_user_id="desktop-user",
+            next_run_at=self._compute_next_run_at(
+                schedule_kind="every",
+                run_at="",
+                interval_seconds=heartbeat_interval,
+                cron_expression="",
+                previous_last_run_at="",
+            ),
         )
         jobs.insert(0, job)
         self.save_jobs(jobs)
@@ -482,8 +575,17 @@ class RuntimeStore:
 
             if job.schedule_kind == "at":
                 enabled = False
+            elif job.schedule_kind == "cron":
+                next_run_at = self._compute_next_run_at(
+                    schedule_kind="cron",
+                    run_at="",
+                    interval_seconds=0,
+                    cron_expression=job.cron_expression,
+                    previous_last_run_at=last_run_at,
+                )
             else:
-                next_run_at = to_iso_z(target_time + timedelta(seconds=job.interval_seconds))
+                interval_seconds = max(60, job.interval_seconds)
+                next_run_at = to_iso_z(target_time + timedelta(seconds=interval_seconds))
 
             updated = ScheduledJob(
                 id=job.id,
@@ -492,8 +594,16 @@ class RuntimeStore:
                 lane=job.lane,
                 schedule_kind=job.schedule_kind,
                 run_at=job.run_at,
-                interval_seconds=job.interval_seconds,
+                interval_seconds=max(60, job.interval_seconds)
+                if job.schedule_kind == "every"
+                else job.interval_seconds,
+                cron_expression=job.cron_expression,
                 enabled=enabled,
+                system=job.system,
+                source=job.source,
+                delivery_kind=job.delivery_kind,
+                delivery_user_id=job.delivery_user_id,
+                delivery_conversation_id=job.delivery_conversation_id,
                 created_at=job.created_at,
                 updated_at=to_iso_z(target_time),
                 last_run_at=last_run_at,
@@ -502,6 +612,50 @@ class RuntimeStore:
             next_jobs.append(updated)
 
         self.save_jobs(next_jobs)
+        return updated
+
+    def set_job_delivery_conversation(
+        self,
+        job_id: str,
+        conversation_id: str,
+    ) -> ScheduledJob | None:
+        """Persists the desktop chat conversation used for proactive deliveries."""
+        safe_id = str(job_id).strip()
+        safe_conversation_id = str(conversation_id).strip()
+        if not safe_id or not safe_conversation_id:
+            return None
+
+        jobs = self.load_jobs()
+        updated: ScheduledJob | None = None
+        next_jobs: list[ScheduledJob] = []
+        for job in jobs:
+            if job.id != safe_id:
+                next_jobs.append(job)
+                continue
+            updated = ScheduledJob(
+                id=job.id,
+                name=job.name,
+                prompt=job.prompt,
+                lane=job.lane,
+                schedule_kind=job.schedule_kind,
+                run_at=job.run_at,
+                interval_seconds=job.interval_seconds,
+                cron_expression=job.cron_expression,
+                enabled=job.enabled,
+                system=job.system,
+                source=job.source,
+                delivery_kind=job.delivery_kind,
+                delivery_user_id=job.delivery_user_id,
+                delivery_conversation_id=safe_conversation_id,
+                created_at=job.created_at,
+                updated_at=to_iso_z(utc_now()),
+                last_run_at=job.last_run_at,
+                next_run_at=job.next_run_at,
+            )
+            next_jobs.append(updated)
+
+        if updated is not None:
+            self.save_jobs(next_jobs)
         return updated
 
     def load_process_history(self) -> list[ProcessHistoryEntry]:
@@ -558,14 +712,35 @@ class RuntimeStore:
         run_at: str,
         interval_seconds: int,
         previous_last_run_at: str,
+        cron_expression: str = "",
     ) -> str:
         if schedule_kind == "at":
             return run_at
+        if schedule_kind == "cron":
+            return self._compute_next_cron_run_at(cron_expression, previous_last_run_at)
 
         reference = parse_iso_datetime(previous_last_run_at)
         if reference is None:
             reference = utc_now()
         return to_iso_z(reference + timedelta(seconds=interval_seconds))
+
+    def _compute_next_cron_run_at(self, cron_expression: str, previous_last_run_at: str) -> str:
+        try:
+            from croniter import croniter
+        except ModuleNotFoundError as error:
+            raise ValueError("croniter dependency is required for cron scheduled jobs") from error
+
+        reference = (parse_iso_datetime(previous_last_run_at) or utc_now()).astimezone()
+        return to_iso_z(croniter(cron_expression, reference).get_next(datetime))
+
+    def _is_valid_cron_expression(self, cron_expression: str) -> bool:
+        if not cron_expression:
+            return False
+        try:
+            from croniter import croniter
+        except ModuleNotFoundError as error:
+            raise ValueError("croniter dependency is required for cron scheduled jobs") from error
+        return bool(croniter.is_valid(cron_expression))
 
     def _build_fast_profile(self) -> RuntimeModelProfile:
         """Resolves the fast profile using Ollama if available, Azure mini otherwise."""

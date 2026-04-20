@@ -142,14 +142,34 @@ export interface ScheduledJob {
   name: string;
   prompt: string;
   lane: "auto" | "fast" | "slow";
-  schedule_kind: "at" | "every";
+  schedule_kind: "at" | "every" | "cron";
   run_at: string;
   interval_seconds: number;
+  cron_expression: string;
   enabled: boolean;
   system: boolean;
   source: string;
+  delivery_kind: "desktop_chat" | "none";
+  delivery_user_id: string;
+  delivery_conversation_id: string;
   created_at: string;
   updated_at: string;
   last_run_at: string;
   next_run_at: string;
+}
+
+export interface JobRunResult {
+  job_id: string;
+  reason: "manual" | "scheduled";
+  ok: boolean;
+  response: string;
+  next_run_at?: string;
+  error?: string;
+  delivery?: {
+    kind: "desktop_chat" | "none";
+    user_id?: string;
+    conversation_id?: string;
+    conversation_title?: string;
+    error?: string;
+  };
 }

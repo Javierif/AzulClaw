@@ -19,6 +19,13 @@ type ChatMessageItem = ChatExchange & {
   progress?: ThinkingProgress;
 };
 
+type HeartbeatConfirmationDetails = {
+  name: string;
+  schedule: string;
+  action: string;
+  delivery: string;
+};
+
 /** Shown only in the UI until the user sends their first message (not persisted). */
 const WELCOME_MESSAGE_ID = "welcome-greeting";
 
@@ -47,6 +54,78 @@ function phaseStatusLabel(status: "pending" | "active" | "done") {
     return "In progress";
   }
   return "Pending";
+}
+
+function parseHeartbeatConfirmation(content: string): HeartbeatConfirmationDetails | null {
+  const text = (content || "").trim();
+  if (!text.startsWith("I can create this heartbeat:")) {
+    return null;
+  }
+
+  const name = text.match(/^Name:\s*(.+)$/m)?.[1]?.trim();
+  const schedule = text.match(/^Schedule:\s*`?([^`\n]+)`?$/m)?.[1]?.trim();
+  const action = text.match(/^Action:\s*(.+)$/m)?.[1]?.trim();
+  const delivery = text.match(/^Delivery:\s*(.+)$/m)?.[1]?.trim() || "desktop chat";
+  if (!name || !schedule || !action) {
+    return null;
+  }
+
+  return { name, schedule, action, delivery };
+}
+
+function HeartbeatConfirmationCard({
+  details,
+  disabled,
+  onCreate,
+  onCancel,
+}: {
+  details: HeartbeatConfirmationDetails;
+  disabled: boolean;
+  onCreate: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <article className="message-bubble message-assistant message-heartbeat-card">
+      <span className="message-role">AzulClaw</span>
+      <div className="heartbeat-confirm-card">
+        <div className="heartbeat-confirm-head">
+          <div>
+            <p className="heartbeat-confirm-eyebrow">Heartbeat draft</p>
+            <h3>{details.name}</h3>
+          </div>
+          <span className="heartbeat-confirm-schedule">{details.schedule}</span>
+        </div>
+        <div className="heartbeat-confirm-body">
+          <div>
+            <span>Action</span>
+            <p>{details.action}</p>
+          </div>
+          <div>
+            <span>Delivery</span>
+            <p>{details.delivery}</p>
+          </div>
+        </div>
+        <div className="heartbeat-confirm-actions">
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={onCancel}
+            disabled={disabled}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={onCreate}
+            disabled={disabled}
+          >
+            Create heartbeat
+          </button>
+        </div>
+      </div>
+    </article>
+  );
 }
 
 function ThinkingCard({ message }: { message: ChatMessageItem }) {
@@ -280,6 +359,46 @@ export function ChatShell({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const pollId = window.setInterval(() => {
+      if (isSending) {
+        return;
+      }
+      void (async () => {
+        try {
+          const chatsRaw = await listConversations();
+          if (cancelled) return;
+          const chats = withNormalizedConversationTitles(chatsRaw);
+          setRecentChats(chats);
+
+          if (!conversationId) {
+            return;
+          }
+
+          const active = chats.find((chat) => chat.id === conversationId);
+          if (!active) {
+            return;
+          }
+
+          const msgs = await getConversationMessages(conversationId);
+          if (cancelled) return;
+          setMessages(toUiMessages(msgs));
+          const title = normalizeConversationTitle(active.title);
+          setSessionListTitle(title);
+          onTitleChange?.(title);
+        } catch {
+          /* ignore background refresh failures */
+        }
+      })();
+    }, 5_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(pollId);
+    };
+  }, [conversationId, isSending, onTitleChange]);
+
   // Register the new-chat handler with the parent (topbar button)
   const handleNewChatRef = useRef<() => void>(() => {});
   const currentMessagesRef = useRef(messages);
@@ -345,8 +464,8 @@ export function ChatShell({
     };
   }, []);
 
-  async function handleSend() {
-    const trimmed = draft.trim();
+  async function handleSend(messageOverride?: string) {
+    const trimmed = (messageOverride ?? draft).trim();
     if (!trimmed || isSending) {
       return;
     }
@@ -379,7 +498,9 @@ export function ChatShell({
         },
       ];
     });
-    setDraft("");
+    if (!messageOverride) {
+      setDraft("");
+    }
 
     /** Only the first reply that attaches a conversation should set the sidebar title (not every turn). */
     const isFirstBoundSend = conversationId === null;
@@ -623,6 +744,14 @@ export function ChatShell({
                   <span className="message-wave-dot" />
                 </p>
               </article>
+            ) : message.role === "assistant" && parseHeartbeatConfirmation(message.content) ? (
+              <HeartbeatConfirmationCard
+                key={message.id}
+                details={parseHeartbeatConfirmation(message.content)!}
+                disabled={isSending}
+                onCreate={() => void handleSend("yes, create it")}
+                onCancel={() => void handleSend("no")}
+              />
             ) : (
               <article
                 key={message.id}

@@ -9,6 +9,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from hashlib import sha1
 from typing import Any
 from urllib import error as urlerror
 from urllib import request as urlrequest
@@ -28,6 +29,7 @@ class RuntimeTurnResult:
     model: RuntimeModelProfile | None
     attempts: list[dict[str, str]]
     process_id: str
+    value: Any = None
 
 
 class AgentRuntimeManager:
@@ -94,6 +96,8 @@ class AgentRuntimeManager:
         source: str,
         kind: str,
         on_delta: Callable[[str], Awaitable[None]],
+        tools_enabled: bool = True,
+        instructions: str | None = None,
     ) -> RuntimeTurnResult:
         """Runs an inference with streaming when the profile supports it."""
         candidates = self._resolve_candidates(lane)
@@ -120,7 +124,11 @@ class AgentRuntimeManager:
                 attempts=index,
             )
             try:
-                agent = await self._get_agent(model)
+                agent = await self._get_agent(
+                    model,
+                    tools_enabled=tools_enabled,
+                    instructions=instructions,
+                )
                 if model.streaming_enabled:
                     stream = agent.stream_messages(messages)
                     streamed_parts: list[str] = []
@@ -183,6 +191,9 @@ class AgentRuntimeManager:
         title: str,
         source: str,
         kind: str,
+        response_format: Any | None = None,
+        tools_enabled: bool = True,
+        instructions: str | None = None,
     ) -> RuntimeTurnResult:
         """Runs an inference with fallback between profiles."""
         candidates = self._resolve_candidates(lane)
@@ -209,10 +220,19 @@ class AgentRuntimeManager:
                 attempts=index,
             )
             try:
-                agent = await self._get_agent(model)
-                result = await agent.invoke_messages(messages)
+                agent = await self._get_agent(
+                    model,
+                    tools_enabled=tools_enabled,
+                    instructions=instructions,
+                )
+                result = await agent.invoke_messages(messages, response_format=response_format)
                 value = getattr(result, "value", None)
-                text = value if isinstance(value, str) else str(result)
+                if isinstance(value, str):
+                    text = value
+                elif hasattr(value, "model_dump_json"):
+                    text = value.model_dump_json()
+                else:
+                    text = str(value if value is not None else result)
                 self.last_errors.pop(model.id, None)
                 self.cooldowns.pop(model.id, None)
                 self.process_registry.finish(
@@ -223,7 +243,13 @@ class AgentRuntimeManager:
                     model_label=model.label,
                     attempts=index,
                 )
-                return RuntimeTurnResult(text=text, model=model, attempts=attempts, process_id=process.id)
+                return RuntimeTurnResult(
+                    text=text,
+                    model=model,
+                    attempts=attempts,
+                    process_id=process.id,
+                    value=value,
+                )
             except Exception as error:
                 error_text = str(error).strip() or error.__class__.__name__
                 attempts.append({"model_id": model.id, "label": model.label, "error": error_text})
@@ -288,13 +314,28 @@ class AgentRuntimeManager:
 
         return ordered
 
-    async def _get_agent(self, model: RuntimeModelProfile):
-        cache_key = f"{model.id}:{model.deployment}"
+    async def _get_agent(
+        self,
+        model: RuntimeModelProfile,
+        *,
+        tools_enabled: bool = True,
+        instructions: str | None = None,
+    ):
+        instruction_key = "default"
+        if instructions is not None:
+            instruction_key = sha1(instructions.encode("utf-8")).hexdigest()[:12]
+        tool_key = "tools" if tools_enabled else "no-tools"
+        cache_key = f"{model.id}:{model.deployment}:{tool_key}:{instruction_key}"
         cached = self.agent_cache.get(cache_key)
         if cached is not None:
             return cached
 
-        agent = await create_agent(self.mcp_client, model_profile=model)
+        agent = await create_agent(
+            self.mcp_client,
+            model_profile=model,
+            tools_enabled=tools_enabled,
+            instructions=instructions,
+        )
         self.agent_cache[cache_key] = agent
         return agent
 

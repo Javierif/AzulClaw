@@ -70,6 +70,8 @@ export function HeartbeatsShell() {
   const [editingSystemPrompt, setEditingSystemPrompt] = useState(false);
   const [customIntervalInput, setCustomIntervalInput] = useState("");
   const [showCustomInput, setShowCustomInput] = useState(false);
+  const [runStatus, setRunStatus] = useState<Record<string, string>>({});
+  const [runOutput, setRunOutput] = useState<Record<string, string>>({});
 
   /* Polling */
   useEffect(() => {
@@ -129,6 +131,34 @@ export function HeartbeatsShell() {
     setJobs((cur) => [saved, ...cur.filter((j) => j.id !== saved.id)]);
     setForm(emptyDraft);
     setModalOpen(false);
+  }
+
+  async function handleRunJob(job: ScheduledJob) {
+    setRunStatus((current) => ({ ...current, [job.id]: "Running..." }));
+    setRunOutput((current) => ({ ...current, [job.id]: "" }));
+    try {
+      const result = await runJob(job.id);
+      const deliveredTitle = result.delivery?.conversation_title;
+      const output = (result.response || result.error || "").trim();
+      setRunStatus((current) => ({
+        ...current,
+        [job.id]:
+          result.delivery?.kind === "desktop_chat" && deliveredTitle
+            ? `Delivered to chat: ${deliveredTitle}`
+            : result.delivery?.kind === "desktop_chat"
+              ? "Delivered to desktop chat"
+            : result.ok
+              ? "Run completed"
+              : "Run failed",
+      }));
+      if (output && output !== "HEARTBEAT_OK" && output !== "HEARTBEAT_SKIP") {
+        setRunOutput((current) => ({ ...current, [job.id]: output }));
+      }
+      const jobData = await loadJobs();
+      setJobs(jobData);
+    } catch {
+      setRunStatus((current) => ({ ...current, [job.id]: "Run failed" }));
+    }
   }
 
   function handleApplyCustomInterval() {
@@ -287,11 +317,20 @@ export function HeartbeatsShell() {
               <button
                 type="button"
                 className="ghost-button"
-                onClick={() => void runJob(systemJob.id)}
+                onClick={() => void handleRunJob(systemJob)}
               >
                 Run now
               </button>
+              {runStatus[systemJob.id] ? (
+                <span className="hb-job-tag">{runStatus[systemJob.id]}</span>
+              ) : null}
             </div>
+            {runOutput[systemJob.id] ? (
+              <div className="hb-run-output">
+                <span>Latest output</span>
+                <p>{runOutput[systemJob.id]}</p>
+              </div>
+            ) : null}
           </div>
         )}
 
@@ -332,9 +371,11 @@ export function HeartbeatsShell() {
                     <p className="hb-job-prompt">{job.prompt}</p>
                     <div className="hb-job-tags">
                       <span className="hb-job-tag">
-                        {job.schedule_kind === "every"
-                          ? `every ${humanInterval(job.interval_seconds)}`
-                          : `at ${job.run_at || "pending"}`}
+                        {job.schedule_kind === "cron"
+                          ? `cron ${job.cron_expression || "pending"}`
+                          : job.schedule_kind === "every"
+                            ? `every ${humanInterval(job.interval_seconds)}`
+                            : `at ${job.run_at || "pending"}`}
                       </span>
                       <span className={`status-tag ${job.enabled ? "status-done" : "status-waiting"}`}>
                         {job.enabled ? "enabled" : "paused"}
@@ -361,7 +402,7 @@ export function HeartbeatsShell() {
                       className="ghost-button"
                       style={{ padding: "8px 14px", fontSize: "0.82rem" }}
                       title="Run now"
-                      onClick={() => void runJob(job.id)}
+                      onClick={() => void handleRunJob(job)}
                     >
                       Run now
                     </button>
@@ -378,6 +419,15 @@ export function HeartbeatsShell() {
                       ✕
                     </button>
                   </div>
+                  {runStatus[job.id] ? (
+                    <span className="hb-job-tag">{runStatus[job.id]}</span>
+                  ) : null}
+                  {runOutput[job.id] ? (
+                    <div className="hb-run-output">
+                      <span>Latest output</span>
+                      <p>{runOutput[job.id]}</p>
+                    </div>
+                  ) : null}
                 </article>
               ))}
             </div>

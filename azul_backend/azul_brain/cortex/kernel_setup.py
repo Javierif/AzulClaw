@@ -10,6 +10,8 @@ import aiohttp
 from agent_framework import Agent, Message, tool
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.openai import OpenAIChatClient
+from openai.lib._parsing._completions import type_to_response_format_param
+from pydantic import BaseModel
 
 from ..foundry_url import (
     is_foundry_endpoint,
@@ -97,16 +99,19 @@ class _StreamChunk:
 class FoundryAgent:
     """Direct aiohttp agent for AI Foundry /v1/ endpoints."""
 
-    def __init__(self, url: str, api_key: str, model: str):
+    def __init__(self, url: str, api_key: str, model: str, instructions: str = ""):
         self._url = url
         self._headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
         self._model = model
+        self._instructions = instructions.strip()
 
     def _messages_payload(self, messages: list[Message]) -> list[dict]:
         result = []
+        if self._instructions:
+            result.append({"role": "system", "content": self._instructions})
         for message in messages:
             parts = [
                 content.text
@@ -116,12 +121,18 @@ class FoundryAgent:
             result.append({"role": message.role, "content": "".join(parts)})
         return result
 
-    async def invoke_messages(self, messages: list[Message]) -> _Result:
+    async def invoke_messages(self, messages: list[Message], response_format=None) -> _Result:
         payload = {
             "model": self._model,
             "messages": self._messages_payload(messages),
             "max_completion_tokens": 1024,
         }
+        if response_format is not None:
+            payload["response_format"] = (
+                response_format
+                if isinstance(response_format, dict)
+                else type_to_response_format_param(response_format)
+            )
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 self._url,
@@ -134,6 +145,12 @@ class FoundryAgent:
                     raise RuntimeError(f"Foundry returned {resp.status}: {body[:300]}")
                 data = await resp.json()
         content = data["choices"][0]["message"].get("content") or ""
+        if (
+            response_format is not None
+            and isinstance(response_format, type)
+            and issubclass(response_format, BaseModel)
+        ):
+            return _Result(response_format.model_validate_json(content))
         return _Result(content)
 
     def stream_messages(self, messages: list[Message]):
@@ -167,13 +184,16 @@ class AzulAgent:
     def __init__(self, agent: Agent):
         self.agent = agent
 
-    async def invoke_messages(self, messages: list[Message]) -> _Result:
+    async def invoke_messages(self, messages: list[Message], response_format=None) -> _Result:
         """Runs an inference and normalises its output to _Result."""
-        response = await self.agent.run(messages)
+        options = {"response_format": response_format} if response_format is not None else None
+        response = await self.agent.run(messages, options=options)
         text = getattr(response, "text", None)
+        value = getattr(response, "value", None)
+        if value is not None and not isinstance(value, str):
+            return _Result(value)
         if isinstance(text, str) and text.strip():
             return _Result(text)
-        value = getattr(response, "value", None)
         return _Result(value if isinstance(value, str) else str(response))
 
     async def invoke_prompt(self, prompt: str) -> _Result:
@@ -213,7 +233,13 @@ def _build_tools(mcp_client):
     return [list_files, read_file, move_file]
 
 
-async def create_agent(mcp_client, model_profile=None):
+async def create_agent(
+    mcp_client,
+    model_profile=None,
+    *,
+    tools_enabled: bool = True,
+    instructions: str | None = None,
+):
     """Creates the agent with the appropriate client and MCP tools."""
     provider = getattr(model_profile, "provider", "azure")
     deployment_name = (
@@ -221,6 +247,8 @@ async def create_agent(mcp_client, model_profile=None):
         or os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o").strip()
     )
     lane = getattr(model_profile, "lane", "").strip().lower()
+    effective_instructions = instructions if instructions is not None else AZULCLAW_SYSTEM_PROMPT
+    tools = _build_tools(mcp_client) if tools_enabled else []
 
     if provider == "openai":
         base_url = _normalize_openai_base_url(
@@ -236,8 +264,8 @@ async def create_agent(mcp_client, model_profile=None):
         )
         agent = Agent(
             client=chat_client,
-            instructions=AZULCLAW_SYSTEM_PROMPT,
-            tools=_build_tools(mcp_client),
+            instructions=effective_instructions,
+            tools=tools,
         )
         return AzulAgent(agent)
 
@@ -252,7 +280,12 @@ async def create_agent(mcp_client, model_profile=None):
         )
         url = _foundry_chat_url(endpoint)
         LOGGER.debug("[Kernel] Fast lane using FoundryAgent: %s (%s)", url, deployment_name)
-        return FoundryAgent(url=url, api_key=api_key, model=deployment_name)
+        return FoundryAgent(
+            url=url,
+            api_key=api_key,
+            model=deployment_name,
+            instructions=effective_instructions,
+        )
 
     endpoint = (
         os.environ.get("AZURE_OPENAI_SLOW_ENDPOINT", "").strip()
@@ -283,7 +316,7 @@ async def create_agent(mcp_client, model_profile=None):
 
     agent = Agent(
         client=chat_client,
-        instructions=AZULCLAW_SYSTEM_PROMPT,
-        tools=_build_tools(mcp_client),
+        instructions=effective_instructions,
+        tools=tools,
     )
     return AzulAgent(agent)

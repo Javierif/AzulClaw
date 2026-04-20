@@ -68,6 +68,7 @@ async def desktop_chat_stream_handler(req: web.Request) -> web.StreamResponse:
     # If no conversation supplied, get or create an empty one so messages are always scoped
     if not conversation_id:
         conversation_id, _ = orchestrator.memory.get_or_create_empty_conversation(user_id)
+    orchestrator.memory.set_active_conversation(user_id, conversation_id)
 
     if not message:
         return web.json_response({"error": "message is required"}, status=400)
@@ -158,6 +159,7 @@ async def desktop_create_conversation_handler(req: web.Request) -> web.Response:
     payload = await req.json()
     user_id = str(payload.get("user_id", "desktop-user")).strip() or "desktop-user"
     conv_id, title = orchestrator.memory.get_or_create_empty_conversation(user_id)
+    orchestrator.memory.set_active_conversation(user_id, conv_id)
     return web.json_response({"id": conv_id, "title": title})
 
 
@@ -165,8 +167,10 @@ async def desktop_conversation_messages_handler(req: web.Request) -> web.Respons
     """Returns messages for a specific conversation."""
     orchestrator = req.app["orchestrator"]
     conv_id = req.match_info.get("conv_id", "").strip()
+    user_id = req.query.get("user_id", "desktop-user")
     if not conv_id:
         return web.json_response({"error": "conv_id required"}, status=400)
+    orchestrator.memory.set_active_conversation(user_id, conv_id)
     msgs = orchestrator.memory.get_conversation_messages(conv_id)
     return web.json_response({"messages": msgs})
 

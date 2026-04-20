@@ -24,6 +24,7 @@ from .memory.preference_extractor import PreferenceExtractor
 from .memory.safe_memory import SafeMemory
 from .memory.vector_store import VectorMemoryStore
 from .runtime.agent_runtime import AgentRuntimeManager
+from .runtime.heartbeat_intent import HeartbeatIntentService
 
 LOGGER = logging.getLogger(__name__)
 
@@ -114,6 +115,10 @@ class ConversationOrchestrator:
     def __init__(self, mcp_client, runtime_manager: AgentRuntimeManager):
         self.mcp_client = mcp_client
         self.runtime_manager = runtime_manager
+        self.heartbeat_intents = HeartbeatIntentService(
+            runtime_manager=runtime_manager,
+            store=runtime_manager.store,
+        )
         self._setup_memory_layers()
 
     def _setup_memory_layers(self) -> None:
@@ -641,6 +646,10 @@ class ConversationOrchestrator:
 
     async def process_user_message(self, user_id: str, user_message: str, lane: str = "auto") -> ConversationReply:
         """Builds context, runs inference, and persists the conversation."""
+        heartbeat_reply = await self._try_handle_heartbeat_intent(user_id, user_message)
+        if heartbeat_reply is not None:
+            return heartbeat_reply
+
         route = self.resolve_route(user_message, lane)
         effective_lane = route.lane
         history = self.memory.get_history(user_id, limit=12)
@@ -677,6 +686,15 @@ class ConversationOrchestrator:
         on_progress: Callable[[dict], Awaitable[None]] | None = None,
     ) -> ConversationReply:
         """Builds context, runs inference, and emits streaming if applicable."""
+        heartbeat_reply = await self._try_handle_heartbeat_intent(
+            user_id,
+            user_message,
+            conversation_id=conversation_id,
+        )
+        if heartbeat_reply is not None:
+            await on_delta(heartbeat_reply.text)
+            return heartbeat_reply
+
         route = self.resolve_route(user_message, lane)
         effective_lane = route.lane
         progress_blueprint: dict | None = None
@@ -787,6 +805,40 @@ class ConversationOrchestrator:
                 )
             )
         return reply
+
+    async def _try_handle_heartbeat_intent(
+        self,
+        user_id: str,
+        user_message: str,
+        conversation_id: str | None = None,
+    ) -> ConversationReply | None:
+        """Intercepts chat turns that create or confirm heartbeat automations."""
+        try:
+            outcome = await self.heartbeat_intents.handle_message(user_id, user_message)
+        except Exception as error:
+            LOGGER.warning("[Heartbeats] Intent flow failed, falling back to chat: %s", error)
+            return None
+
+        if outcome is None:
+            return None
+
+        await self.persist_with_vector_memory(
+            user_id,
+            "user",
+            user_message,
+            conversation_id=conversation_id,
+        )
+        await self.persist_with_vector_memory(
+            user_id,
+            "assistant",
+            outcome.response,
+            conversation_id=conversation_id,
+        )
+        return ConversationReply(
+            text=outcome.response,
+            lane="fast",
+            triage_reason="heartbeat-intent",
+        )
 
     async def _slow_commentary_loop(
         self,

@@ -36,6 +36,7 @@ class SafeMemory:
         )
         # Mirrors conversation titles so reads succeed even if SQLite write fails or is disabled.
         self._conversation_titles: dict[str, str] = {}
+        self._active_conversation_by_user: dict[str, str] = {}
 
         # Optional SQLite persistence
         self._conn: sqlite3.Connection | None = None
@@ -166,6 +167,67 @@ class SafeMemory:
         conv_id = self.create_conversation(user_id)
         return conv_id, "New conversation"
 
+    def get_or_create_named_conversation(self, user_id: str, title: str) -> tuple[str, str]:
+        """Returns a conversation with the exact title for a user, creating it if missing."""
+        safe_title = (title or "").strip() or "New conversation"
+        if self._conn is not None:
+            try:
+                row = self._conn.execute(
+                    """
+                    SELECT id, title FROM conversations
+                    WHERE user_id = ? AND title = ?
+                    ORDER BY updated_at DESC LIMIT 1
+                    """,
+                    (user_id, safe_title),
+                ).fetchone()
+                if row:
+                    self._conversation_titles[row["id"]] = row["title"]
+                    return row["id"], row["title"]
+            except Exception as error:
+                LOGGER.warning("[SafeMemory] get_or_create_named_conversation lookup failed: %s", error)
+        conv_id = self.create_conversation(user_id, safe_title)
+        return conv_id, safe_title
+
+    def conversation_exists(self, conversation_id: str) -> bool:
+        """Returns whether a conversation row is available."""
+        safe_id = (conversation_id or "").strip()
+        if not safe_id:
+            return False
+        if safe_id in self._conversation_titles:
+            return True
+        if self._conn is None:
+            return False
+        try:
+            row = self._conn.execute(
+                "SELECT 1 FROM conversations WHERE id = ? LIMIT 1",
+                (safe_id,),
+            ).fetchone()
+            return row is not None
+        except Exception as error:
+            LOGGER.warning("[SafeMemory] conversation_exists failed: %s", error)
+            return False
+
+    def set_active_conversation(self, user_id: str, conversation_id: str) -> None:
+        """Records which conversation the desktop user currently has open."""
+        safe_user_id = (user_id or "").strip()
+        safe_conversation_id = (conversation_id or "").strip()
+        if not safe_user_id or not safe_conversation_id:
+            return
+        if not self.conversation_exists(safe_conversation_id):
+            return
+        self._active_conversation_by_user[safe_user_id] = safe_conversation_id
+
+    def get_active_conversation_id(self, user_id: str) -> str:
+        """Returns the current active conversation id for a user, if it still exists."""
+        safe_user_id = (user_id or "").strip()
+        if not safe_user_id:
+            return ""
+        conversation_id = self._active_conversation_by_user.get(safe_user_id, "")
+        if conversation_id and self.conversation_exists(conversation_id):
+            return conversation_id
+        self._active_conversation_by_user.pop(safe_user_id, None)
+        return ""
+
     def list_conversations(self, user_id: str, limit: int = 20) -> list[dict]:
         """Returns conversations ordered by most recently updated."""
         if self._conn is None:
@@ -260,6 +322,9 @@ class SafeMemory:
             )
             self._conn.commit()
             self._conversation_titles.pop(conversation_id, None)
+            for user_id, active_id in list(self._active_conversation_by_user.items()):
+                if active_id == conversation_id:
+                    self._active_conversation_by_user.pop(user_id, None)
             return cur.rowcount > 0
         except Exception as error:
             LOGGER.warning("[SafeMemory] delete_conversation failed: %s", error)
