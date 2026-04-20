@@ -10,7 +10,6 @@ import aiohttp
 from agent_framework import Agent, Message, tool
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.openai import OpenAIChatClient
-from openai.lib._parsing._completions import type_to_response_format_param
 from pydantic import BaseModel
 
 from ..foundry_url import (
@@ -22,6 +21,13 @@ from ..soul.system_prompt import AZULCLAW_SYSTEM_PROMPT
 from .mcp_plugin import MCPToolsPlugin
 
 LOGGER = logging.getLogger(__name__)
+
+try:
+    from openai.lib._parsing._completions import (
+        type_to_response_format_param as _openai_response_format_param,
+    )
+except Exception:  # pragma: no cover - depends on installed OpenAI SDK internals
+    _openai_response_format_param = None
 
 
 def _require_env(var_name: str) -> str:
@@ -49,6 +55,26 @@ def _foundry_chat_url(endpoint: str) -> str:
     v1_idx = path.find("/v1")
     clean_path = path[: v1_idx + 3] if v1_idx != -1 else ""
     return f"{parsed.scheme}://{parsed.netloc}{clean_path}/chat/completions"
+
+
+def _response_format_param(response_format):
+    """Builds a chat-completions response_format payload without requiring private SDK APIs."""
+    if response_format is None or isinstance(response_format, dict):
+        return response_format
+    if _openai_response_format_param is not None:
+        return _openai_response_format_param(response_format)
+    if (
+        isinstance(response_format, type)
+        and issubclass(response_format, BaseModel)
+    ):
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": response_format.__name__,
+                "schema": response_format.model_json_schema(),
+            },
+        }
+    return response_format
 
 
 class _Result:
@@ -128,11 +154,7 @@ class FoundryAgent:
             "max_completion_tokens": 1024,
         }
         if response_format is not None:
-            payload["response_format"] = (
-                response_format
-                if isinstance(response_format, dict)
-                else type_to_response_format_param(response_format)
-            )
+            payload["response_format"] = _response_format_param(response_format)
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 self._url,

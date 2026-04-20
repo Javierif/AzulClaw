@@ -19,6 +19,10 @@ FREQUENCY_CLARIFICATION = (
     "I could not process the frequency. Could you confirm how often you want me "
     "to run this task? For example: 'every 2 hours'."
 )
+PENDING_CONFIRMATION_CLARIFICATION = (
+    "I still have a heartbeat draft waiting for confirmation. "
+    "Please use the card buttons, or reply 'yes, create it' or 'no'."
+)
 
 
 def _runtime_root() -> Path:
@@ -171,7 +175,12 @@ class HeartbeatIntentService:
         route = await self._semantic_route(user_message, has_pending=pending is not None)
 
         if route is None:
-            return HeartbeatIntentOutcome(response=FREQUENCY_CLARIFICATION)
+            if pending is not None:
+                return HeartbeatIntentOutcome(
+                    response=PENDING_CONFIRMATION_CLARIFICATION,
+                    pending=pending,
+                )
+            return None
 
         if pending is not None:
             if route.route == "confirm_pending":

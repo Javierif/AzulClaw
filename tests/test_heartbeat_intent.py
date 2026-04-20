@@ -12,9 +12,11 @@ from pathlib import Path
 
 from azul_backend.azul_brain.runtime.heartbeat_intent import (
     FREQUENCY_CLARIFICATION,
+    HeartbeatDraft,
     HeartbeatDraftModel,
     HeartbeatIntentService,
     HeartbeatRouteModel,
+    PENDING_CONFIRMATION_CLARIFICATION,
     PendingHeartbeatStore,
 )
 from azul_backend.azul_brain.runtime.store import RuntimeStore
@@ -80,6 +82,13 @@ class FakeRuntimeManager:
         self.calls += 1
         self.last_kwargs = kwargs
         return FakeRuntimeResult(self.value)
+
+
+class FailingRuntimeManager(FakeRuntimeManager):
+    async def execute_messages(self, **kwargs):
+        self.calls += 1
+        self.last_kwargs = kwargs
+        raise RuntimeError("fast model unavailable")
 
 
 def create_route(*, name: str, prompt: str, cron_expression: str) -> HeartbeatRouteModel:
@@ -247,6 +256,51 @@ class HeartbeatIntentServiceTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertIsNone(outcome)
             self.assertEqual(runtime.calls, 1)
+
+    async def test_semantic_routing_failure_does_not_hijack_normal_chat(self) -> None:
+        with temp_runtime_dir() as root:
+            store = make_store(root)
+            runtime = FailingRuntimeManager(store)
+            service = HeartbeatIntentService(
+                runtime_manager=runtime,
+                store=store,
+                pending_store=PendingHeartbeatStore(root / "pending.json"),
+            )
+
+            with fake_agent_framework_module():
+                outcome = await service.handle_message("desktop-user", "hello")
+
+            self.assertIsNone(outcome)
+            self.assertEqual(runtime.calls, 1)
+
+    async def test_semantic_routing_failure_preserves_pending_confirmation(self) -> None:
+        with temp_runtime_dir() as root:
+            store = make_store(root)
+            pending_store = PendingHeartbeatStore(root / "pending.json")
+            pending_store.save_for_user(
+                "desktop-user",
+                HeartbeatDraft(
+                    name="Water reminder",
+                    prompt="Remind me to drink water.",
+                    cron_expression="0 * * * *",
+                    lane="fast",
+                ),
+            )
+            runtime = FailingRuntimeManager(store)
+            service = HeartbeatIntentService(
+                runtime_manager=runtime,
+                store=store,
+                pending_store=pending_store,
+            )
+
+            with fake_agent_framework_module():
+                outcome = await service.handle_message("desktop-user", "yes")
+
+            self.assertIsNotNone(outcome)
+            assert outcome is not None
+            self.assertEqual(outcome.response, PENDING_CONFIRMATION_CLARIFICATION)
+            self.assertIsNotNone(pending_store.get_for_user("desktop-user"))
+            self.assertEqual(store.load_jobs(), [])
 
 
 if __name__ == "__main__":

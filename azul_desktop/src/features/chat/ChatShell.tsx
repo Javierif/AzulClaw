@@ -361,41 +361,56 @@ export function ChatShell({
 
   useEffect(() => {
     let cancelled = false;
-    const pollId = window.setInterval(() => {
-      if (isSending) {
+    let pollId: number | null = null;
+
+    async function refresh() {
+      if (cancelled) {
         return;
       }
-      void (async () => {
-        try {
-          const chatsRaw = await listConversations();
-          if (cancelled) return;
-          const chats = withNormalizedConversationTitles(chatsRaw);
-          setRecentChats(chats);
-
-          if (!conversationId) {
-            return;
-          }
-
-          const active = chats.find((chat) => chat.id === conversationId);
-          if (!active) {
-            return;
-          }
-
-          const msgs = await getConversationMessages(conversationId);
-          if (cancelled) return;
-          setMessages(toUiMessages(msgs));
-          const title = normalizeConversationTitle(active.title);
-          setSessionListTitle(title);
-          onTitleChange?.(title);
-        } catch {
-          /* ignore background refresh failures */
+      if (isSending) {
+        if (!cancelled) {
+          pollId = window.setTimeout(() => void refresh(), 5_000);
         }
-      })();
-    }, 5_000);
+        return;
+      }
+
+      try {
+        const chatsRaw = await listConversations();
+        if (cancelled) return;
+        const chats = withNormalizedConversationTitles(chatsRaw);
+        setRecentChats(chats);
+
+        if (!conversationId) {
+          return;
+        }
+
+        const active = chats.find((chat) => chat.id === conversationId);
+        if (!active) {
+          return;
+        }
+
+        const msgs = await getConversationMessages(conversationId);
+        if (cancelled) return;
+        setMessages(toUiMessages(msgs));
+        const title = normalizeConversationTitle(active.title);
+        setSessionListTitle(title);
+        onTitleChange?.(title);
+      } catch {
+        /* ignore background refresh failures */
+      } finally {
+        if (!cancelled) {
+          pollId = window.setTimeout(() => void refresh(), 5_000);
+        }
+      }
+    }
+
+    pollId = window.setTimeout(() => void refresh(), 5_000);
 
     return () => {
       cancelled = true;
-      window.clearInterval(pollId);
+      if (pollId !== null) {
+        window.clearTimeout(pollId);
+      }
     };
   }, [conversationId, isSending, onTitleChange]);
 
@@ -732,27 +747,42 @@ export function ChatShell({
     <section className="chat-layout">
       <div className="chat-panel card">
         <div className="message-list">
-          {messages.map((message) =>
-            message.kind === "thinking" && message.role === "assistant" ? (
-              <ThinkingCard key={message.id} message={message} />
-            ) : message.kind === "pending" ? (
-              <article key={message.id} className="message-bubble message-assistant">
-                <span className="message-role">AzulClaw</span>
-                <p style={{ display: "flex", alignItems: "center", gap: "5px", margin: 0, padding: "4px 0" }}>
-                  <span className="message-wave-dot" />
-                  <span className="message-wave-dot" />
-                  <span className="message-wave-dot" />
-                </p>
-              </article>
-            ) : message.role === "assistant" && parseHeartbeatConfirmation(message.content) ? (
-              <HeartbeatConfirmationCard
-                key={message.id}
-                details={parseHeartbeatConfirmation(message.content)!}
-                disabled={isSending}
-                onCreate={() => void handleSend("yes, create it")}
-                onCancel={() => void handleSend("no")}
-              />
-            ) : (
+          {messages.map((message) => {
+            const heartbeatDetails =
+              message.role === "assistant"
+                ? parseHeartbeatConfirmation(message.content)
+                : null;
+
+            if (message.kind === "thinking" && message.role === "assistant") {
+              return <ThinkingCard key={message.id} message={message} />;
+            }
+
+            if (message.kind === "pending") {
+              return (
+                <article key={message.id} className="message-bubble message-assistant">
+                  <span className="message-role">AzulClaw</span>
+                  <p style={{ display: "flex", alignItems: "center", gap: "5px", margin: 0, padding: "4px 0" }}>
+                    <span className="message-wave-dot" />
+                    <span className="message-wave-dot" />
+                    <span className="message-wave-dot" />
+                  </p>
+                </article>
+              );
+            }
+
+            if (heartbeatDetails) {
+              return (
+                <HeartbeatConfirmationCard
+                  key={message.id}
+                  details={heartbeatDetails}
+                  disabled={isSending}
+                  onCreate={() => void handleSend("yes, create it")}
+                  onCancel={() => void handleSend("no")}
+                />
+              );
+            }
+
+            return (
               <article
                 key={message.id}
                 className={`message-bubble message-${message.role}`}
@@ -762,8 +792,8 @@ export function ChatShell({
                 </span>
                 <p>{message.content}</p>
               </article>
-            ),
-          )}
+            );
+          })}
           <div ref={bottomRef} />
         </div>
 
