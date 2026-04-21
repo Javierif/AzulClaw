@@ -9,6 +9,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from hashlib import sha1
 from typing import Any
 from urllib import error as urlerror
 from urllib import request as urlrequest
@@ -28,6 +29,28 @@ class RuntimeTurnResult:
     model: RuntimeModelProfile | None
     attempts: list[dict[str, str]]
     process_id: str
+    value: Any = None
+
+
+def _serialize_runtime_text(result: Any, *, fallback: str = "") -> str:
+    text = getattr(result, "text", None)
+    if isinstance(text, str) and text.strip():
+        return text
+
+    value = getattr(result, "value", None)
+    if isinstance(value, str):
+        return value if value.strip() or not fallback else fallback
+    if value is not None:
+        if hasattr(value, "model_dump_json"):
+            return value.model_dump_json()
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except TypeError:
+            return str(value)
+
+    if fallback:
+        return fallback
+    return str(result)
 
 
 class AgentRuntimeManager:
@@ -94,6 +117,8 @@ class AgentRuntimeManager:
         source: str,
         kind: str,
         on_delta: Callable[[str], Awaitable[None]],
+        tools_enabled: bool = True,
+        instructions: str | None = None,
     ) -> RuntimeTurnResult:
         """Runs an inference with streaming when the profile supports it."""
         candidates = self._resolve_candidates(lane)
@@ -120,7 +145,12 @@ class AgentRuntimeManager:
                 attempts=index,
             )
             try:
-                agent = await self._get_agent(model)
+                agent = await self._get_agent(
+                    model,
+                    tools_enabled=tools_enabled,
+                    instructions=instructions,
+                )
+                value = None
                 if model.streaming_enabled:
                     stream = agent.stream_messages(messages)
                     streamed_parts: list[str] = []
@@ -131,11 +161,12 @@ class AgentRuntimeManager:
                         streamed_parts.append(chunk)
                         await on_delta(chunk)
                     final_response = await stream.get_final_response()
+                    value = getattr(final_response, "value", None)
                     text = self._extract_final_text(final_response, fallback="".join(streamed_parts))
                 else:
                     result = await agent.invoke_messages(messages)
                     value = getattr(result, "value", None)
-                    text = value if isinstance(value, str) else str(result)
+                    text = _serialize_runtime_text(result)
                     if text:
                         await on_delta(text)
 
@@ -152,7 +183,13 @@ class AgentRuntimeManager:
                     model_label=model.label,
                     attempts=index,
                 )
-                return RuntimeTurnResult(text=text, model=model, attempts=attempts, process_id=process.id)
+                return RuntimeTurnResult(
+                    text=text,
+                    model=model,
+                    attempts=attempts,
+                    process_id=process.id,
+                    value=value,
+                )
             except Exception as error:
                 error_text = str(error).strip() or error.__class__.__name__
                 attempts.append({"model_id": model.id, "label": model.label, "error": error_text})
@@ -183,6 +220,9 @@ class AgentRuntimeManager:
         title: str,
         source: str,
         kind: str,
+        response_format: Any | None = None,
+        tools_enabled: bool = True,
+        instructions: str | None = None,
     ) -> RuntimeTurnResult:
         """Runs an inference with fallback between profiles."""
         candidates = self._resolve_candidates(lane)
@@ -209,10 +249,14 @@ class AgentRuntimeManager:
                 attempts=index,
             )
             try:
-                agent = await self._get_agent(model)
-                result = await agent.invoke_messages(messages)
+                agent = await self._get_agent(
+                    model,
+                    tools_enabled=tools_enabled,
+                    instructions=instructions,
+                )
+                result = await agent.invoke_messages(messages, response_format=response_format)
                 value = getattr(result, "value", None)
-                text = value if isinstance(value, str) else str(result)
+                text = _serialize_runtime_text(result)
                 self.last_errors.pop(model.id, None)
                 self.cooldowns.pop(model.id, None)
                 self.process_registry.finish(
@@ -223,7 +267,13 @@ class AgentRuntimeManager:
                     model_label=model.label,
                     attempts=index,
                 )
-                return RuntimeTurnResult(text=text, model=model, attempts=attempts, process_id=process.id)
+                return RuntimeTurnResult(
+                    text=text,
+                    model=model,
+                    attempts=attempts,
+                    process_id=process.id,
+                    value=value,
+                )
             except Exception as error:
                 error_text = str(error).strip() or error.__class__.__name__
                 attempts.append({"model_id": model.id, "label": model.label, "error": error_text})
@@ -288,13 +338,31 @@ class AgentRuntimeManager:
 
         return ordered
 
-    async def _get_agent(self, model: RuntimeModelProfile):
-        cache_key = f"{model.id}:{model.deployment}"
+    async def _get_agent(
+        self,
+        model: RuntimeModelProfile,
+        *,
+        tools_enabled: bool = True,
+        instructions: str | None = None,
+    ):
+        effective_instructions = instructions.strip() if isinstance(instructions, str) else instructions
+        if effective_instructions == "":
+            effective_instructions = None
+        instruction_key = "default"
+        if effective_instructions is not None:
+            instruction_key = sha1(effective_instructions.encode("utf-8")).hexdigest()[:12]
+        tool_key = "tools" if tools_enabled else "no-tools"
+        cache_key = f"{model.id}:{model.deployment}:{tool_key}:{instruction_key}"
         cached = self.agent_cache.get(cache_key)
         if cached is not None:
             return cached
 
-        agent = await create_agent(self.mcp_client, model_profile=model)
+        agent = await create_agent(
+            self.mcp_client,
+            model_profile=model,
+            tools_enabled=tools_enabled,
+            instructions=effective_instructions,
+        )
         self.agent_cache[cache_key] = agent
         return agent
 
@@ -321,13 +389,7 @@ class AgentRuntimeManager:
         return ""
 
     def _extract_final_text(self, response: Any, *, fallback: str = "") -> str:
-        text = getattr(response, "text", None)
-        if isinstance(text, str) and text.strip():
-            return text
-        value = getattr(response, "value", None)
-        if isinstance(value, str) and value.strip():
-            return value
-        return fallback or str(response)
+        return _serialize_runtime_text(response, fallback=fallback)
 
     def _probe_azure_model(self, model: RuntimeModelProfile) -> dict[str, str | bool]:
         """Checks whether Azure configuration is sufficient."""

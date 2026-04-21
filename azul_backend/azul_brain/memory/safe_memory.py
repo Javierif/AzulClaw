@@ -36,6 +36,8 @@ class SafeMemory:
         )
         # Mirrors conversation titles so reads succeed even if SQLite write fails or is disabled.
         self._conversation_titles: dict[str, str] = {}
+        self._conversation_users: dict[str, str] = {}
+        self._active_conversation_by_user: dict[str, str] = {}
 
         # Optional SQLite persistence
         self._conn: sqlite3.Connection | None = None
@@ -129,6 +131,7 @@ class SafeMemory:
         """Creates a new conversation and returns its ID."""
         conv_id = str(uuid.uuid4())
         self._conversation_titles[conv_id] = title
+        self._conversation_users[conv_id] = user_id
         if self._conn is not None:
             try:
                 self._conn.execute(
@@ -160,11 +163,102 @@ class SafeMemory:
                     (user_id,),
                 ).fetchone()
                 if row:
+                    self._conversation_titles[row["id"]] = row["title"]
+                    self._conversation_users[row["id"]] = user_id
                     return row["id"], row["title"]
             except Exception as error:
                 LOGGER.warning("[SafeMemory] get_or_create_empty_conversation lookup failed: %s", error)
         conv_id = self.create_conversation(user_id)
         return conv_id, "New conversation"
+
+    def get_or_create_named_conversation(self, user_id: str, title: str) -> tuple[str, str]:
+        """Returns a conversation with the exact title for a user, creating it if missing."""
+        safe_title = (title or "").strip() or "New conversation"
+        if self._conn is not None:
+            try:
+                row = self._conn.execute(
+                    """
+                    SELECT id, title FROM conversations
+                    WHERE user_id = ? AND title = ?
+                    ORDER BY updated_at DESC LIMIT 1
+                    """,
+                    (user_id, safe_title),
+                ).fetchone()
+                if row:
+                    self._conversation_titles[row["id"]] = row["title"]
+                    self._conversation_users[row["id"]] = user_id
+                    return row["id"], row["title"]
+            except Exception as error:
+                LOGGER.warning("[SafeMemory] get_or_create_named_conversation lookup failed: %s", error)
+        conv_id = self.create_conversation(user_id, safe_title)
+        return conv_id, safe_title
+
+    def conversation_exists(self, conversation_id: str) -> bool:
+        """Returns whether a conversation row is available."""
+        safe_id = (conversation_id or "").strip()
+        if not safe_id:
+            return False
+        if safe_id in self._conversation_titles:
+            return True
+        if self._conn is None:
+            return False
+        try:
+            row = self._conn.execute(
+                "SELECT 1 FROM conversations WHERE id = ? LIMIT 1",
+                (safe_id,),
+            ).fetchone()
+            return row is not None
+        except Exception as error:
+            LOGGER.warning("[SafeMemory] conversation_exists failed: %s", error)
+            return False
+
+    def conversation_belongs_to_user(self, conversation_id: str, user_id: str) -> bool:
+        """Returns whether the conversation exists and is owned by the user."""
+        safe_id = (conversation_id or "").strip()
+        safe_user_id = (user_id or "").strip()
+        if not safe_id or not safe_user_id:
+            return False
+        cached_user_id = self._conversation_users.get(safe_id)
+        if cached_user_id is not None:
+            return cached_user_id == safe_user_id
+        if self._conn is None:
+            return False
+        try:
+            row = self._conn.execute(
+                "SELECT user_id, title FROM conversations WHERE id = ? LIMIT 1",
+                (safe_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            owner_id = str(row["user_id"])
+            self._conversation_users[safe_id] = owner_id
+            self._conversation_titles[safe_id] = row["title"]
+            return owner_id == safe_user_id
+        except Exception as error:
+            LOGGER.warning("[SafeMemory] conversation ownership check failed: %s", error)
+            return False
+
+    def set_active_conversation(self, user_id: str, conversation_id: str) -> bool:
+        """Records which conversation the desktop user currently has open."""
+        safe_user_id = (user_id or "").strip()
+        safe_conversation_id = (conversation_id or "").strip()
+        if not safe_user_id or not safe_conversation_id:
+            return False
+        if not self.conversation_belongs_to_user(safe_conversation_id, safe_user_id):
+            return False
+        self._active_conversation_by_user[safe_user_id] = safe_conversation_id
+        return True
+
+    def get_active_conversation_id(self, user_id: str) -> str:
+        """Returns the current active conversation id for a user, if it still exists."""
+        safe_user_id = (user_id or "").strip()
+        if not safe_user_id:
+            return ""
+        conversation_id = self._active_conversation_by_user.get(safe_user_id, "")
+        if conversation_id and self.conversation_belongs_to_user(conversation_id, safe_user_id):
+            return conversation_id
+        self._active_conversation_by_user.pop(safe_user_id, None)
+        return ""
 
     def list_conversations(self, user_id: str, limit: int = 20) -> list[dict]:
         """Returns conversations ordered by most recently updated."""
@@ -214,7 +308,7 @@ class SafeMemory:
     def get_conversation_messages(self, conversation_id: str, limit: int = 50) -> list[dict]:
         """Returns messages for a specific conversation, oldest first."""
         if self._conn is None:
-            return []
+            return self._conversation_messages_from_ram(conversation_id, limit)
         try:
             rows = self._conn.execute(
                 """
@@ -226,10 +320,55 @@ class SafeMemory:
                 """,
                 (conversation_id, limit),
             ).fetchall()
-            return [{"role": row["role"], "content": row["content"]} for row in rows]
+            messages = [{"role": row["role"], "content": row["content"]} for row in rows]
+            return self._merge_conversation_messages(
+                messages,
+                self._conversation_messages_from_ram(conversation_id, limit),
+                limit,
+            )
         except Exception as error:
             LOGGER.warning("[SafeMemory] get_conversation_messages failed: %s", error)
+            return self._conversation_messages_from_ram(conversation_id, limit)
+
+    def _merge_conversation_messages(
+        self,
+        persisted: list[dict],
+        in_memory: list[dict],
+        limit: int,
+    ) -> list[dict]:
+        """Merges persisted rows with RAM-only messages after transient write failures."""
+        if not persisted:
+            return in_memory[-limit:]
+        overlap = 0
+        max_overlap = min(len(persisted), len(in_memory))
+        for size in range(max_overlap, 0, -1):
+            if self._message_signature(persisted[-size:]) == self._message_signature(in_memory[:size]):
+                overlap = size
+                break
+        return [*persisted, *in_memory[overlap:]][-limit:]
+
+    def _message_signature(self, messages: list[dict]) -> list[tuple[str, str]]:
+        return [
+            (str(item.get("role", "")), str(item.get("content", "")))
+            for item in messages
+        ]
+
+    def _conversation_messages_from_ram(self, conversation_id: str, limit: int) -> list[dict]:
+        """Returns conversation-scoped messages from the in-memory store."""
+        owner_id = self._conversation_users.get(conversation_id)
+        if not owner_id:
             return []
+        messages: list[dict] = []
+        for item in self._store.get(owner_id, []):
+            if item.get("conversation_id") != conversation_id:
+                continue
+            messages.append(
+                {
+                    "role": item.get("role", "user"),
+                    "content": item.get("content", ""),
+                }
+            )
+        return messages[-limit:]
 
     def update_conversation_title(self, conversation_id: str, title: str) -> None:
         """Updates the title of a conversation."""
@@ -260,6 +399,10 @@ class SafeMemory:
             )
             self._conn.commit()
             self._conversation_titles.pop(conversation_id, None)
+            self._conversation_users.pop(conversation_id, None)
+            for user_id, active_id in list(self._active_conversation_by_user.items()):
+                if active_id == conversation_id:
+                    self._active_conversation_by_user.pop(user_id, None)
             return cur.rowcount > 0
         except Exception as error:
             LOGGER.warning("[SafeMemory] delete_conversation failed: %s", error)
@@ -288,24 +431,37 @@ class SafeMemory:
         role: str,
         content: str,
         conversation_id: str | None = None,
-    ) -> None:
+    ) -> bool:
         """Appends a message to the user's conversation history (RAM + SQLite)."""
-        self._store[user_id].append({"role": role, "content": content})
+        if conversation_id and not self.conversation_belongs_to_user(conversation_id, user_id):
+            LOGGER.warning(
+                "[SafeMemory] Refusing message for conversation %s owned by another user",
+                conversation_id,
+            )
+            return False
+        item = {"role": role, "content": content}
+        if conversation_id:
+            item["conversation_id"] = conversation_id
+        self._store[user_id].append(item)
 
-        if self._conn is not None:
-            try:
-                self._conn.execute(
-                    """
-                    INSERT INTO conversation_history (user_id, role, content, conversation_id)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (user_id, role, content, conversation_id),
-                )
-                self._conn.commit()
-                if conversation_id:
-                    self._touch_conversation(conversation_id)
-            except Exception as error:
-                LOGGER.warning("[SafeMemory] SQLite write failed: %s", error)
+        if self._conn is None:
+            return True
+
+        try:
+            self._conn.execute(
+                """
+                INSERT INTO conversation_history (user_id, role, content, conversation_id)
+                VALUES (?, ?, ?, ?)
+                """,
+                (user_id, role, content, conversation_id),
+            )
+            self._conn.commit()
+            if conversation_id:
+                self._touch_conversation(conversation_id)
+            return True
+        except Exception as error:
+            LOGGER.warning("[SafeMemory] SQLite write failed: %s", error)
+            return False
 
     # ------------------------------------------------------------------
     # Read

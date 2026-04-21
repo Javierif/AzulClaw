@@ -1,6 +1,6 @@
 # Component Reference
 
-Last reviewed: 2026-04-15
+Last reviewed: 2026-04-20
 
 ## Purpose
 
@@ -15,7 +15,8 @@ This document maps the main source areas to their responsibilities so new contri
 | `azul_backend/azul_brain/api/routes.py` | Desktop and local Bot Framework HTTP routes |
 | `azul_backend/azul_brain/api/services.py` | Aggregation helpers for workspace, memory, runtime, and onboarding data |
 | `azul_backend/azul_brain/runtime/store.py` | Persistence for runtime settings, jobs, and process history |
-| `azul_backend/azul_brain/runtime/scheduler.py` | Heartbeat and scheduled job execution loop |
+| `azul_backend/azul_brain/runtime/scheduler.py` | Heartbeat execution loop, cron runs, manual runs, and proactive desktop delivery |
+| `azul_backend/azul_brain/runtime/heartbeat_intent.py` | Semantic routing and confirmation flow for chat-created heartbeats |
 | `azul_backend/azul_brain/channels/servicebus_worker.py` | Local worker for Azure Service Bus activities |
 | `azul_backend/azul_brain/memory/` | Persistent memory stack and embedding integration |
 | `azul_backend/azul_hands_mcp/mcp_server.py` | Filesystem tool host |
@@ -27,9 +28,9 @@ This document maps the main source areas to their responsibilities so new contri
 |---|---|
 | `azul_desktop/src/app/DesktopApp.tsx` | Desktop shell composition and navigation |
 | `azul_desktop/src/lib/api.ts` | Frontend API client |
-| `azul_desktop/src/features/chat/ChatShell.tsx` | Streaming chat UX |
+| `azul_desktop/src/features/chat/ChatShell.tsx` | Streaming chat UX and heartbeat confirmation card rendering |
 | `azul_desktop/src/features/hatching/HatchingShell.tsx` | First-run setup flow |
-| `azul_desktop/src/features/heartbeats/HeartbeatsShell.tsx` | Scheduler and automation UI |
+| `azul_desktop/src/features/heartbeats/HeartbeatsShell.tsx` | Scheduler and automation UI, including manual run output and delivery status |
 | `azul_desktop/src/features/memory/MemoryShell.tsx` | Memory inspection and deletion |
 | `azul_desktop/src/features/workspace/WorkspaceShell.tsx` | Workspace browser |
 | `azul_desktop/src/features/processes/ProcessesShell.tsx` | Process visibility |
@@ -48,7 +49,8 @@ This document maps the main source areas to their responsibilities so new contri
 | Path | Responsibility |
 |---|---|
 | `memory/runtime_settings.json` | Persisted runtime configuration |
-| `memory/runtime_jobs.json` | Scheduled jobs |
+| `memory/runtime_jobs.json` | Scheduled jobs, cron expressions, and delivery metadata |
+| `memory/runtime_pending_actions.json` | Pending heartbeat creation confirmations |
 | `memory/runtime_process_history.json` | Recent process execution history |
 | `<workspace>/.azul/azul_memory.db` | Durable chat memory and learned facts |
 

@@ -24,6 +24,7 @@ from .memory.preference_extractor import PreferenceExtractor
 from .memory.safe_memory import SafeMemory
 from .memory.vector_store import VectorMemoryStore
 from .runtime.agent_runtime import AgentRuntimeManager
+from .runtime.heartbeat_intent import HeartbeatIntentService
 
 LOGGER = logging.getLogger(__name__)
 
@@ -114,6 +115,10 @@ class ConversationOrchestrator:
     def __init__(self, mcp_client, runtime_manager: AgentRuntimeManager):
         self.mcp_client = mcp_client
         self.runtime_manager = runtime_manager
+        self.heartbeat_intents = HeartbeatIntentService(
+            runtime_manager=runtime_manager,
+            store=runtime_manager.store,
+        )
         self._setup_memory_layers()
 
     def _setup_memory_layers(self) -> None:
@@ -639,11 +644,25 @@ class ConversationOrchestrator:
 
         return reply.text
 
-    async def process_user_message(self, user_id: str, user_message: str, lane: str = "auto") -> ConversationReply:
+    async def process_user_message(
+        self,
+        user_id: str,
+        user_message: str,
+        lane: str = "auto",
+        conversation_id: str | None = None,
+    ) -> ConversationReply:
         """Builds context, runs inference, and persists the conversation."""
+        heartbeat_reply = await self._try_handle_heartbeat_intent(
+            user_id,
+            user_message,
+            conversation_id=conversation_id,
+        )
+        if heartbeat_reply is not None:
+            return heartbeat_reply
+
         route = self.resolve_route(user_message, lane)
         effective_lane = route.lane
-        history = self.memory.get_history(user_id, limit=12)
+        history = self._load_chat_history(user_id, conversation_id, limit=12)
         semantic_memories = await self.retrieve_semantic_memories(user_id, user_message)
         user_knowledge = self.retrieve_user_knowledge(user_id)
         messages = self.build_agent_messages(history, semantic_memories, user_message, user_knowledge)
@@ -657,13 +676,33 @@ class ConversationOrchestrator:
             title="Main conversation",
         )
 
-        await self.persist_with_vector_memory(user_id, "user", user_message)
-        await self.persist_with_vector_memory(user_id, "assistant", reply.text)
+        await self.persist_with_vector_memory(user_id, "user", user_message, conversation_id=conversation_id)
+        await self.persist_with_vector_memory(user_id, "assistant", reply.text, conversation_id=conversation_id)
         # Fire-and-forget preference extraction (skip if message contains credentials)
         if self.preference_extractor and not should_skip_vectorization(user_message):
             self.preference_extractor.fire_and_forget(user_id, user_message, reply.text)
+        if conversation_id:
+            reply.conversation_title = self.memory.get_conversation_title(conversation_id)
         reply.triage_reason = route.reason
         return reply
+
+    def _load_chat_history(
+        self,
+        user_id: str,
+        conversation_id: str | None,
+        *,
+        limit: int,
+    ) -> list[dict]:
+        """Returns conversation history, with a RAM fallback when SQLite is unavailable."""
+        if not conversation_id:
+            return self.memory.get_history(user_id, limit=limit)
+
+        history = self.memory.get_conversation_messages(conversation_id, limit=limit)
+        if history:
+            return history
+        if getattr(self.memory, "_conn", None) is None:
+            return self.memory.get_history(user_id, limit=limit)
+        return history
 
     async def process_user_message_stream(
         self,
@@ -677,6 +716,15 @@ class ConversationOrchestrator:
         on_progress: Callable[[dict], Awaitable[None]] | None = None,
     ) -> ConversationReply:
         """Builds context, runs inference, and emits streaming if applicable."""
+        heartbeat_reply = await self._try_handle_heartbeat_intent(
+            user_id,
+            user_message,
+            conversation_id=conversation_id,
+        )
+        if heartbeat_reply is not None:
+            await on_delta(heartbeat_reply.text)
+            return heartbeat_reply
+
         route = self.resolve_route(user_message, lane)
         effective_lane = route.lane
         progress_blueprint: dict | None = None
@@ -704,10 +752,7 @@ class ConversationOrchestrator:
                     blueprint=progress_blueprint,
                 )
             )
-        if conversation_id:
-            history = self.memory.get_conversation_messages(conversation_id, limit=12)
-        else:
-            history = self.memory.get_history(user_id, limit=12)
+        history = self._load_chat_history(user_id, conversation_id, limit=12)
         is_first_turn = len(history) == 0
         semantic_memories = await self.retrieve_semantic_memories(user_id, user_message)
         user_knowledge = self.retrieve_user_knowledge(user_id)
@@ -787,6 +832,40 @@ class ConversationOrchestrator:
                 )
             )
         return reply
+
+    async def _try_handle_heartbeat_intent(
+        self,
+        user_id: str,
+        user_message: str,
+        conversation_id: str | None = None,
+    ) -> ConversationReply | None:
+        """Intercepts chat turns that create or confirm heartbeat automations."""
+        try:
+            outcome = await self.heartbeat_intents.handle_message(user_id, user_message)
+        except Exception as error:
+            LOGGER.warning("[Heartbeats] Intent flow failed, falling back to chat: %s", error)
+            return None
+
+        if outcome is None:
+            return None
+
+        await self.persist_with_vector_memory(
+            user_id,
+            "user",
+            user_message,
+            conversation_id=conversation_id,
+        )
+        await self.persist_with_vector_memory(
+            user_id,
+            "assistant",
+            outcome.response,
+            conversation_id=conversation_id,
+        )
+        return ConversationReply(
+            text=outcome.response,
+            lane="fast",
+            triage_reason="heartbeat-intent",
+        )
 
     async def _slow_commentary_loop(
         self,

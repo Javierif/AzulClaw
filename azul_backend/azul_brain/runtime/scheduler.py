@@ -7,6 +7,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from agent_framework import Message
+
 from azul_backend.workspace_layout import ensure_workspace_scaffold
 
 from ..api.hatching_store import HatchingStore
@@ -20,6 +22,19 @@ from .store import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+USER_HEARTBEAT_INSTRUCTIONS = """
+You are AzulClaw writing a proactive desktop chat message for the user.
+
+Rules:
+- Return only the message that should be shown to the user.
+- Do not mention cron, scheduler, heartbeat, job execution, tools, files, workspace, or HEARTBEAT.md unless the user's task explicitly asks about those things.
+- Do not inspect or discuss files. This execution has no tool access and no workspace duties.
+- Do not ask where to send the message. The desktop chat is already the destination.
+- For greetings, reminders, nudges, and check-ins, write the message directly.
+- Reply in the same language as the scheduled task unless the task asks for another language.
+- Keep the message concise and natural.
+""".strip()
 
 
 class RuntimeScheduler:
@@ -105,36 +120,53 @@ class RuntimeScheduler:
     async def _execute_job(self, job: ScheduledJob, *, reason: str) -> dict[str, Any]:
         """Executes a job. System heartbeat jobs get HEARTBEAT.md injected."""
         run_time = utc_now()
+        delivery: dict[str, str] = {}
         try:
             try:
-                prompt = job.prompt
                 source = "cron"
                 title = f"Scheduled job: {job.name}"
+                execution_user_id = f"cron:{job.id}"
 
                 # System heartbeat: inject HEARTBEAT.md content
                 if job.system and job.id == SYSTEM_HEARTBEAT_JOB_ID:
                     heartbeat_text = self._load_heartbeat_text()
                     if not heartbeat_text:
                         # Nothing actionable — skip
-                        self.store.mark_job_run(job.id, run_time)
+                        try:
+                            updated = self.store.mark_job_run(job.id, run_time)
+                        except Exception as error:
+                            error_text = str(error).strip() or error.__class__.__name__
+                            LOGGER.exception("Job persistence error %s (%s): %s", job.id, reason, error)
+                            return {
+                                "job_id": job.id,
+                                "reason": reason,
+                                "ok": False,
+                                "response": f"JOB_ERROR: {error_text}",
+                                "next_run_at": "",
+                                "delivery": {"kind": "none"},
+                                "error": f"Persistence error: {error_text}",
+                            }
                         return {
                             "job_id": job.id,
                             "reason": reason,
                             "ok": True,
                             "response": "HEARTBEAT_SKIP",
+                            "next_run_at": updated.next_run_at if updated else "",
+                            "delivery": {"kind": "none"},
                         }
                     prompt = f"{job.prompt}\n\nActive checklist:\n{heartbeat_text}"
                     source = "heartbeat"
                     title = "Workspace heartbeat"
-
-                response = await self.orchestrator.process_message(
-                    user_id=f"cron:{job.id}",
-                    user_message=prompt,
-                    lane=job.lane,
-                    source=source,
-                    store_memory=False,
-                    title=title,
-                )
+                    response = await self.orchestrator.process_message(
+                        user_id=execution_user_id,
+                        user_message=prompt,
+                        lane=job.lane,
+                        source=source,
+                        store_memory=False,
+                        title=title,
+                    )
+                else:
+                    response = await self._execute_user_job(job, reason=reason)
                 ok = True
                 error_text = ""
             except Exception as error:
@@ -143,19 +175,152 @@ class RuntimeScheduler:
                 response = f"JOB_ERROR: {error_text}"
                 LOGGER.exception("Job execution error %s (%s): %s", job.id, reason, error)
 
-            updated = self.store.mark_job_run(job.id, run_time)
+            try:
+                updated = self.store.mark_job_run(job.id, run_time)
+            except Exception as error:
+                persistence_error = str(error).strip() or error.__class__.__name__
+                LOGGER.exception("Job persistence error %s (%s): %s", job.id, reason, error)
+                return {
+                    "job_id": job.id,
+                    "reason": reason,
+                    "ok": False,
+                    "response": response,
+                    "next_run_at": "",
+                    "delivery": {"kind": "none", "error": "delivery skipped after persistence failure"},
+                    "error": f"Persistence error: {persistence_error}",
+                }
+            delivery = self._deliver_to_desktop_chat(
+                job,
+                response,
+                ok=ok,
+                error_text=error_text,
+            )
             result: dict[str, Any] = {
                 "job_id": job.id,
                 "reason": reason,
                 "ok": ok,
                 "response": response,
                 "next_run_at": updated.next_run_at if updated else "",
+                "delivery": delivery,
             }
             if error_text:
                 result["error"] = error_text
             return result
         finally:
             self.running_job_ids.discard(job.id)
+
+    def _deliver_to_desktop_chat(
+        self,
+        job: ScheduledJob,
+        response: str,
+        *,
+        ok: bool,
+        error_text: str,
+    ) -> dict[str, str]:
+        """Stores proactive job output in a visible desktop chat conversation."""
+        try:
+            if job.delivery_kind == "none":
+                return {"kind": "none"}
+
+            clean_response = (response or "").strip()
+            if not clean_response:
+                return {"kind": "none"}
+            if job.system and clean_response in {"HEARTBEAT_OK", "HEARTBEAT_SKIP"}:
+                return {"kind": "none"}
+
+            memory = getattr(self.orchestrator, "memory", None)
+            if memory is None:
+                return {"kind": "none", "error": "memory unavailable"}
+
+            user_id = (job.delivery_user_id or "desktop-user").strip() or "desktop-user"
+            conversation_title = self._delivery_conversation_title(job)
+            conversation_id = memory.get_active_conversation_id(user_id)
+            if conversation_id:
+                conversation_title = memory.get_conversation_title(conversation_id) or conversation_title
+
+            if not conversation_id:
+                conversation_id = (job.delivery_conversation_id or "").strip()
+            ownership_checker = getattr(memory, "conversation_belongs_to_user", None)
+            if conversation_id and callable(ownership_checker):
+                if not ownership_checker(conversation_id, user_id):
+                    conversation_id = ""
+            if conversation_id and not memory.conversation_exists(conversation_id):
+                conversation_id = ""
+
+            if not conversation_id:
+                conversation_id, conversation_title = memory.get_or_create_named_conversation(
+                    user_id,
+                    conversation_title,
+                )
+                self.store.set_job_delivery_conversation(job.id, conversation_id)
+
+            if ok:
+                content = clean_response
+            else:
+                detail = error_text or clean_response
+                content = f"Heartbeat failed: {job.name}\n\n{detail}"
+            delivered = memory.add_message(
+                user_id,
+                "assistant",
+                content,
+                conversation_id=conversation_id,
+            )
+            if not delivered:
+                return {"kind": "none", "error": "message persistence failed"}
+            return {
+                "kind": "desktop_chat",
+                "user_id": user_id,
+                "conversation_id": conversation_id,
+                "conversation_title": conversation_title,
+            }
+        except Exception as error:
+            delivery_error = str(error).strip() or error.__class__.__name__
+            LOGGER.exception("Job delivery error %s: %s", job.id, error)
+            return {"kind": "none", "error": delivery_error}
+
+    def _delivery_conversation_title(self, job: ScheduledJob) -> str:
+        name = (job.name or "Heartbeat").strip()
+        if name.lower().startswith("heartbeat"):
+            return name[:80]
+        return f"Heartbeat: {name}"[:80]
+
+    async def _execute_user_job(self, job: ScheduledJob, *, reason: str) -> str:
+        """Runs a user-created heartbeat without workspace tools or chat history."""
+        prompt = self._build_user_job_prompt(job, reason=reason)
+        runtime_manager = getattr(self.orchestrator, "runtime_manager", None)
+        if runtime_manager is not None and hasattr(runtime_manager, "execute_messages"):
+            result = await runtime_manager.execute_messages(
+                messages=[Message(role="user", contents=prompt)],
+                lane=job.lane,
+                title=f"Scheduled job: {job.name}",
+                source="cron",
+                kind="scheduled-heartbeat",
+                tools_enabled=False,
+                instructions=USER_HEARTBEAT_INSTRUCTIONS,
+            )
+            return result.text
+
+        return await self.orchestrator.process_message(
+            user_id=f"cron:{job.id}",
+            user_message=prompt,
+            lane=job.lane,
+            source="cron",
+            store_memory=False,
+            title=f"Scheduled job: {job.name}",
+        )
+
+    def _build_user_job_prompt(self, job: ScheduledJob, *, reason: str) -> str:
+        """Builds an isolated execution prompt for user-created scheduled jobs."""
+        return (
+            "Recurring reminder execution.\n\n"
+            "Write the exact desktop chat message the user should receive now. "
+            "Do not explain the execution. Do not ask for a destination. "
+            "Do not inspect files, workspace, or HEARTBEAT.md. "
+            "If the task is a reminder or greeting, produce the reminder or greeting directly.\n\n"
+            f"Run reason: {reason}\n"
+            f"Reminder name: {job.name}\n"
+            f"Scheduled task:\n{job.prompt}"
+        )
 
     def _load_heartbeat_text(self) -> str:
         """Reads HEARTBEAT.md from the workspace, filtering comments and headers."""

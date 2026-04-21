@@ -4,6 +4,7 @@ import type {
   ChatRuntimeMeta,
   ConversationSummary,
   HatchingProfile,
+  JobRunResult,
   MemoryRecord,
   ProcessSummary,
   RuntimeOverview,
@@ -85,9 +86,12 @@ export async function deleteConversation(conversationId: string): Promise<void> 
   );
 }
 
-export async function getConversationMessages(conversationId: string): Promise<ChatExchange[]> {
+export async function getConversationMessages(
+  conversationId: string,
+  userId = "desktop-user",
+): Promise<ChatExchange[]> {
   const data = await fetchJson<{ messages: { role: string; content: string }[] }>(
-    `/api/desktop/conversations/${encodeURIComponent(conversationId)}/messages`,
+    `/api/desktop/conversations/${encodeURIComponent(conversationId)}/messages?user_id=${encodeURIComponent(userId)}`,
   );
   return data.messages.map((m, i) => ({
     id: `loaded-${i}`,
@@ -348,10 +352,14 @@ export async function saveJob(payload: {
   name: string;
   prompt: string;
   lane: "auto" | "fast" | "slow";
-  schedule_kind: "at" | "every";
+  schedule_kind: "at" | "every" | "cron";
   interval_seconds?: number;
+  cron_expression?: string;
   run_at?: string;
   enabled?: boolean;
+  delivery_kind?: "desktop_chat" | "none";
+  delivery_user_id?: string;
+  delivery_conversation_id?: string;
 }): Promise<ScheduledJob> {
   return fetchJson<ScheduledJob>("/api/desktop/jobs", {
     method: "POST",
@@ -360,8 +368,8 @@ export async function saveJob(payload: {
   });
 }
 
-export async function runJob(jobId: string): Promise<void> {
-  await fetchJson(`/api/desktop/jobs/${encodeURIComponent(jobId)}/run`, {
+export async function runJob(jobId: string): Promise<JobRunResult> {
+  return fetchJson<JobRunResult>(`/api/desktop/jobs/${encodeURIComponent(jobId)}/run`, {
     method: "POST",
   });
 }

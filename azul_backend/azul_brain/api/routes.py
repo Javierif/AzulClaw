@@ -22,6 +22,19 @@ from .services import (
 LOGGER = logging.getLogger(__name__)
 
 
+def _desktop_user_id(value: object = "desktop-user") -> str:
+    return str(value or "desktop-user").strip() or "desktop-user"
+
+
+def _conversation_belongs_to_user(memory, conversation_id: str | None, user_id: str) -> bool:
+    if not conversation_id:
+        return False
+    checker = getattr(memory, "conversation_belongs_to_user", None)
+    if callable(checker):
+        return bool(checker(conversation_id, user_id))
+    return bool(memory.conversation_exists(conversation_id))
+
+
 async def health_handler(_: web.Request) -> web.Response:
     """Returns basic health status of the local backend."""
     return web.json_response({"status": "ok"})
@@ -32,19 +45,32 @@ async def desktop_chat_handler(req: web.Request) -> web.Response:
     orchestrator = req.app["orchestrator"]
     payload = await req.json()
 
-    user_id = str(payload.get("user_id", "desktop-user")).strip() or "desktop-user"
+    user_id = _desktop_user_id(payload.get("user_id"))
     message = str(payload.get("message", "")).strip()
+    conversation_id = str(payload.get("conversation_id", "")).strip() or None
 
     if not message:
         return web.json_response({"error": "message is required"}, status=400)
 
-    reply = await orchestrator.process_user_message(user_id, message, lane="auto")
-    history = orchestrator.memory.get_history(user_id, limit=12)
+    if not _conversation_belongs_to_user(orchestrator.memory, conversation_id, user_id):
+        conversation_id, _ = orchestrator.memory.get_or_create_empty_conversation(user_id)
+    orchestrator.memory.set_active_conversation(user_id, conversation_id)
+
+    reply = await orchestrator.process_user_message(
+        user_id,
+        message,
+        lane="auto",
+        conversation_id=conversation_id,
+    )
+    history = orchestrator.memory.get_conversation_messages(conversation_id, limit=12)
+    conversation_title = orchestrator.memory.get_conversation_title(conversation_id)
     return web.json_response(
         {
             "user_id": user_id,
             "reply": reply.text,
             "history": history,
+            "conversation_id": conversation_id,
+            "conversation_title": conversation_title or "",
             "runtime": {
                 "lane": reply.lane,
                 "model_id": reply.model_id,
@@ -61,13 +87,14 @@ async def desktop_chat_stream_handler(req: web.Request) -> web.StreamResponse:
     orchestrator = req.app["orchestrator"]
     payload = await req.json()
 
-    user_id = str(payload.get("user_id", "desktop-user")).strip() or "desktop-user"
+    user_id = _desktop_user_id(payload.get("user_id"))
     message = str(payload.get("message", "")).strip()
     conversation_id = str(payload.get("conversation_id", "")).strip() or None
 
-    # If no conversation supplied, get or create an empty one so messages are always scoped
-    if not conversation_id:
+    # If no conversation supplied, get or create an empty one so messages are always scoped.
+    if not _conversation_belongs_to_user(orchestrator.memory, conversation_id, user_id):
         conversation_id, _ = orchestrator.memory.get_or_create_empty_conversation(user_id)
+    orchestrator.memory.set_active_conversation(user_id, conversation_id)
 
     if not message:
         return web.json_response({"error": "message is required"}, status=400)
@@ -147,7 +174,7 @@ async def desktop_chat_stream_handler(req: web.Request) -> web.StreamResponse:
 async def desktop_conversations_handler(req: web.Request) -> web.Response:
     """Lists conversations for the desktop user."""
     orchestrator = req.app["orchestrator"]
-    user_id = req.query.get("user_id", "desktop-user")
+    user_id = _desktop_user_id(req.query.get("user_id"))
     convs = orchestrator.memory.list_conversations(user_id)
     return web.json_response({"items": convs})
 
@@ -156,8 +183,9 @@ async def desktop_create_conversation_handler(req: web.Request) -> web.Response:
     """Returns an existing empty conversation or creates one (idempotent)."""
     orchestrator = req.app["orchestrator"]
     payload = await req.json()
-    user_id = str(payload.get("user_id", "desktop-user")).strip() or "desktop-user"
+    user_id = _desktop_user_id(payload.get("user_id"))
     conv_id, title = orchestrator.memory.get_or_create_empty_conversation(user_id)
+    orchestrator.memory.set_active_conversation(user_id, conv_id)
     return web.json_response({"id": conv_id, "title": title})
 
 
@@ -165,8 +193,12 @@ async def desktop_conversation_messages_handler(req: web.Request) -> web.Respons
     """Returns messages for a specific conversation."""
     orchestrator = req.app["orchestrator"]
     conv_id = req.match_info.get("conv_id", "").strip()
+    user_id = _desktop_user_id(req.query.get("user_id"))
     if not conv_id:
         return web.json_response({"error": "conv_id required"}, status=400)
+    if not _conversation_belongs_to_user(orchestrator.memory, conv_id, user_id):
+        return web.json_response({"error": "Conversation not found"}, status=404)
+    orchestrator.memory.set_active_conversation(user_id, conv_id)
     msgs = orchestrator.memory.get_conversation_messages(conv_id)
     return web.json_response({"messages": msgs})
 
@@ -191,14 +223,14 @@ async def desktop_processes_handler(_: web.Request) -> web.Response:
 async def desktop_memory_handler(req: web.Request) -> web.Response:
     """Returns a summarised memory view for the desktop app."""
     orchestrator = req.app["orchestrator"]
-    user_id = req.query.get("user_id", "desktop-user")
+    user_id = _desktop_user_id(req.query.get("user_id"))
     return web.json_response({"items": summarize_memory(orchestrator, user_id)})
 
 
 async def desktop_memory_delete_handler(req: web.Request) -> web.Response:
     """Deletes a specific memory entry from the vector store."""
     memory_id = req.match_info.get("memory_id", "").strip()
-    user_id = req.query.get("user_id", "desktop-user")
+    user_id = _desktop_user_id(req.query.get("user_id"))
 
     if not memory_id:
         return web.json_response({"error": "memory_id required"}, status=400)

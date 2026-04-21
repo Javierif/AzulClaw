@@ -19,6 +19,13 @@ type ChatMessageItem = ChatExchange & {
   progress?: ThinkingProgress;
 };
 
+type HeartbeatConfirmationDetails = {
+  name: string;
+  schedule: string;
+  action: string;
+  delivery: string;
+};
+
 /** Shown only in the UI until the user sends their first message (not persisted). */
 const WELCOME_MESSAGE_ID = "welcome-greeting";
 
@@ -39,6 +46,21 @@ function toUiMessages(items: ChatExchange[]): ChatMessageItem[] {
   return items.map((item) => ({ ...item, kind: "text" }));
 }
 
+function sameMessages(a: ChatMessageItem[], b: ChatMessageItem[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  return a.every((item, index) => {
+    const other = b[index];
+    return (
+      item.id === other.id &&
+      item.role === other.role &&
+      item.kind === other.kind &&
+      item.content === other.content
+    );
+  });
+}
+
 function phaseStatusLabel(status: "pending" | "active" | "done") {
   if (status === "done") {
     return "Done";
@@ -47,6 +69,87 @@ function phaseStatusLabel(status: "pending" | "active" | "done") {
     return "In progress";
   }
   return "Pending";
+}
+
+function parseHeartbeatConfirmation(content: string): HeartbeatConfirmationDetails | null {
+  const text = (content || "").trim();
+  if (!text.startsWith("I can create this heartbeat:")) {
+    return null;
+  }
+
+  const block = (label: string, nextLabels: string[]) => {
+    const stops = [
+      ...nextLabels.map((nextLabel) => `^${nextLabel}:\\s*`),
+      "^Reply\\b",
+      "(?![\\s\\S])",
+    ].join("|");
+    return text.match(new RegExp(`^${label}:\\s*([\\s\\S]*?)(?=${stops})`, "m"))?.[1]?.trim();
+  };
+
+  const name = block("Name", ["Schedule"])?.replace(/\s+/g, " ");
+  const schedule = block("Schedule", ["Action"])?.replace(/^`|`$/g, "").trim();
+  const action = block("Action", ["Delivery"]);
+  const delivery = block("Delivery", [])?.replace(/\s+/g, " ") || "desktop chat";
+  if (!name || !schedule || !action) {
+    return null;
+  }
+
+  return { name, schedule, action, delivery };
+}
+
+function HeartbeatConfirmationCard({
+  details,
+  disabled,
+  onCreate,
+  onCancel,
+}: {
+  details: HeartbeatConfirmationDetails;
+  disabled: boolean;
+  onCreate: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <article className="message-bubble message-assistant message-heartbeat-card">
+      <span className="message-role">AzulClaw</span>
+      <div className="heartbeat-confirm-card">
+        <div className="heartbeat-confirm-head">
+          <div>
+            <p className="heartbeat-confirm-eyebrow">Heartbeat draft</p>
+            <h3>{details.name}</h3>
+          </div>
+          <span className="heartbeat-confirm-schedule">{details.schedule}</span>
+        </div>
+        <div className="heartbeat-confirm-body">
+          <div>
+            <span>Action</span>
+            <p>{details.action}</p>
+          </div>
+          <div>
+            <span>Delivery</span>
+            <p>{details.delivery}</p>
+          </div>
+        </div>
+        <div className="heartbeat-confirm-actions">
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={onCancel}
+            disabled={disabled}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={onCreate}
+            disabled={disabled}
+          >
+            Create heartbeat
+          </button>
+        </div>
+      </div>
+    </article>
+  );
 }
 
 function ThinkingCard({ message }: { message: ChatMessageItem }) {
@@ -193,7 +296,27 @@ export function ChatShell({
   const streamBufferRef = useRef("");
   const answerStartedRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
   const streamPumpRef = useRef<number | null>(null);
+
+  function isMessageListNearBottom(): boolean {
+    const list = messageListRef.current;
+    if (!list) {
+      return true;
+    }
+    return list.scrollHeight - list.scrollTop - list.clientHeight < 96;
+  }
+
+  function replaceMessagesIfChanged(nextMessages: ChatMessageItem[], shouldAutoScroll: boolean) {
+    setMessages((current) => {
+      if (sameMessages(current, nextMessages)) {
+        return current;
+      }
+      shouldAutoScrollRef.current = shouldAutoScroll;
+      return nextMessages;
+    });
+  }
 
   function ensureStreamPump() {
     if (streamPumpRef.current !== null) {
@@ -263,14 +386,14 @@ export function ChatShell({
           setConversationId(withMessages.id);
           setSessionListTitle(t);
           onTitleChange?.(t);
-          setMessages(toUiMessages(msgs));
+          replaceMessagesIfChanged(toUiMessages(msgs), true);
         } else {
-          setMessages([createWelcomeMessage()]);
+          replaceMessagesIfChanged([createWelcomeMessage()], true);
           setSessionListTitle(DEFAULT_CONVERSATION_TITLE);
           onTitleChange?.(DEFAULT_CONVERSATION_TITLE);
         }
       } catch {
-        setMessages([createWelcomeMessage()]);
+        replaceMessagesIfChanged([createWelcomeMessage()], true);
         setSessionListTitle(DEFAULT_CONVERSATION_TITLE);
         onTitleChange?.(DEFAULT_CONVERSATION_TITLE);
       }
@@ -279,6 +402,61 @@ export function ChatShell({
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let pollId: number | null = null;
+
+    async function refresh() {
+      if (cancelled) {
+        return;
+      }
+      if (isSending) {
+        if (!cancelled) {
+          pollId = window.setTimeout(() => void refresh(), 5_000);
+        }
+        return;
+      }
+
+      try {
+        const chatsRaw = await listConversations();
+        if (cancelled) return;
+        const chats = withNormalizedConversationTitles(chatsRaw);
+        setRecentChats(chats);
+
+        if (!conversationId) {
+          return;
+        }
+
+        const active = chats.find((chat) => chat.id === conversationId);
+        if (!active) {
+          return;
+        }
+
+        const msgs = await getConversationMessages(conversationId);
+        if (cancelled) return;
+        replaceMessagesIfChanged(toUiMessages(msgs), isMessageListNearBottom());
+        const title = normalizeConversationTitle(active.title);
+        setSessionListTitle(title);
+        onTitleChange?.(title);
+      } catch {
+        /* ignore background refresh failures */
+      } finally {
+        if (!cancelled) {
+          pollId = window.setTimeout(() => void refresh(), 5_000);
+        }
+      }
+    }
+
+    pollId = window.setTimeout(() => void refresh(), 5_000);
+
+    return () => {
+      cancelled = true;
+      if (pollId !== null) {
+        window.clearTimeout(pollId);
+      }
+    };
+  }, [conversationId, isSending, onTitleChange]);
 
   // Register the new-chat handler with the parent (topbar button)
   const handleNewChatRef = useRef<() => void>(() => {});
@@ -290,7 +468,7 @@ export function ChatShell({
     const onlyWelcome = msgs.length === 1 && msgs[0]?.id === WELCOME_MESSAGE_ID;
     if (msgs.length === 0 || onlyWelcome) return;
     setConversationId(null);
-    setMessages([createWelcomeMessage()]);
+    replaceMessagesIfChanged([createWelcomeMessage()], true);
     setSessionListTitle(DEFAULT_CONVERSATION_TITLE);
     onTitleChange?.(DEFAULT_CONVERSATION_TITLE);
   };
@@ -304,7 +482,7 @@ export function ChatShell({
     try {
       const msgs = await getConversationMessages(id);
       const t = normalizeConversationTitle(title);
-      setMessages(toUiMessages(msgs));
+      replaceMessagesIfChanged(toUiMessages(msgs), true);
       setConversationId(id);
       setSessionListTitle(t);
       onTitleChange?.(t);
@@ -322,7 +500,7 @@ export function ChatShell({
         await handleLoadConversation(remaining[0].id, remaining[0].title);
       } else {
         setConversationId(null);
-        setMessages([createWelcomeMessage()]);
+        replaceMessagesIfChanged([createWelcomeMessage()], true);
         setSessionListTitle(DEFAULT_CONVERSATION_TITLE);
         onTitleChange?.(DEFAULT_CONVERSATION_TITLE);
       }
@@ -334,6 +512,9 @@ export function ChatShell({
   }
 
   useEffect(() => {
+    if (!shouldAutoScrollRef.current && !isMessageListNearBottom()) {
+      return;
+    }
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
@@ -345,11 +526,12 @@ export function ChatShell({
     };
   }, []);
 
-  async function handleSend() {
-    const trimmed = draft.trim();
+  async function handleSend(messageOverride?: string) {
+    const trimmed = (messageOverride ?? draft).trim();
     if (!trimmed || isSending) {
       return;
     }
+    shouldAutoScrollRef.current = true;
 
     setIsSending(true);
     answerStartedRef.current = false;
@@ -379,7 +561,9 @@ export function ChatShell({
         },
       ];
     });
-    setDraft("");
+    if (!messageOverride) {
+      setDraft("");
+    }
 
     /** Only the first reply that attaches a conversation should set the sidebar title (not every turn). */
     const isFirstBoundSend = conversationId === null;
@@ -610,20 +794,43 @@ export function ChatShell({
   return (
     <section className="chat-layout">
       <div className="chat-panel card">
-        <div className="message-list">
-          {messages.map((message) =>
-            message.kind === "thinking" && message.role === "assistant" ? (
-              <ThinkingCard key={message.id} message={message} />
-            ) : message.kind === "pending" ? (
-              <article key={message.id} className="message-bubble message-assistant">
-                <span className="message-role">AzulClaw</span>
-                <p style={{ display: "flex", alignItems: "center", gap: "5px", margin: 0, padding: "4px 0" }}>
-                  <span className="message-wave-dot" />
-                  <span className="message-wave-dot" />
-                  <span className="message-wave-dot" />
-                </p>
-              </article>
-            ) : (
+        <div className="message-list" ref={messageListRef}>
+          {messages.map((message) => {
+            const heartbeatDetails =
+              message.role === "assistant"
+                ? parseHeartbeatConfirmation(message.content)
+                : null;
+
+            if (message.kind === "thinking" && message.role === "assistant") {
+              return <ThinkingCard key={message.id} message={message} />;
+            }
+
+            if (message.kind === "pending") {
+              return (
+                <article key={message.id} className="message-bubble message-assistant">
+                  <span className="message-role">AzulClaw</span>
+                  <p style={{ display: "flex", alignItems: "center", gap: "5px", margin: 0, padding: "4px 0" }}>
+                    <span className="message-wave-dot" />
+                    <span className="message-wave-dot" />
+                    <span className="message-wave-dot" />
+                  </p>
+                </article>
+              );
+            }
+
+            if (heartbeatDetails) {
+              return (
+                <HeartbeatConfirmationCard
+                  key={message.id}
+                  details={heartbeatDetails}
+                  disabled={isSending}
+                  onCreate={() => void handleSend("yes, create it")}
+                  onCancel={() => void handleSend("no")}
+                />
+              );
+            }
+
+            return (
               <article
                 key={message.id}
                 className={`message-bubble message-${message.role}`}
@@ -633,8 +840,8 @@ export function ChatShell({
                 </span>
                 <p>{message.content}</p>
               </article>
-            ),
-          )}
+            );
+          })}
           <div ref={bottomRef} />
         </div>
 
