@@ -52,6 +52,34 @@ class SafeMemoryTests(unittest.TestCase):
         self.assertTrue(memory.set_active_conversation("desktop-user", conversation_id))
         self.assertEqual(memory.get_active_conversation_id("desktop-user"), conversation_id)
 
+    def test_add_message_rejects_conversation_owned_by_another_user(self) -> None:
+        memory = SafeMemory(db_path=None)
+        conversation_id = memory.create_conversation("desktop-user")
+
+        with self.assertLogs("azul_backend.azul_brain.memory.safe_memory", level="WARNING"):
+            self.assertFalse(
+                memory.add_message(
+                    "other-user",
+                    "assistant",
+                    "wrong chat",
+                    conversation_id=conversation_id,
+                )
+            )
+        self.assertEqual(memory.get_conversation_messages(conversation_id), [])
+
+    def test_ram_conversation_lookup_is_scoped_to_owner(self) -> None:
+        memory = SafeMemory(db_path=None)
+        conversation_id = memory.create_conversation("desktop-user")
+        memory._store["other-user"].append(
+            {
+                "role": "assistant",
+                "content": "wrong user",
+                "conversation_id": conversation_id,
+            }
+        )
+
+        self.assertEqual(memory.get_conversation_messages(conversation_id), [])
+
     def test_conversation_messages_include_ram_only_rows_when_sqlite_has_history(self) -> None:
         with temp_memory_dir() as tmp:
             memory = SafeMemory(db_path=str(tmp / "memory.sqlite"))
@@ -78,6 +106,36 @@ class SafeMemoryTests(unittest.TestCase):
                 [
                     {"role": "assistant", "content": "persisted reply"},
                     {"role": "assistant", "content": "ram-only reply"},
+                ],
+            )
+            memory.close()
+
+    def test_conversation_message_merge_preserves_legitimate_repeated_messages(self) -> None:
+        with temp_memory_dir() as tmp:
+            memory = SafeMemory(db_path=str(tmp / "memory.sqlite"))
+            conversation_id = memory.create_conversation("desktop-user")
+
+            self.assertTrue(
+                memory.add_message(
+                    "desktop-user",
+                    "user",
+                    "ok",
+                    conversation_id=conversation_id,
+                )
+            )
+            memory._store["desktop-user"].append(
+                {
+                    "role": "user",
+                    "content": "ok",
+                    "conversation_id": conversation_id,
+                }
+            )
+
+            self.assertEqual(
+                memory.get_conversation_messages(conversation_id),
+                [
+                    {"role": "user", "content": "ok"},
+                    {"role": "user", "content": "ok"},
                 ],
             )
             memory.close()

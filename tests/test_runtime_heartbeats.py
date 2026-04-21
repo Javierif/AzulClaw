@@ -14,6 +14,7 @@ from croniter import croniter
 from azul_backend.azul_brain.runtime.scheduler import RuntimeScheduler
 from azul_backend.azul_brain.memory.safe_memory import SafeMemory
 from azul_backend.azul_brain.runtime.store import (
+    SYSTEM_HEARTBEAT_DEFAULT_INTERVAL,
     SYSTEM_HEARTBEAT_DEFAULT_PROMPT,
     SYSTEM_HEARTBEAT_JOB_ID,
     RuntimeStore,
@@ -96,6 +97,40 @@ class RuntimeStoreHeartbeatTests(unittest.TestCase):
             self.assertEqual(persisted["source"], "system")
             self.assertTrue(persisted["next_run_at"])
             self.assertNotEqual(persisted["updated_at"], "2026-04-12T15:59:47Z")
+
+    def test_load_jobs_coerces_system_heartbeat_schedule(self) -> None:
+        with temp_runtime_dir() as tmp:
+            root = Path(tmp)
+            store = make_store(root)
+            store.jobs_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": SYSTEM_HEARTBEAT_JOB_ID,
+                            "name": "System heartbeat",
+                            "prompt": SYSTEM_HEARTBEAT_DEFAULT_PROMPT,
+                            "lane": "fast",
+                            "schedule_kind": "cron",
+                            "run_at": "2026-01-01T00:00:00Z",
+                            "interval_seconds": 0,
+                            "cron_expression": "* * * * *",
+                            "enabled": True,
+                            "last_run_at": "2026-01-01T00:00:00Z",
+                            "next_run_at": "2026-01-01T00:01:00Z",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            job = store.load_jobs()[0]
+
+            self.assertTrue(job.system)
+            self.assertEqual(job.schedule_kind, "every")
+            self.assertEqual(job.run_at, "")
+            self.assertEqual(job.cron_expression, "")
+            self.assertEqual(job.interval_seconds, SYSTEM_HEARTBEAT_DEFAULT_INTERVAL)
+            self.assertEqual(job.next_run_at, "2026-01-01T00:15:00Z")
 
     def test_upsert_and_mark_run_preserve_system_identity(self) -> None:
         with temp_runtime_dir() as tmp:

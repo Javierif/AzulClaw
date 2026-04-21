@@ -204,13 +204,43 @@ class HeartbeatIntentServiceTests(unittest.IsolatedAsyncioTestCase):
             )
 
             with fake_agent_framework_module():
-                with self.assertRaisesRegex(ValueError, "5-field cron expression"):
-                    await service.handle_message("desktop-user", "yes, create it")
+                outcome = await service.handle_message("desktop-user", "yes, create it")
 
+            self.assertIsNotNone(outcome)
+            assert outcome is not None
+            self.assertIn("I could not create the heartbeat", outcome.response)
+            self.assertIsNotNone(outcome.pending)
             pending = pending_store.get_for_user("desktop-user")
             self.assertIsNotNone(pending)
             assert pending is not None
             self.assertEqual(pending.draft["cron_expression"], "*/10 * * * * *")
+            self.assertEqual(store.load_jobs(), [])
+
+    async def test_immediate_creation_error_returns_clarification(self) -> None:
+        with temp_runtime_dir() as root:
+            store = make_store(root)
+            runtime = FakeRuntimeManager(
+                store,
+                value=create_route(
+                    name="Too frequent",
+                    prompt="Run too frequently.",
+                    cron_expression="*/10 * * * * *",
+                ),
+            )
+            service = HeartbeatIntentService(
+                runtime_manager=runtime,
+                store=store,
+                pending_store=PendingHeartbeatStore(root / "pending.json"),
+            )
+            service._requires_confirmation = lambda: False
+
+            with fake_agent_framework_module():
+                outcome = await service.handle_message("desktop-user", "Run this every 10 seconds")
+
+            self.assertIsNotNone(outcome)
+            assert outcome is not None
+            self.assertIn("I could not create the heartbeat", outcome.response)
+            self.assertIsNone(outcome.pending)
             self.assertEqual(store.load_jobs(), [])
 
     async def test_request_creates_cron_job_immediately_when_confirmation_is_disabled(self) -> None:

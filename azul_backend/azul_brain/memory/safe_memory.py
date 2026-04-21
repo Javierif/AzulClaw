@@ -339,32 +339,35 @@ class SafeMemory:
         """Merges persisted rows with RAM-only messages after transient write failures."""
         if not persisted:
             return in_memory[-limit:]
-        messages = list(persisted)
-        seen = {
+        overlap = 0
+        max_overlap = min(len(persisted), len(in_memory))
+        for size in range(max_overlap, 0, -1):
+            if self._message_signature(persisted[-size:]) == self._message_signature(in_memory[:size]):
+                overlap = size
+                break
+        return [*persisted, *in_memory[overlap:]][-limit:]
+
+    def _message_signature(self, messages: list[dict]) -> list[tuple[str, str]]:
+        return [
             (str(item.get("role", "")), str(item.get("content", "")))
-            for item in persisted
-        }
-        for item in in_memory:
-            key = (str(item.get("role", "")), str(item.get("content", "")))
-            if key in seen:
-                continue
-            messages.append(item)
-            seen.add(key)
-        return messages[-limit:]
+            for item in messages
+        ]
 
     def _conversation_messages_from_ram(self, conversation_id: str, limit: int) -> list[dict]:
         """Returns conversation-scoped messages from the in-memory store."""
+        owner_id = self._conversation_users.get(conversation_id)
+        if not owner_id:
+            return []
         messages: list[dict] = []
-        for history in self._store.values():
-            for item in history:
-                if item.get("conversation_id") != conversation_id:
-                    continue
-                messages.append(
-                    {
-                        "role": item.get("role", "user"),
-                        "content": item.get("content", ""),
-                    }
-                )
+        for item in self._store.get(owner_id, []):
+            if item.get("conversation_id") != conversation_id:
+                continue
+            messages.append(
+                {
+                    "role": item.get("role", "user"),
+                    "content": item.get("content", ""),
+                }
+            )
         return messages[-limit:]
 
     def update_conversation_title(self, conversation_id: str, title: str) -> None:
@@ -430,6 +433,12 @@ class SafeMemory:
         conversation_id: str | None = None,
     ) -> bool:
         """Appends a message to the user's conversation history (RAM + SQLite)."""
+        if conversation_id and not self.conversation_belongs_to_user(conversation_id, user_id):
+            LOGGER.warning(
+                "[SafeMemory] Refusing message for conversation %s owned by another user",
+                conversation_id,
+            )
+            return False
         item = {"role": role, "content": content}
         if conversation_id:
             item["conversation_id"] = conversation_id

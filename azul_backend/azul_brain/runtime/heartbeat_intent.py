@@ -23,6 +23,11 @@ PENDING_CONFIRMATION_CLARIFICATION = (
     "I still have a heartbeat draft waiting for confirmation. "
     "Please use the card buttons, or reply 'yes, create it' or 'no'."
 )
+HEARTBEAT_CREATION_ERROR = (
+    "I could not create the heartbeat because the schedule is invalid. "
+    "Could you confirm how often you want me to run this task? "
+    "For example: 'every 2 hours'."
+)
 
 
 def _runtime_root() -> Path:
@@ -185,7 +190,13 @@ class HeartbeatIntentService:
         if pending is not None:
             if route.route == "confirm_pending":
                 draft = self._draft_from_dict(pending.draft)
-                job = self._create_job(draft)
+                try:
+                    job = self._create_job(draft)
+                except ValueError:
+                    return HeartbeatIntentOutcome(
+                        response=HEARTBEAT_CREATION_ERROR,
+                        pending=pending,
+                    )
                 self.pending_store.pop_for_user(user_id)
                 return HeartbeatIntentOutcome(
                     response=self._created_response(job),
@@ -211,7 +222,10 @@ class HeartbeatIntentService:
                 pending=action,
             )
 
-        job = self._create_job(draft)
+        try:
+            job = self._create_job(draft)
+        except ValueError:
+            return HeartbeatIntentOutcome(response=HEARTBEAT_CREATION_ERROR)
         return HeartbeatIntentOutcome(response=self._created_response(job), job=job)
 
     async def _semantic_route(

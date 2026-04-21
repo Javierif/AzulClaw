@@ -337,6 +337,7 @@ class RuntimeStore:
             schedule_kind = str(item.get("schedule_kind", "every")).strip().lower()
             if schedule_kind not in {"at", "every", "cron"}:
                 schedule_kind = "every"
+            run_at = str(item.get("run_at", "")).strip()
 
             is_system_job = job_id == SYSTEM_HEARTBEAT_JOB_ID
             source = str(item.get("source", "user")).strip() or "user"
@@ -356,6 +357,16 @@ class RuntimeStore:
                 min_value=0,
                 max_value=31_536_000,
             )
+            if is_system_job:
+                if schedule_kind != "every" or run_at or cron_expression:
+                    next_run_at = ""
+                schedule_kind = "every"
+                run_at = ""
+                cron_expression = ""
+                interval_seconds = max(
+                    60,
+                    interval_seconds or SYSTEM_HEARTBEAT_DEFAULT_INTERVAL,
+                )
             if schedule_kind == "every" and interval_seconds < 60:
                 interval_seconds = 60
                 next_run_at = ""
@@ -368,7 +379,7 @@ class RuntimeStore:
             elif enabled and not next_run_at and schedule_kind in {"every", "cron"}:
                 next_run_at = self._compute_next_run_at(
                     schedule_kind=schedule_kind,
-                    run_at=str(item.get("run_at", "")).strip(),
+                    run_at=run_at,
                     interval_seconds=interval_seconds,
                     cron_expression=cron_expression,
                     previous_last_run_at=str(item.get("last_run_at", "")).strip(),
@@ -381,7 +392,7 @@ class RuntimeStore:
                     prompt=prompt,
                     lane=lane,
                     schedule_kind=schedule_kind,
-                    run_at=str(item.get("run_at", "")).strip(),
+                    run_at=run_at,
                     interval_seconds=interval_seconds,
                     cron_expression=cron_expression,
                     enabled=enabled,
