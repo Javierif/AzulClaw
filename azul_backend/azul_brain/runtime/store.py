@@ -350,18 +350,19 @@ class RuntimeStore:
             cron_expression = str(item.get("cron_expression", "")).strip()
             enabled = bool(item.get("enabled", True))
             next_run_at = str(item.get("next_run_at", "")).strip()
+            interval_seconds = self._bounded_int(
+                item.get("interval_seconds"),
+                default=0,
+                min_value=0,
+                max_value=31_536_000,
+            )
+            if schedule_kind == "every" and interval_seconds < 60:
+                interval_seconds = 60
+                next_run_at = ""
             if schedule_kind == "cron" and not self._is_valid_cron_expression(cron_expression):
                 enabled = False
                 next_run_at = ""
             elif enabled and not next_run_at and schedule_kind in {"every", "cron"}:
-                interval_seconds = self._bounded_int(
-                    item.get("interval_seconds"),
-                    default=0,
-                    min_value=0,
-                    max_value=31_536_000,
-                )
-                if schedule_kind == "every":
-                    interval_seconds = max(60, interval_seconds)
                 next_run_at = self._compute_next_run_at(
                     schedule_kind=schedule_kind,
                     run_at=str(item.get("run_at", "")).strip(),
@@ -378,12 +379,7 @@ class RuntimeStore:
                     lane=lane,
                     schedule_kind=schedule_kind,
                     run_at=str(item.get("run_at", "")).strip(),
-                    interval_seconds=self._bounded_int(
-                        item.get("interval_seconds"),
-                        default=0,
-                        min_value=0,
-                        max_value=31_536_000,
-                    ),
+                    interval_seconds=interval_seconds,
                     cron_expression=cron_expression,
                     enabled=enabled,
                     system=is_system_job,

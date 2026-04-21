@@ -280,6 +280,34 @@ class RuntimeStoreHeartbeatTests(unittest.TestCase):
             self.assertTrue(jobs["legacy-cron"].next_run_at)
             self.assertIsNotNone(parse_iso_datetime(jobs["legacy-cron"].next_run_at))
 
+    def test_load_jobs_clamps_sub_minute_every_jobs(self) -> None:
+        with temp_runtime_dir() as tmp:
+            root = Path(tmp)
+            store = make_store(root)
+            store.jobs_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": "legacy-fast-every",
+                            "name": "Legacy fast interval",
+                            "prompt": "Send a reminder.",
+                            "lane": "fast",
+                            "schedule_kind": "every",
+                            "interval_seconds": 5,
+                            "enabled": True,
+                            "last_run_at": "2026-01-01T00:00:00Z",
+                            "next_run_at": "2026-01-01T00:00:05Z",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            job = store.load_jobs()[0]
+
+            self.assertEqual(job.interval_seconds, 60)
+            self.assertEqual(job.next_run_at, "2026-01-01T00:01:00Z")
+
 
 class DummyOrchestrator:
     def __init__(

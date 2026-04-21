@@ -240,6 +240,10 @@ class RuntimeScheduler:
 
             if not conversation_id:
                 conversation_id = (job.delivery_conversation_id or "").strip()
+            ownership_checker = getattr(memory, "conversation_belongs_to_user", None)
+            if conversation_id and callable(ownership_checker):
+                if not ownership_checker(conversation_id, user_id):
+                    conversation_id = ""
             if conversation_id and not memory.conversation_exists(conversation_id):
                 conversation_id = ""
 

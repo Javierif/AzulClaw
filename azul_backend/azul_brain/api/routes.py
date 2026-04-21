@@ -26,6 +26,15 @@ def _desktop_user_id(value: object = "desktop-user") -> str:
     return str(value or "desktop-user").strip() or "desktop-user"
 
 
+def _conversation_belongs_to_user(memory, conversation_id: str | None, user_id: str) -> bool:
+    if not conversation_id:
+        return False
+    checker = getattr(memory, "conversation_belongs_to_user", None)
+    if callable(checker):
+        return bool(checker(conversation_id, user_id))
+    return bool(memory.conversation_exists(conversation_id))
+
+
 async def health_handler(_: web.Request) -> web.Response:
     """Returns basic health status of the local backend."""
     return web.json_response({"status": "ok"})
@@ -43,7 +52,7 @@ async def desktop_chat_handler(req: web.Request) -> web.Response:
     if not message:
         return web.json_response({"error": "message is required"}, status=400)
 
-    if not conversation_id:
+    if not _conversation_belongs_to_user(orchestrator.memory, conversation_id, user_id):
         conversation_id, _ = orchestrator.memory.get_or_create_empty_conversation(user_id)
     orchestrator.memory.set_active_conversation(user_id, conversation_id)
 
@@ -82,8 +91,8 @@ async def desktop_chat_stream_handler(req: web.Request) -> web.StreamResponse:
     message = str(payload.get("message", "")).strip()
     conversation_id = str(payload.get("conversation_id", "")).strip() or None
 
-    # If no conversation supplied, get or create an empty one so messages are always scoped
-    if not conversation_id:
+    # If no conversation supplied, get or create an empty one so messages are always scoped.
+    if not _conversation_belongs_to_user(orchestrator.memory, conversation_id, user_id):
         conversation_id, _ = orchestrator.memory.get_or_create_empty_conversation(user_id)
     orchestrator.memory.set_active_conversation(user_id, conversation_id)
 
@@ -187,6 +196,8 @@ async def desktop_conversation_messages_handler(req: web.Request) -> web.Respons
     user_id = _desktop_user_id(req.query.get("user_id"))
     if not conv_id:
         return web.json_response({"error": "conv_id required"}, status=400)
+    if not _conversation_belongs_to_user(orchestrator.memory, conv_id, user_id):
+        return web.json_response({"error": "Conversation not found"}, status=404)
     orchestrator.memory.set_active_conversation(user_id, conv_id)
     msgs = orchestrator.memory.get_conversation_messages(conv_id)
     return web.json_response({"messages": msgs})
