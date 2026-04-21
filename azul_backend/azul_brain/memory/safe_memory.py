@@ -353,24 +353,28 @@ class SafeMemory:
         role: str,
         content: str,
         conversation_id: str | None = None,
-    ) -> None:
+    ) -> bool:
         """Appends a message to the user's conversation history (RAM + SQLite)."""
         self._store[user_id].append({"role": role, "content": content})
 
-        if self._conn is not None:
-            try:
-                self._conn.execute(
-                    """
-                    INSERT INTO conversation_history (user_id, role, content, conversation_id)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (user_id, role, content, conversation_id),
-                )
-                self._conn.commit()
-                if conversation_id:
-                    self._touch_conversation(conversation_id)
-            except Exception as error:
-                LOGGER.warning("[SafeMemory] SQLite write failed: %s", error)
+        if self._conn is None:
+            return conversation_id is None
+
+        try:
+            self._conn.execute(
+                """
+                INSERT INTO conversation_history (user_id, role, content, conversation_id)
+                VALUES (?, ?, ?, ?)
+                """,
+                (user_id, role, content, conversation_id),
+            )
+            self._conn.commit()
+            if conversation_id:
+                self._touch_conversation(conversation_id)
+            return True
+        except Exception as error:
+            LOGGER.warning("[SafeMemory] SQLite write failed: %s", error)
+            return False
 
     # ------------------------------------------------------------------
     # Read

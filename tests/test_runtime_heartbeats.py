@@ -485,6 +485,47 @@ class RuntimeSchedulerHeartbeatTests(unittest.IsolatedAsyncioTestCase):
             updated = next(item for item in store.load_jobs() if item.id == job.id)
             self.assertTrue(updated.last_run_at)
 
+    async def test_message_persistence_failure_reports_delivery_error(self) -> None:
+        with temp_runtime_dir() as tmp:
+            root = Path(tmp)
+            store = make_store(root)
+            job = store.upsert_job(
+                {
+                    "name": "Work reminder",
+                    "prompt": "Send me a greeting.",
+                    "lane": "fast",
+                    "schedule_kind": "cron",
+                    "cron_expression": "* * * * *",
+                    "enabled": True,
+                }
+            )
+
+            class WriteFailingMemory:
+                def get_active_conversation_id(self, user_id):
+                    return ""
+
+                def get_conversation_title(self, conversation_id):
+                    return ""
+
+                def conversation_exists(self, conversation_id):
+                    return True
+
+                def get_or_create_named_conversation(self, user_id, title):
+                    return "conv-1", title
+
+                def add_message(self, user_id, role, content, conversation_id=None):
+                    return False
+
+            orchestrator = DummyOrchestrator(memory=WriteFailingMemory())
+            scheduler = RuntimeScheduler(store=store, orchestrator=orchestrator)
+
+            result = await scheduler.run_job_now(job.id)
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["delivery"], {"kind": "none", "error": "message persistence failed"})
+            updated = next(item for item in store.load_jobs() if item.id == job.id)
+            self.assertTrue(updated.last_run_at)
+
     async def test_custom_heartbeat_uses_no_tool_runtime_when_available(self) -> None:
         with temp_runtime_dir() as tmp:
             root = Path(tmp)

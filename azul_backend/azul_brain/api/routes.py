@@ -38,17 +38,30 @@ async def desktop_chat_handler(req: web.Request) -> web.Response:
 
     user_id = _desktop_user_id(payload.get("user_id"))
     message = str(payload.get("message", "")).strip()
+    conversation_id = str(payload.get("conversation_id", "")).strip() or None
 
     if not message:
         return web.json_response({"error": "message is required"}, status=400)
 
-    reply = await orchestrator.process_user_message(user_id, message, lane="auto")
-    history = orchestrator.memory.get_history(user_id, limit=12)
+    if not conversation_id:
+        conversation_id, _ = orchestrator.memory.get_or_create_empty_conversation(user_id)
+    orchestrator.memory.set_active_conversation(user_id, conversation_id)
+
+    reply = await orchestrator.process_user_message(
+        user_id,
+        message,
+        lane="auto",
+        conversation_id=conversation_id,
+    )
+    history = orchestrator.memory.get_conversation_messages(conversation_id, limit=12)
+    conversation_title = orchestrator.memory.get_conversation_title(conversation_id)
     return web.json_response(
         {
             "user_id": user_id,
             "reply": reply.text,
             "history": history,
+            "conversation_id": conversation_id,
+            "conversation_title": conversation_title or "",
             "runtime": {
                 "lane": reply.lane,
                 "model_id": reply.model_id,

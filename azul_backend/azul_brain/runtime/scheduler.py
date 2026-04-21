@@ -255,12 +255,14 @@ class RuntimeScheduler:
             else:
                 detail = error_text or clean_response
                 content = f"Heartbeat failed: {job.name}\n\n{detail}"
-            memory.add_message(
+            delivered = memory.add_message(
                 user_id,
                 "assistant",
                 content,
                 conversation_id=conversation_id,
             )
+            if not delivered:
+                return {"kind": "none", "error": "message persistence failed"}
             return {
                 "kind": "desktop_chat",
                 "user_id": user_id,

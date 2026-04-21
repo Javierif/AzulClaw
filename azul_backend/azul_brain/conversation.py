@@ -644,15 +644,28 @@ class ConversationOrchestrator:
 
         return reply.text
 
-    async def process_user_message(self, user_id: str, user_message: str, lane: str = "auto") -> ConversationReply:
+    async def process_user_message(
+        self,
+        user_id: str,
+        user_message: str,
+        lane: str = "auto",
+        conversation_id: str | None = None,
+    ) -> ConversationReply:
         """Builds context, runs inference, and persists the conversation."""
-        heartbeat_reply = await self._try_handle_heartbeat_intent(user_id, user_message)
+        heartbeat_reply = await self._try_handle_heartbeat_intent(
+            user_id,
+            user_message,
+            conversation_id=conversation_id,
+        )
         if heartbeat_reply is not None:
             return heartbeat_reply
 
         route = self.resolve_route(user_message, lane)
         effective_lane = route.lane
-        history = self.memory.get_history(user_id, limit=12)
+        if conversation_id:
+            history = self.memory.get_conversation_messages(conversation_id, limit=12)
+        else:
+            history = self.memory.get_history(user_id, limit=12)
         semantic_memories = await self.retrieve_semantic_memories(user_id, user_message)
         user_knowledge = self.retrieve_user_knowledge(user_id)
         messages = self.build_agent_messages(history, semantic_memories, user_message, user_knowledge)
@@ -666,11 +679,13 @@ class ConversationOrchestrator:
             title="Main conversation",
         )
 
-        await self.persist_with_vector_memory(user_id, "user", user_message)
-        await self.persist_with_vector_memory(user_id, "assistant", reply.text)
+        await self.persist_with_vector_memory(user_id, "user", user_message, conversation_id=conversation_id)
+        await self.persist_with_vector_memory(user_id, "assistant", reply.text, conversation_id=conversation_id)
         # Fire-and-forget preference extraction (skip if message contains credentials)
         if self.preference_extractor and not should_skip_vectorization(user_message):
             self.preference_extractor.fire_and_forget(user_id, user_message, reply.text)
+        if conversation_id:
+            reply.conversation_title = self.memory.get_conversation_title(conversation_id)
         reply.triage_reason = route.reason
         return reply
 
