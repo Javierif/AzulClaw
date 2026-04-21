@@ -532,7 +532,7 @@ class RuntimeStore:
                 delivery_user_id=existing.delivery_user_id or "desktop-user",
                 delivery_conversation_id=existing.delivery_conversation_id,
                 created_at=existing.created_at or to_iso_z(utc_now()),
-                updated_at=existing.updated_at or to_iso_z(utc_now()),
+                updated_at=to_iso_z(utc_now()),
                 last_run_at=existing.last_run_at,
                 next_run_at=existing.next_run_at
                 or self._compute_next_run_at(

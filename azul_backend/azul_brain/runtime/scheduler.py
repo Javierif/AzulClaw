@@ -175,12 +175,6 @@ class RuntimeScheduler:
                 response = f"JOB_ERROR: {error_text}"
                 LOGGER.exception("Job execution error %s (%s): %s", job.id, reason, error)
 
-            delivery = self._deliver_to_desktop_chat(
-                job,
-                response,
-                ok=ok,
-                error_text=error_text,
-            )
             try:
                 updated = self.store.mark_job_run(job.id, run_time)
             except Exception as error:
@@ -192,9 +186,15 @@ class RuntimeScheduler:
                     "ok": False,
                     "response": response,
                     "next_run_at": "",
-                    "delivery": delivery,
+                    "delivery": {"kind": "none", "error": "delivery skipped after persistence failure"},
                     "error": f"Persistence error: {persistence_error}",
                 }
+            delivery = self._deliver_to_desktop_chat(
+                job,
+                response,
+                ok=ok,
+                error_text=error_text,
+            )
             result: dict[str, Any] = {
                 "job_id": job.id,
                 "reason": reason,
@@ -218,54 +218,59 @@ class RuntimeScheduler:
         error_text: str,
     ) -> dict[str, str]:
         """Stores proactive job output in a visible desktop chat conversation."""
-        if job.delivery_kind == "none":
-            return {"kind": "none"}
+        try:
+            if job.delivery_kind == "none":
+                return {"kind": "none"}
 
-        clean_response = (response or "").strip()
-        if not clean_response:
-            return {"kind": "none"}
-        if job.system and clean_response in {"HEARTBEAT_OK", "HEARTBEAT_SKIP"}:
-            return {"kind": "none"}
+            clean_response = (response or "").strip()
+            if not clean_response:
+                return {"kind": "none"}
+            if job.system and clean_response in {"HEARTBEAT_OK", "HEARTBEAT_SKIP"}:
+                return {"kind": "none"}
 
-        memory = getattr(self.orchestrator, "memory", None)
-        if memory is None:
-            return {"kind": "none", "error": "memory unavailable"}
+            memory = getattr(self.orchestrator, "memory", None)
+            if memory is None:
+                return {"kind": "none", "error": "memory unavailable"}
 
-        user_id = (job.delivery_user_id or "desktop-user").strip() or "desktop-user"
-        conversation_title = self._delivery_conversation_title(job)
-        conversation_id = memory.get_active_conversation_id(user_id)
-        if conversation_id:
-            conversation_title = memory.get_conversation_title(conversation_id) or conversation_title
+            user_id = (job.delivery_user_id or "desktop-user").strip() or "desktop-user"
+            conversation_title = self._delivery_conversation_title(job)
+            conversation_id = memory.get_active_conversation_id(user_id)
+            if conversation_id:
+                conversation_title = memory.get_conversation_title(conversation_id) or conversation_title
 
-        if not conversation_id:
-            conversation_id = (job.delivery_conversation_id or "").strip()
-        if conversation_id and not memory.conversation_exists(conversation_id):
-            conversation_id = ""
+            if not conversation_id:
+                conversation_id = (job.delivery_conversation_id or "").strip()
+            if conversation_id and not memory.conversation_exists(conversation_id):
+                conversation_id = ""
 
-        if not conversation_id:
-            conversation_id, conversation_title = memory.get_or_create_named_conversation(
+            if not conversation_id:
+                conversation_id, conversation_title = memory.get_or_create_named_conversation(
+                    user_id,
+                    conversation_title,
+                )
+                self.store.set_job_delivery_conversation(job.id, conversation_id)
+
+            if ok:
+                content = clean_response
+            else:
+                detail = error_text or clean_response
+                content = f"Heartbeat failed: {job.name}\n\n{detail}"
+            memory.add_message(
                 user_id,
-                conversation_title,
+                "assistant",
+                content,
+                conversation_id=conversation_id,
             )
-            self.store.set_job_delivery_conversation(job.id, conversation_id)
-
-        if ok:
-            content = clean_response
-        else:
-            detail = error_text or clean_response
-            content = f"Heartbeat failed: {job.name}\n\n{detail}"
-        memory.add_message(
-            user_id,
-            "assistant",
-            content,
-            conversation_id=conversation_id,
-        )
-        return {
-            "kind": "desktop_chat",
-            "user_id": user_id,
-            "conversation_id": conversation_id,
-            "conversation_title": conversation_title,
-        }
+            return {
+                "kind": "desktop_chat",
+                "user_id": user_id,
+                "conversation_id": conversation_id,
+                "conversation_title": conversation_title,
+            }
+        except Exception as error:
+            delivery_error = str(error).strip() or error.__class__.__name__
+            LOGGER.exception("Job delivery error %s: %s", job.id, error)
+            return {"kind": "none", "error": delivery_error}
 
     def _delivery_conversation_title(self, job: ScheduledJob) -> str:
         name = (job.name or "Heartbeat").strip()

@@ -95,6 +95,7 @@ class RuntimeStoreHeartbeatTests(unittest.TestCase):
             self.assertTrue(persisted["system"])
             self.assertEqual(persisted["source"], "system")
             self.assertTrue(persisted["next_run_at"])
+            self.assertNotEqual(persisted["updated_at"], "2026-04-12T15:59:47Z")
 
     def test_upsert_and_mark_run_preserve_system_identity(self) -> None:
         with temp_runtime_dir() as tmp:
@@ -373,6 +374,10 @@ class RuntimeSchedulerHeartbeatTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(result["ok"])
             self.assertEqual(result["response"], "heartbeat-result")
             self.assertIn("Persistence error: disk unavailable", result["error"])
+            self.assertEqual(
+                result["delivery"],
+                {"kind": "none", "error": "delivery skipped after persistence failure"},
+            )
 
     async def test_custom_heartbeat_generation_is_isolated_from_desktop_chat_history(self) -> None:
         with temp_runtime_dir() as tmp:
@@ -409,6 +414,36 @@ class RuntimeSchedulerHeartbeatTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(call["store_memory"])
             self.assertEqual(result["delivery"]["conversation_id"], active_conversation_id)
             memory.close()
+
+    async def test_delivery_error_does_not_fail_job_run(self) -> None:
+        with temp_runtime_dir() as tmp:
+            root = Path(tmp)
+            store = make_store(root)
+            job = store.upsert_job(
+                {
+                    "name": "Work reminder",
+                    "prompt": "Send me a greeting.",
+                    "lane": "fast",
+                    "schedule_kind": "cron",
+                    "cron_expression": "* * * * *",
+                    "enabled": True,
+                }
+            )
+
+            class FailingMemory:
+                def get_active_conversation_id(self, user_id):
+                    raise RuntimeError("sqlite locked")
+
+            orchestrator = DummyOrchestrator(memory=FailingMemory())
+            scheduler = RuntimeScheduler(store=store, orchestrator=orchestrator)
+
+            with self.assertLogs("azul_backend.azul_brain.runtime.scheduler", level="ERROR"):
+                result = await scheduler.run_job_now(job.id)
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["delivery"], {"kind": "none", "error": "sqlite locked"})
+            updated = next(item for item in store.load_jobs() if item.id == job.id)
+            self.assertTrue(updated.last_run_at)
 
     async def test_custom_heartbeat_uses_no_tool_runtime_when_available(self) -> None:
         with temp_runtime_dir() as tmp:
