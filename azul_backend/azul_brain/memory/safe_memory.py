@@ -276,7 +276,7 @@ class SafeMemory:
     def get_conversation_messages(self, conversation_id: str, limit: int = 50) -> list[dict]:
         """Returns messages for a specific conversation, oldest first."""
         if self._conn is None:
-            return []
+            return self._conversation_messages_from_ram(conversation_id, limit)
         try:
             rows = self._conn.execute(
                 """
@@ -288,10 +288,26 @@ class SafeMemory:
                 """,
                 (conversation_id, limit),
             ).fetchall()
-            return [{"role": row["role"], "content": row["content"]} for row in rows]
+            messages = [{"role": row["role"], "content": row["content"]} for row in rows]
+            return messages or self._conversation_messages_from_ram(conversation_id, limit)
         except Exception as error:
             LOGGER.warning("[SafeMemory] get_conversation_messages failed: %s", error)
-            return []
+            return self._conversation_messages_from_ram(conversation_id, limit)
+
+    def _conversation_messages_from_ram(self, conversation_id: str, limit: int) -> list[dict]:
+        """Returns conversation-scoped messages from the in-memory store."""
+        messages: list[dict] = []
+        for history in self._store.values():
+            for item in history:
+                if item.get("conversation_id") != conversation_id:
+                    continue
+                messages.append(
+                    {
+                        "role": item.get("role", "user"),
+                        "content": item.get("content", ""),
+                    }
+                )
+        return messages[-limit:]
 
     def update_conversation_title(self, conversation_id: str, title: str) -> None:
         """Updates the title of a conversation."""
@@ -355,10 +371,13 @@ class SafeMemory:
         conversation_id: str | None = None,
     ) -> bool:
         """Appends a message to the user's conversation history (RAM + SQLite)."""
-        self._store[user_id].append({"role": role, "content": content})
+        item = {"role": role, "content": content}
+        if conversation_id:
+            item["conversation_id"] = conversation_id
+        self._store[user_id].append(item)
 
         if self._conn is None:
-            return conversation_id is None
+            return True
 
         try:
             self._conn.execute(

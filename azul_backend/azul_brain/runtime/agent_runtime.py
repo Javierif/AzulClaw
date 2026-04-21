@@ -150,6 +150,7 @@ class AgentRuntimeManager:
                     tools_enabled=tools_enabled,
                     instructions=instructions,
                 )
+                value = None
                 if model.streaming_enabled:
                     stream = agent.stream_messages(messages)
                     streamed_parts: list[str] = []
@@ -160,6 +161,7 @@ class AgentRuntimeManager:
                         streamed_parts.append(chunk)
                         await on_delta(chunk)
                     final_response = await stream.get_final_response()
+                    value = getattr(final_response, "value", None)
                     text = self._extract_final_text(final_response, fallback="".join(streamed_parts))
                 else:
                     result = await agent.invoke_messages(messages)

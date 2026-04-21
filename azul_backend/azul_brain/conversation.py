@@ -662,10 +662,7 @@ class ConversationOrchestrator:
 
         route = self.resolve_route(user_message, lane)
         effective_lane = route.lane
-        if conversation_id:
-            history = self.memory.get_conversation_messages(conversation_id, limit=12)
-        else:
-            history = self.memory.get_history(user_id, limit=12)
+        history = self._load_chat_history(user_id, conversation_id, limit=12)
         semantic_memories = await self.retrieve_semantic_memories(user_id, user_message)
         user_knowledge = self.retrieve_user_knowledge(user_id)
         messages = self.build_agent_messages(history, semantic_memories, user_message, user_knowledge)
@@ -688,6 +685,24 @@ class ConversationOrchestrator:
             reply.conversation_title = self.memory.get_conversation_title(conversation_id)
         reply.triage_reason = route.reason
         return reply
+
+    def _load_chat_history(
+        self,
+        user_id: str,
+        conversation_id: str | None,
+        *,
+        limit: int,
+    ) -> list[dict]:
+        """Returns conversation history, with a RAM fallback when SQLite is unavailable."""
+        if not conversation_id:
+            return self.memory.get_history(user_id, limit=limit)
+
+        history = self.memory.get_conversation_messages(conversation_id, limit=limit)
+        if history:
+            return history
+        if getattr(self.memory, "_conn", None) is None:
+            return self.memory.get_history(user_id, limit=limit)
+        return history
 
     async def process_user_message_stream(
         self,
@@ -737,10 +752,7 @@ class ConversationOrchestrator:
                     blueprint=progress_blueprint,
                 )
             )
-        if conversation_id:
-            history = self.memory.get_conversation_messages(conversation_id, limit=12)
-        else:
-            history = self.memory.get_history(user_id, limit=12)
+        history = self._load_chat_history(user_id, conversation_id, limit=12)
         is_first_turn = len(history) == 0
         semantic_memories = await self.retrieve_semantic_memories(user_id, user_message)
         user_knowledge = self.retrieve_user_knowledge(user_id)
