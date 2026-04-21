@@ -240,6 +240,46 @@ class RuntimeStoreHeartbeatTests(unittest.TestCase):
             self.assertEqual(job.source, "user")
             self.assertTrue(store.delete_job(job.id))
 
+    def test_load_jobs_repairs_missing_next_run_for_enabled_recurring_jobs(self) -> None:
+        with temp_runtime_dir() as tmp:
+            root = Path(tmp)
+            store = make_store(root)
+            store.jobs_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": "legacy-every",
+                            "name": "Legacy interval",
+                            "prompt": "Send a reminder.",
+                            "lane": "fast",
+                            "schedule_kind": "every",
+                            "interval_seconds": 300,
+                            "enabled": True,
+                            "last_run_at": "2026-01-01T00:00:00Z",
+                            "next_run_at": "",
+                        },
+                        {
+                            "id": "legacy-cron",
+                            "name": "Legacy cron",
+                            "prompt": "Send a cron reminder.",
+                            "lane": "fast",
+                            "schedule_kind": "cron",
+                            "cron_expression": "0 * * * *",
+                            "enabled": True,
+                            "last_run_at": "2026-01-01T00:15:00Z",
+                            "next_run_at": "",
+                        },
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            jobs = {job.id: job for job in store.load_jobs()}
+
+            self.assertEqual(jobs["legacy-every"].next_run_at, "2026-01-01T00:05:00Z")
+            self.assertTrue(jobs["legacy-cron"].next_run_at)
+            self.assertIsNotNone(parse_iso_datetime(jobs["legacy-cron"].next_run_at))
+
 
 class DummyOrchestrator:
     def __init__(

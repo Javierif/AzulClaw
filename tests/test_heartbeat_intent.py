@@ -137,7 +137,7 @@ class HeartbeatIntentServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(runtime.calls, 1)
             self.assertIs(runtime.last_kwargs["response_format"], HeartbeatRouteModel)
             self.assertFalse(runtime.last_kwargs["tools_enabled"])
-            self.assertEqual(runtime.last_kwargs["instructions"], "")
+            self.assertIsNone(runtime.last_kwargs["instructions"])
             pending = json.loads((root / "pending.json").read_text(encoding="utf-8"))
             self.assertEqual(pending[0]["draft"]["cron_expression"], "*/30 * * * *")
             self.assertEqual(pending[0]["draft"]["prompt"], "Review Inbox and flag urgent items.")

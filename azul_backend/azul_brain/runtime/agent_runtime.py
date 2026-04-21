@@ -343,9 +343,12 @@ class AgentRuntimeManager:
         tools_enabled: bool = True,
         instructions: str | None = None,
     ):
+        effective_instructions = instructions.strip() if isinstance(instructions, str) else instructions
+        if effective_instructions == "":
+            effective_instructions = None
         instruction_key = "default"
-        if instructions is not None:
-            instruction_key = sha1(instructions.encode("utf-8")).hexdigest()[:12]
+        if effective_instructions is not None:
+            instruction_key = sha1(effective_instructions.encode("utf-8")).hexdigest()[:12]
         tool_key = "tools" if tools_enabled else "no-tools"
         cache_key = f"{model.id}:{model.deployment}:{tool_key}:{instruction_key}"
         cached = self.agent_cache.get(cache_key)
@@ -356,7 +359,7 @@ class AgentRuntimeManager:
             self.mcp_client,
             model_profile=model,
             tools_enabled=tools_enabled,
-            instructions=instructions,
+            instructions=effective_instructions,
         )
         self.agent_cache[cache_key] = agent
         return agent

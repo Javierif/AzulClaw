@@ -264,7 +264,7 @@ class HeartbeatIntentService:
                 kind="agent-run",
                 response_format=HeartbeatRouteModel,
                 tools_enabled=False,
-                instructions="",
+                instructions=None,
             )
         except Exception:
             return None
