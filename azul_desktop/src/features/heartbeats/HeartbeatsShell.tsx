@@ -139,11 +139,21 @@ export function HeartbeatsShell() {
     try {
       const result = await runJob(job.id);
       const deliveredTitle = result.delivery?.conversation_title;
-      const output = (result.response || result.error || "").trim();
+      const deliveryError = (result.delivery?.error || "").trim();
+      const output = [
+        (result.response || result.error || "").trim(),
+        deliveryError ? `Delivery issue: ${deliveryError}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
       setRunStatus((current) => ({
         ...current,
         [job.id]:
-          result.delivery?.kind === "desktop_chat" && deliveredTitle
+          deliveryError
+            ? result.ok
+              ? `Run completed, delivery issue: ${deliveryError}`
+              : `Run failed, delivery issue: ${deliveryError}`
+            : result.delivery?.kind === "desktop_chat" && deliveredTitle
             ? `Delivered to chat: ${deliveredTitle}`
             : result.delivery?.kind === "desktop_chat"
               ? "Delivered to desktop chat"

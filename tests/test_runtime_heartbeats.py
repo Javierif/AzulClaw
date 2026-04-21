@@ -9,6 +9,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from croniter import croniter
+
 from azul_backend.azul_brain.runtime.scheduler import RuntimeScheduler
 from azul_backend.azul_brain.memory.safe_memory import SafeMemory
 from azul_backend.azul_brain.runtime.store import (
@@ -16,6 +18,7 @@ from azul_backend.azul_brain.runtime.store import (
     SYSTEM_HEARTBEAT_JOB_ID,
     RuntimeStore,
     parse_iso_datetime,
+    to_iso_z,
 )
 
 
@@ -148,17 +151,16 @@ class RuntimeStoreHeartbeatTests(unittest.TestCase):
                     "enabled": True,
                 }
             )
-            marked = store.mark_job_run(
-                job.id,
-                datetime(2026, 1, 1, 10, 15, tzinfo=timezone.utc),
-            )
+            run_time = datetime(2026, 1, 1, 10, 15, tzinfo=timezone.utc)
+            marked = store.mark_job_run(job.id, run_time)
+            expected_next_run = to_iso_z(croniter("0 * * * *", run_time.astimezone()).get_next(datetime))
 
             self.assertEqual(job.schedule_kind, "cron")
             self.assertEqual(job.cron_expression, "0 * * * *")
             self.assertTrue(job.next_run_at)
             self.assertIsNotNone(marked)
             assert marked is not None
-            self.assertEqual(marked.next_run_at, "2026-01-01T11:00:00Z")
+            self.assertEqual(marked.next_run_at, expected_next_run)
 
     def test_cron_job_rejects_non_linux_field_counts(self) -> None:
         with temp_runtime_dir() as tmp:

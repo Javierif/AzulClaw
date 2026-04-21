@@ -62,10 +62,19 @@ function parseHeartbeatConfirmation(content: string): HeartbeatConfirmationDetai
     return null;
   }
 
-  const name = text.match(/^Name:\s*(.+)$/m)?.[1]?.trim();
-  const schedule = text.match(/^Schedule:\s*`?([^`\n]+)`?$/m)?.[1]?.trim();
-  const action = text.match(/^Action:\s*(.+)$/m)?.[1]?.trim();
-  const delivery = text.match(/^Delivery:\s*(.+)$/m)?.[1]?.trim() || "desktop chat";
+  const block = (label: string, nextLabels: string[]) => {
+    const stops = [
+      ...nextLabels.map((nextLabel) => `^${nextLabel}:\\s*`),
+      "^Reply\\b",
+      "(?![\\s\\S])",
+    ].join("|");
+    return text.match(new RegExp(`^${label}:\\s*([\\s\\S]*?)(?=${stops})`, "m"))?.[1]?.trim();
+  };
+
+  const name = block("Name", ["Schedule"])?.replace(/\s+/g, " ");
+  const schedule = block("Schedule", ["Action"])?.replace(/^`|`$/g, "").trim();
+  const action = block("Action", ["Delivery"]);
+  const delivery = block("Delivery", [])?.replace(/\s+/g, " ") || "desktop chat";
   if (!name || !schedule || !action) {
     return null;
   }
