@@ -46,6 +46,21 @@ function toUiMessages(items: ChatExchange[]): ChatMessageItem[] {
   return items.map((item) => ({ ...item, kind: "text" }));
 }
 
+function sameMessages(a: ChatMessageItem[], b: ChatMessageItem[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  return a.every((item, index) => {
+    const other = b[index];
+    return (
+      item.id === other.id &&
+      item.role === other.role &&
+      item.kind === other.kind &&
+      item.content === other.content
+    );
+  });
+}
+
 function phaseStatusLabel(status: "pending" | "active" | "done") {
   if (status === "done") {
     return "Done";
@@ -281,7 +296,27 @@ export function ChatShell({
   const streamBufferRef = useRef("");
   const answerStartedRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
   const streamPumpRef = useRef<number | null>(null);
+
+  function isMessageListNearBottom(): boolean {
+    const list = messageListRef.current;
+    if (!list) {
+      return true;
+    }
+    return list.scrollHeight - list.scrollTop - list.clientHeight < 96;
+  }
+
+  function replaceMessagesIfChanged(nextMessages: ChatMessageItem[], shouldAutoScroll: boolean) {
+    setMessages((current) => {
+      if (sameMessages(current, nextMessages)) {
+        return current;
+      }
+      shouldAutoScrollRef.current = shouldAutoScroll;
+      return nextMessages;
+    });
+  }
 
   function ensureStreamPump() {
     if (streamPumpRef.current !== null) {
@@ -351,14 +386,14 @@ export function ChatShell({
           setConversationId(withMessages.id);
           setSessionListTitle(t);
           onTitleChange?.(t);
-          setMessages(toUiMessages(msgs));
+          replaceMessagesIfChanged(toUiMessages(msgs), true);
         } else {
-          setMessages([createWelcomeMessage()]);
+          replaceMessagesIfChanged([createWelcomeMessage()], true);
           setSessionListTitle(DEFAULT_CONVERSATION_TITLE);
           onTitleChange?.(DEFAULT_CONVERSATION_TITLE);
         }
       } catch {
-        setMessages([createWelcomeMessage()]);
+        replaceMessagesIfChanged([createWelcomeMessage()], true);
         setSessionListTitle(DEFAULT_CONVERSATION_TITLE);
         onTitleChange?.(DEFAULT_CONVERSATION_TITLE);
       }
@@ -400,7 +435,7 @@ export function ChatShell({
 
         const msgs = await getConversationMessages(conversationId);
         if (cancelled) return;
-        setMessages(toUiMessages(msgs));
+        replaceMessagesIfChanged(toUiMessages(msgs), isMessageListNearBottom());
         const title = normalizeConversationTitle(active.title);
         setSessionListTitle(title);
         onTitleChange?.(title);
@@ -433,7 +468,7 @@ export function ChatShell({
     const onlyWelcome = msgs.length === 1 && msgs[0]?.id === WELCOME_MESSAGE_ID;
     if (msgs.length === 0 || onlyWelcome) return;
     setConversationId(null);
-    setMessages([createWelcomeMessage()]);
+    replaceMessagesIfChanged([createWelcomeMessage()], true);
     setSessionListTitle(DEFAULT_CONVERSATION_TITLE);
     onTitleChange?.(DEFAULT_CONVERSATION_TITLE);
   };
@@ -447,7 +482,7 @@ export function ChatShell({
     try {
       const msgs = await getConversationMessages(id);
       const t = normalizeConversationTitle(title);
-      setMessages(toUiMessages(msgs));
+      replaceMessagesIfChanged(toUiMessages(msgs), true);
       setConversationId(id);
       setSessionListTitle(t);
       onTitleChange?.(t);
@@ -465,7 +500,7 @@ export function ChatShell({
         await handleLoadConversation(remaining[0].id, remaining[0].title);
       } else {
         setConversationId(null);
-        setMessages([createWelcomeMessage()]);
+        replaceMessagesIfChanged([createWelcomeMessage()], true);
         setSessionListTitle(DEFAULT_CONVERSATION_TITLE);
         onTitleChange?.(DEFAULT_CONVERSATION_TITLE);
       }
@@ -477,6 +512,9 @@ export function ChatShell({
   }
 
   useEffect(() => {
+    if (!shouldAutoScrollRef.current && !isMessageListNearBottom()) {
+      return;
+    }
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
@@ -493,6 +531,7 @@ export function ChatShell({
     if (!trimmed || isSending) {
       return;
     }
+    shouldAutoScrollRef.current = true;
 
     setIsSending(true);
     answerStartedRef.current = false;
@@ -755,7 +794,7 @@ export function ChatShell({
   return (
     <section className="chat-layout">
       <div className="chat-panel card">
-        <div className="message-list">
+        <div className="message-list" ref={messageListRef}>
           {messages.map((message) => {
             const heartbeatDetails =
               message.role === "assistant"
