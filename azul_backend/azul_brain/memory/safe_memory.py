@@ -321,10 +321,36 @@ class SafeMemory:
                 (conversation_id, limit),
             ).fetchall()
             messages = [{"role": row["role"], "content": row["content"]} for row in rows]
-            return messages or self._conversation_messages_from_ram(conversation_id, limit)
+            return self._merge_conversation_messages(
+                messages,
+                self._conversation_messages_from_ram(conversation_id, limit),
+                limit,
+            )
         except Exception as error:
             LOGGER.warning("[SafeMemory] get_conversation_messages failed: %s", error)
             return self._conversation_messages_from_ram(conversation_id, limit)
+
+    def _merge_conversation_messages(
+        self,
+        persisted: list[dict],
+        in_memory: list[dict],
+        limit: int,
+    ) -> list[dict]:
+        """Merges persisted rows with RAM-only messages after transient write failures."""
+        if not persisted:
+            return in_memory[-limit:]
+        messages = list(persisted)
+        seen = {
+            (str(item.get("role", "")), str(item.get("content", "")))
+            for item in persisted
+        }
+        for item in in_memory:
+            key = (str(item.get("role", "")), str(item.get("content", "")))
+            if key in seen:
+                continue
+            messages.append(item)
+            seen.add(key)
+        return messages[-limit:]
 
     def _conversation_messages_from_ram(self, conversation_id: str, limit: int) -> list[dict]:
         """Returns conversation-scoped messages from the in-memory store."""

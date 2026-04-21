@@ -308,6 +308,33 @@ class RuntimeStoreHeartbeatTests(unittest.TestCase):
             self.assertEqual(job.interval_seconds, 60)
             self.assertEqual(job.next_run_at, "2026-01-01T00:01:00Z")
 
+    def test_load_jobs_repairs_invalid_next_run_for_enabled_recurring_jobs(self) -> None:
+        with temp_runtime_dir() as tmp:
+            root = Path(tmp)
+            store = make_store(root)
+            store.jobs_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": "legacy-invalid-next-run",
+                            "name": "Legacy invalid next run",
+                            "prompt": "Send a reminder.",
+                            "lane": "fast",
+                            "schedule_kind": "every",
+                            "interval_seconds": 300,
+                            "enabled": True,
+                            "last_run_at": "2026-01-01T00:00:00Z",
+                            "next_run_at": "not-a-date",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            job = store.load_jobs()[0]
+
+            self.assertEqual(job.next_run_at, "2026-01-01T00:05:00Z")
+
 
 class DummyOrchestrator:
     def __init__(

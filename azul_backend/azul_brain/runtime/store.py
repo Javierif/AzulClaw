@@ -359,6 +359,9 @@ class RuntimeStore:
             if schedule_kind == "every" and interval_seconds < 60:
                 interval_seconds = 60
                 next_run_at = ""
+            if enabled and next_run_at and schedule_kind in {"every", "cron"}:
+                if parse_iso_datetime(next_run_at) is None:
+                    next_run_at = ""
             if schedule_kind == "cron" and not self._is_valid_cron_expression(cron_expression):
                 enabled = False
                 next_run_at = ""
