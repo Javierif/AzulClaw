@@ -90,6 +90,15 @@ def _stringify_result_value(value: Any) -> str:
         return str(value)
 
 
+def _compose_instructions(instructions: str | None) -> str:
+    if instructions is None:
+        return AZULCLAW_SYSTEM_PROMPT
+    scoped = instructions.strip()
+    if not scoped:
+        return AZULCLAW_SYSTEM_PROMPT
+    return f"{AZULCLAW_SYSTEM_PROMPT}\n\nTask-specific instructions:\n{scoped}"
+
+
 class _Result:
     """Minimal container for backwards compatibility with the previous contract."""
 
@@ -289,7 +298,7 @@ async def create_agent(
         or os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o").strip()
     )
     lane = getattr(model_profile, "lane", "").strip().lower()
-    effective_instructions = instructions if instructions is not None else AZULCLAW_SYSTEM_PROMPT
+    effective_instructions = _compose_instructions(instructions)
     tools = _build_tools(mcp_client) if tools_enabled else []
 
     if provider == "openai":

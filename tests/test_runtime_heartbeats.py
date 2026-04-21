@@ -178,6 +178,67 @@ class RuntimeStoreHeartbeatTests(unittest.TestCase):
                     }
                 )
 
+    def test_load_jobs_disables_invalid_persisted_cron(self) -> None:
+        with temp_runtime_dir() as tmp:
+            root = Path(tmp)
+            store = make_store(root)
+            store.jobs_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": "bad-cron",
+                            "name": "Bad cron",
+                            "prompt": "Run on a broken schedule.",
+                            "lane": "fast",
+                            "schedule_kind": "cron",
+                            "cron_expression": "*/10 * * * * *",
+                            "enabled": True,
+                            "next_run_at": "2026-01-01T00:00:00Z",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            job = store.load_jobs()[0]
+            marked = store.mark_job_run("bad-cron", datetime(2026, 1, 1, tzinfo=timezone.utc))
+
+            self.assertFalse(job.enabled)
+            self.assertEqual(job.next_run_at, "")
+            self.assertIsNotNone(marked)
+            assert marked is not None
+            self.assertFalse(marked.enabled)
+            self.assertEqual(marked.next_run_at, "")
+
+    def test_load_jobs_only_fixed_id_is_system_job(self) -> None:
+        with temp_runtime_dir() as tmp:
+            root = Path(tmp)
+            store = make_store(root)
+            store.jobs_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": "user-job",
+                            "name": "User job",
+                            "prompt": "Send a reminder.",
+                            "lane": "fast",
+                            "schedule_kind": "every",
+                            "interval_seconds": 300,
+                            "enabled": True,
+                            "system": True,
+                            "source": "system",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            job = store.load_jobs()[0]
+
+            self.assertFalse(job.system)
+            self.assertEqual(job.source, "user")
+            self.assertTrue(store.delete_job(job.id))
+
 
 class DummyOrchestrator:
     def __init__(
@@ -284,6 +345,34 @@ class RuntimeSchedulerHeartbeatTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(updated.delivery_conversation_id, conversation_id)
             self.assertTrue(updated.last_run_at)
             memory.close()
+
+    async def test_job_run_reports_persistence_error(self) -> None:
+        with temp_runtime_dir() as tmp:
+            store = make_store(Path(tmp))
+            job = store.upsert_job(
+                {
+                    "name": "Work reminder",
+                    "prompt": "Send me a greeting.",
+                    "lane": "fast",
+                    "schedule_kind": "cron",
+                    "cron_expression": "* * * * *",
+                    "enabled": True,
+                }
+            )
+            orchestrator = DummyOrchestrator()
+            scheduler = RuntimeScheduler(store=store, orchestrator=orchestrator)
+
+            def fail_mark_job_run(*args, **kwargs):
+                raise RuntimeError("disk unavailable")
+
+            store.mark_job_run = fail_mark_job_run  # type: ignore[method-assign]
+
+            with self.assertLogs("azul_backend.azul_brain.runtime.scheduler", level="ERROR"):
+                result = await scheduler.run_job_now(job.id)
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["response"], "heartbeat-result")
+            self.assertIn("Persistence error: disk unavailable", result["error"])
 
     async def test_custom_heartbeat_generation_is_isolated_from_desktop_chat_history(self) -> None:
         with temp_runtime_dir() as tmp:

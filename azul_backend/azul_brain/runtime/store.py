@@ -338,13 +338,21 @@ class RuntimeStore:
             if schedule_kind not in {"at", "every", "cron"}:
                 schedule_kind = "every"
 
-            is_system_job = bool(item.get("system", False)) or job_id == SYSTEM_HEARTBEAT_JOB_ID
+            is_system_job = job_id == SYSTEM_HEARTBEAT_JOB_ID
             source = str(item.get("source", "user")).strip() or "user"
             if is_system_job:
                 source = "system"
+            elif source == "system":
+                source = "user"
             delivery_kind = str(item.get("delivery_kind", "desktop_chat")).strip().lower()
             if delivery_kind not in {"desktop_chat", "none"}:
                 delivery_kind = "desktop_chat"
+            cron_expression = str(item.get("cron_expression", "")).strip()
+            enabled = bool(item.get("enabled", True))
+            next_run_at = str(item.get("next_run_at", "")).strip()
+            if schedule_kind == "cron" and not self._is_valid_cron_expression(cron_expression):
+                enabled = False
+                next_run_at = ""
 
             jobs.append(
                 ScheduledJob(
@@ -360,8 +368,8 @@ class RuntimeStore:
                         min_value=0,
                         max_value=31_536_000,
                     ),
-                    cron_expression=str(item.get("cron_expression", "")).strip(),
-                    enabled=bool(item.get("enabled", True)),
+                    cron_expression=cron_expression,
+                    enabled=enabled,
                     system=is_system_job,
                     source=source,
                     delivery_kind=delivery_kind,
@@ -371,7 +379,7 @@ class RuntimeStore:
                     created_at=str(item.get("created_at", "")).strip() or to_iso_z(utc_now()),
                     updated_at=str(item.get("updated_at", "")).strip() or to_iso_z(utc_now()),
                     last_run_at=str(item.get("last_run_at", "")).strip(),
-                    next_run_at=str(item.get("next_run_at", "")).strip(),
+                    next_run_at=next_run_at,
                 )
             )
         return jobs
@@ -594,13 +602,16 @@ class RuntimeStore:
             if job.schedule_kind == "at":
                 enabled = False
             elif job.schedule_kind == "cron":
-                next_run_at = self._compute_next_run_at(
-                    schedule_kind="cron",
-                    run_at="",
-                    interval_seconds=0,
-                    cron_expression=job.cron_expression,
-                    previous_last_run_at=last_run_at,
-                )
+                if self._is_valid_cron_expression(job.cron_expression):
+                    next_run_at = self._compute_next_run_at(
+                        schedule_kind="cron",
+                        run_at="",
+                        interval_seconds=0,
+                        cron_expression=job.cron_expression,
+                        previous_last_run_at=last_run_at,
+                    )
+                else:
+                    enabled = False
             else:
                 interval_seconds = max(60, job.interval_seconds)
                 next_run_at = to_iso_z(target_time + timedelta(seconds=interval_seconds))

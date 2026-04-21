@@ -132,7 +132,20 @@ class RuntimeScheduler:
                     heartbeat_text = self._load_heartbeat_text()
                     if not heartbeat_text:
                         # Nothing actionable — skip
-                        updated = self.store.mark_job_run(job.id, run_time)
+                        try:
+                            updated = self.store.mark_job_run(job.id, run_time)
+                        except Exception as error:
+                            error_text = str(error).strip() or error.__class__.__name__
+                            LOGGER.exception("Job persistence error %s (%s): %s", job.id, reason, error)
+                            return {
+                                "job_id": job.id,
+                                "reason": reason,
+                                "ok": False,
+                                "response": f"JOB_ERROR: {error_text}",
+                                "next_run_at": "",
+                                "delivery": {"kind": "none"},
+                                "error": f"Persistence error: {error_text}",
+                            }
                         return {
                             "job_id": job.id,
                             "reason": reason,
@@ -168,7 +181,20 @@ class RuntimeScheduler:
                 ok=ok,
                 error_text=error_text,
             )
-            updated = self.store.mark_job_run(job.id, run_time)
+            try:
+                updated = self.store.mark_job_run(job.id, run_time)
+            except Exception as error:
+                persistence_error = str(error).strip() or error.__class__.__name__
+                LOGGER.exception("Job persistence error %s (%s): %s", job.id, reason, error)
+                return {
+                    "job_id": job.id,
+                    "reason": reason,
+                    "ok": False,
+                    "response": response,
+                    "next_run_at": "",
+                    "delivery": delivery,
+                    "error": f"Persistence error: {persistence_error}",
+                }
             result: dict[str, Any] = {
                 "job_id": job.id,
                 "reason": reason,

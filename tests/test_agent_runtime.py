@@ -4,7 +4,8 @@ import unittest
 
 from pydantic import BaseModel
 
-from azul_backend.azul_brain.cortex.kernel_setup import _Result
+from azul_backend.azul_brain.cortex.kernel_setup import _Result, _compose_instructions
+from azul_backend.azul_brain.soul.system_prompt import AZULCLAW_SYSTEM_PROMPT
 from azul_backend.azul_brain.runtime.agent_runtime import _serialize_runtime_text
 
 
@@ -33,6 +34,15 @@ class RuntimeSerializationTests(unittest.TestCase):
 
         self.assertEqual(result.text, '{"route": "none"}')
         self.assertEqual(str(result), '{"route": "none"}')
+
+    def test_task_instructions_are_composed_with_base_prompt(self) -> None:
+        instructions = _compose_instructions("Use no tools.")
+
+        self.assertTrue(instructions.startswith(AZULCLAW_SYSTEM_PROMPT))
+        self.assertIn("Task-specific instructions:\nUse no tools.", instructions)
+
+    def test_empty_task_instructions_keep_base_prompt(self) -> None:
+        self.assertEqual(_compose_instructions(""), AZULCLAW_SYSTEM_PROMPT)
 
 
 if __name__ == "__main__":
