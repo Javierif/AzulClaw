@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from azul_backend.azul_brain import config
 from azul_backend.azul_brain.api.hatching_store import HatchingProfile
+from azul_backend.azul_brain.api.routes import _validate_key_vault_url
 
 
 class _Secret:
@@ -79,6 +80,22 @@ class KeyVaultConfigTests(unittest.TestCase):
                 config.resolve_key_vault_url(),
                 "https://profile.vault.azure.net",
             )
+
+    def test_validate_key_vault_url_rejects_non_vault_hosts(self) -> None:
+        self.assertEqual(
+            _validate_key_vault_url("https://profile.vault.azure.net/"),
+            "https://profile.vault.azure.net",
+        )
+        for value in (
+            "http://profile.vault.azure.net",
+            "https://localhost",
+            "https://example.com",
+            "https://profile.vault.azure.net.evil.com",
+            "https://profile.vault.azure.net/secrets/foo",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    _validate_key_vault_url(value)
 
     def test_apply_hatching_azure_runtime_settings_restores_backend_env(self) -> None:
         profile = HatchingProfile(

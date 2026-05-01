@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+import shutil
 import uuid
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from azul_backend.azul_brain.api.services import save_memory_runtime_settings
 from azul_backend.azul_brain.api.hatching_store import (
     HatchingProfile,
     HatchingStore,
@@ -22,6 +24,7 @@ class MemorySettingsTests(unittest.TestCase):
         root.mkdir(parents=True, exist_ok=True)
         path = root / f"case-{uuid.uuid4().hex}"
         path.mkdir(parents=True, exist_ok=False)
+        self.addCleanup(shutil.rmtree, path, ignore_errors=True)
         return str(path)
 
     def test_defaults_to_workspace_azul_database(self) -> None:
@@ -57,6 +60,21 @@ class MemorySettingsTests(unittest.TestCase):
 
             self.assertEqual(resolve_memory_db_path(), str(override))
             self.assertFalse(is_vector_memory_enabled())
+
+    def test_save_memory_settings_parses_string_false(self) -> None:
+        tmp = self._runtime_dir()
+        with patch.dict(os.environ, {"AZUL_RUNTIME_DIR": tmp}, clear=True):
+            HatchingStore().save(HatchingProfile(workspace_root=str(Path(tmp) / "workspace")))
+            saved = save_memory_runtime_settings({"vector_memory_enabled": "false"})
+
+            self.assertFalse(saved["vector_memory_enabled"])
+            self.assertFalse(is_vector_memory_enabled())
+
+    def test_save_memory_settings_rejects_invalid_boolean(self) -> None:
+        tmp = self._runtime_dir()
+        with patch.dict(os.environ, {"AZUL_RUNTIME_DIR": tmp}, clear=True):
+            with self.assertRaises(ValueError):
+                save_memory_runtime_settings({"vector_memory_enabled": "definitely"})
 
 
 if __name__ == "__main__":

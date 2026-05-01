@@ -468,7 +468,7 @@ export function HatchingShell({
       ...current,
       [field]: value,
       connected: field === "lastConnectedAt" ? current.connected : false,
-      lastConnectedAt: field === "lastConnectedAt" ? value : current.lastConnectedAt,
+      lastConnectedAt: field === "lastConnectedAt" ? value : "",
     }));
     if (field === "subscriptionId") {
       setAzureResources([]);
@@ -489,6 +489,7 @@ export function HatchingShell({
       subscriptionId,
       tenantId: selected?.tenant_id?.trim() || current.tenantId,
       connected: false,
+      lastConnectedAt: "",
     }));
     setAzureResources([]);
     setAzureKeyVaults([]);
@@ -530,6 +531,8 @@ export function HatchingShell({
         ...current,
         tenantId: nextTenantId,
         subscriptionId: nextSubscriptionId,
+        connected: false,
+        lastConnectedAt: "",
       }));
     } catch (error) {
       setAzureError(error instanceof Error ? error.message : String(error));
@@ -586,6 +589,8 @@ export function HatchingShell({
         microsoftAppIdSecretName: chooseSecretName(secrets, current.microsoftAppIdSecretName, "MicrosoftAppId"),
         microsoftAppPasswordSecretName: chooseSecretName(secrets, current.microsoftAppPasswordSecretName, "MicrosoftAppPassword"),
         microsoftAppTenantIdSecretName: chooseSecretName(secrets, current.microsoftAppTenantIdSecretName, "MicrosoftAppTenantId"),
+        connected: false,
+        lastConnectedAt: "",
       }));
       setAzureDeployments([]);
     } catch (error) {
@@ -618,6 +623,7 @@ export function HatchingShell({
         microsoftAppPasswordSecretName: chooseSecretName(secrets, current.microsoftAppPasswordSecretName, "MicrosoftAppPassword"),
         microsoftAppTenantIdSecretName: chooseSecretName(secrets, current.microsoftAppTenantIdSecretName, "MicrosoftAppTenantId"),
         connected: false,
+        lastConnectedAt: "",
       }));
     } catch (error) {
       setAzureKeyVaultSecrets([]);
@@ -627,6 +633,7 @@ export function HatchingShell({
         keyVaultResourceGroup: vault.resource_group,
         keyVaultUrl: vault.vault_uri,
         connected: false,
+        lastConnectedAt: "",
       }));
       setAzureError(
         `Key Vault selected. Secret discovery is not available from the running backend yet; restart the backend or type the secret names manually. ${error instanceof Error ? error.message : String(error)}`,
@@ -665,6 +672,8 @@ export function HatchingShell({
         embeddingDeployment: deployments.some((item) => item.name === current.embeddingDeployment)
           ? current.embeddingDeployment
           : chooseDeploymentByCapability(deployments, "embedding"),
+        connected: false,
+        lastConnectedAt: "",
       }));
     } catch (error) {
       setAzureError(error instanceof Error ? error.message : String(error));
@@ -1046,7 +1055,7 @@ export function HatchingShell({
                               <button
                                 type="button"
                                 className={`hw-azure-choice${azureConfig.accountKind === "work" ? " hw-azure-choice-active" : ""}`}
-                                onClick={() => setAzureConfig((current) => ({ ...current, accountKind: "work", tenantId: "", connected: false }))}
+                                onClick={() => setAzureConfig((current) => ({ ...current, accountKind: "work", tenantId: "", connected: false, lastConnectedAt: "" }))}
                               >
                                 <span>Work or school account</span>
                                 <small>Use Microsoft sign-in and discover tenants automatically.</small>
@@ -1054,7 +1063,7 @@ export function HatchingShell({
                               <button
                                 type="button"
                                 className={`hw-azure-choice${azureConfig.accountKind === "personal" ? " hw-azure-choice-active" : ""}`}
-                                onClick={() => setAzureConfig((current) => ({ ...current, accountKind: "personal", connected: false }))}
+                                onClick={() => setAzureConfig((current) => ({ ...current, accountKind: "personal", connected: false, lastConnectedAt: "" }))}
                               >
                                 <span>Personal Outlook Azure</span>
                                 <small>Use this when your subscription is paid with @outlook.com/.es.</small>
@@ -1162,6 +1171,8 @@ export function HatchingShell({
                                           endpoint: selected.endpoint,
                                           resourceGroup: selected.resource_group,
                                           accountName: selected.name,
+                                          connected: false,
+                                          lastConnectedAt: "",
                                         }));
                                         void handleLoadAzureDeployments(selected);
                                       }

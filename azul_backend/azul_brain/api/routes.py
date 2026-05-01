@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import time
 from dataclasses import replace
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import aiohttp
 from aiohttp import web
@@ -35,6 +35,12 @@ AZURE_ARM_BASE_URL = "https://management.azure.com"
 AZURE_SUBSCRIPTIONS_API_VERSION = "2022-12-01"
 AZURE_COGNITIVE_API_VERSION = "2024-10-01"
 AZURE_KEY_VAULT_API_VERSION = "2023-07-01"
+KEY_VAULT_HOST_SUFFIXES = (
+    "vault.azure.net",
+    "vault.azure.cn",
+    "vault.usgovcloudapi.net",
+    "vault.microsoftazure.de",
+)
 
 
 def _desktop_user_id(value: object = "desktop-user") -> str:
@@ -79,6 +85,33 @@ def _tail_text(path: Path, max_bytes: int = 20000) -> str:
         return f"Could not read log: {error}"
 
 
+def _request_api_base(req: web.Request) -> str:
+    host = req.host.strip()
+    if host:
+        return f"{req.scheme or 'http'}://{host}"
+    return f"http://localhost:{os.environ.get('PORT', '3978')}"
+
+
+def _validate_key_vault_url(value: str) -> str:
+    parsed = urlparse(value.strip().rstrip("/"))
+    if parsed.scheme.lower() != "https":
+        raise ValueError("key_vault_url must use https.")
+    if parsed.username or parsed.password:
+        raise ValueError("key_vault_url must not contain credentials.")
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        raise ValueError("key_vault_url must be the vault base URL.")
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise ValueError("key_vault_url has an invalid port.") from error
+    if port not in (None, 443):
+        raise ValueError("key_vault_url must not specify a non-standard port.")
+    host = (parsed.hostname or "").lower()
+    if not any(host.endswith(f".{suffix}") for suffix in KEY_VAULT_HOST_SUFFIXES):
+        raise ValueError("key_vault_url must point to an Azure Key Vault host.")
+    return f"https://{host}"
+
+
 async def desktop_backend_status_handler(req: web.Request) -> web.Response:
     """Returns backend diagnostics and recent launcher logs for Settings."""
     runtime_dir = os.environ.get("AZUL_RUNTIME_DIR", "").strip()
@@ -108,7 +141,7 @@ async def desktop_backend_status_handler(req: web.Request) -> web.Response:
     return web.json_response(
         {
             "status": "running",
-            "api_base": "http://localhost:3978",
+            "api_base": _request_api_base(req),
             "runtime_dir": runtime_dir,
             "log_dir": str(log_dir),
             "models_total": len(models),
@@ -249,6 +282,10 @@ async def desktop_azure_key_vault_hydrate_handler(req: web.Request) -> web.Respo
         return web.json_response({"error": "access_token is expired"}, status=400)
     if not vault_url:
         return web.json_response({"error": "key_vault_url is required"}, status=400)
+    try:
+        vault_url = _validate_key_vault_url(vault_url)
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
 
     secret_fields = {
         "MicrosoftAppId": _secret_name_from_payload(
@@ -797,11 +834,11 @@ async def desktop_memory_settings_put_handler(req: web.Request) -> web.Response:
             return web.json_response(
                 {
                     **result,
+                    "reload_ok": False,
                     "reload_error": str(error),
-                },
-                status=500,
+                }
             )
-    return web.json_response(result)
+    return web.json_response({**result, "reload_ok": True})
 
 
 async def desktop_workspace_handler(req: web.Request) -> web.Response:

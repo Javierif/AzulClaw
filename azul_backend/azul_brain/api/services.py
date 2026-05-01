@@ -26,6 +26,18 @@ LOGGER = logging.getLogger(__name__)
 WIPE_CONFIRMATION_PHRASE = "RESET_ALL_LOCAL_DATA"
 
 
+def _parse_bool_setting(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    raise ValueError("vector_memory_enabled must be a boolean.")
+
+
 def get_workspace_root() -> Path:
     """Returns the root of the AzulClaw sandbox workspace."""
     profile = HatchingStore().load()
@@ -200,7 +212,7 @@ def save_memory_runtime_settings(payload: dict) -> dict:
         if not db_path.name:
             raise ValueError("memory_db_path must include a file name.")
 
-    vector_enabled = bool(
+    vector_enabled = _parse_bool_setting(
         payload.get("vector_memory_enabled", load_memory_settings().vector_memory_enabled)
     )
     save_memory_settings(
