@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import time
 from collections.abc import Awaitable, Callable
@@ -16,9 +17,15 @@ from urllib import request as urlrequest
 
 from agent_framework import Message
 
+from ..azure_auth import describe_azure_openai_auth
 from ..cortex.kernel_setup import create_agent
 from .process_registry import ProcessRegistry
 from .store import RuntimeModelProfile, RuntimeSettings, RuntimeStore, to_iso_z
+
+
+_THINK_BLOCK_RE = re.compile(r"<think\b[^>]*>[\s\S]*?</think\s*>", re.IGNORECASE)
+_THINK_OPEN_RE = re.compile(r"<think\b[^>]*>", re.IGNORECASE)
+_THINK_CLOSE_RE = re.compile(r"</think\s*>", re.IGNORECASE)
 
 
 @dataclass
@@ -35,22 +42,37 @@ class RuntimeTurnResult:
 def _serialize_runtime_text(result: Any, *, fallback: str = "") -> str:
     text = getattr(result, "text", None)
     if isinstance(text, str) and text.strip():
-        return text
+        return _strip_reasoning_artifacts(text)
 
     value = getattr(result, "value", None)
     if isinstance(value, str):
-        return value if value.strip() or not fallback else fallback
+        raw_value = value if value.strip() or not fallback else fallback
+        return _strip_reasoning_artifacts(raw_value)
     if value is not None:
         if hasattr(value, "model_dump_json"):
-            return value.model_dump_json()
+            return _strip_reasoning_artifacts(value.model_dump_json())
         try:
-            return json.dumps(value, ensure_ascii=False)
+            return _strip_reasoning_artifacts(json.dumps(value, ensure_ascii=False))
         except TypeError:
-            return str(value)
+            return _strip_reasoning_artifacts(str(value))
 
     if fallback:
-        return fallback
-    return str(result)
+        return _strip_reasoning_artifacts(fallback)
+    return _strip_reasoning_artifacts(str(result))
+
+
+def _strip_reasoning_artifacts(text: str) -> str:
+    """Removes model-internal thinking tags from user-visible output."""
+    if not text:
+        return text
+
+    cleaned = _THINK_BLOCK_RE.sub("", text)
+    dangling_close = list(_THINK_CLOSE_RE.finditer(cleaned))
+    if dangling_close:
+        cleaned = cleaned[dangling_close[-1].end():]
+    cleaned = _THINK_OPEN_RE.sub("", cleaned)
+    cleaned = _THINK_CLOSE_RE.sub("", cleaned)
+    return cleaned.strip()
 
 
 class AgentRuntimeManager:
@@ -398,9 +420,12 @@ class AgentRuntimeManager:
         api_key_var = "AZURE_OPENAI_FAST_API_KEY" if lane == "fast" else "AZURE_OPENAI_SLOW_API_KEY"
         endpoint = os.environ.get(endpoint_var, "").strip() or os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip()
         api_key = os.environ.get(api_key_var, "").strip() or os.environ.get("AZURE_OPENAI_API_KEY", "").strip()
-        if not endpoint or not api_key or not model.deployment.strip():
-            return {"available": False, "detail": "Incomplete Azure configuration"}
-        return {"available": True, "detail": "Azure configuration ready"}
+        available, detail = describe_azure_openai_auth(
+            endpoint=endpoint,
+            deployment=model.deployment,
+            explicit_api_key=api_key,
+        )
+        return {"available": available, "detail": detail}
 
     def _probe_openai_compatible_model(self, model: RuntimeModelProfile) -> dict[str, str | bool]:
         """Checks that the OpenAI-compatible runtime responds and publishes the model."""

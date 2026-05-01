@@ -2,10 +2,18 @@ import type {
   ChatExchange,
   ChatStreamEvent,
   ChatRuntimeMeta,
+  BackendStatus,
+  BackendAuthStatus,
+  AzureDeploymentOption,
+  AzureKeyVaultOption,
+  AzureKeyVaultSecretOption,
+  AzureOpenAIResourceOption,
+  AzureSubscriptionOption,
   ConversationSummary,
   HatchingProfile,
   JobRunResult,
   MemoryRecord,
+  MemorySettings,
   ProcessSummary,
   RuntimeOverview,
   ScheduledJob,
@@ -16,6 +24,7 @@ import {
   defaultChatRuntime,
   defaultHatchingProfile,
   memoryItems,
+  memorySettings,
   processItems,
   runtimeOverview,
   scheduledJobs,
@@ -236,6 +245,25 @@ export async function deleteMemory(id: string, userId = "desktop-user"): Promise
   );
 }
 
+export async function loadMemorySettings(): Promise<MemorySettings> {
+  try {
+    return await fetchJson<MemorySettings>("/api/desktop/memory/settings");
+  } catch {
+    return memorySettings;
+  }
+}
+
+export async function saveMemorySettings(payload: {
+  memory_db_path_override: string;
+  vector_memory_enabled: boolean;
+}): Promise<MemorySettings> {
+  return fetchJson<MemorySettings>("/api/desktop/memory/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function loadWorkspace(path = "."): Promise<{
   root: string;
   current_path: string;
@@ -321,6 +349,143 @@ export async function loadRuntime(): Promise<RuntimeOverview> {
   } catch {
     return runtimeOverview;
   }
+}
+
+export async function loadBackendStatus(): Promise<BackendStatus> {
+  try {
+    return await fetchJson<BackendStatus>("/api/desktop/backend/status");
+  } catch (error) {
+    return {
+      status: "offline",
+      api_base: getApiBase() || "http://localhost:3978",
+      runtime_dir: "",
+      log_dir: "",
+      models_total: 0,
+      models_enabled: 0,
+      scheduler_running: false,
+      auth: {
+        mode: "entra",
+        startup_enabled: true,
+        status: "failed",
+        detail: "Backend unreachable",
+        last_error: error instanceof Error ? error.message : "Backend unreachable",
+        last_success_at: "",
+      },
+      logs: [],
+      error: error instanceof Error ? error.message : "Backend unreachable",
+    };
+  }
+}
+
+export async function ensureBackendAuth(): Promise<BackendAuthStatus> {
+  return fetchJson<BackendAuthStatus>("/api/desktop/backend/auth/ensure", {
+    method: "POST",
+  });
+}
+
+export async function connectAzure(payload: {
+  tenant_id: string;
+  client_id: string;
+  endpoint: string;
+  deployment: string;
+  fast_deployment?: string;
+  embedding_deployment?: string;
+  key_vault_url?: string;
+  access_token: string;
+  expires_on: number;
+  scope: string;
+}): Promise<BackendAuthStatus> {
+  return fetchJson<BackendAuthStatus>("/api/desktop/azure/connect", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function hydrateAzureKeyVaultSecrets(payload: {
+  key_vault_url: string;
+  access_token: string;
+  expires_on: number;
+  microsoft_app_id_secret_name?: string;
+  microsoft_app_password_secret_name?: string;
+  microsoft_app_tenant_id_secret_name?: string;
+}): Promise<{ hydrated: string[] }> {
+  return fetchJson<{ hydrated: string[] }>("/api/desktop/azure/key-vault/hydrate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function discoverAzureSubscriptions(accessToken: string): Promise<AzureSubscriptionOption[]> {
+  const data = await fetchJson<{ items: AzureSubscriptionOption[] }>("/api/desktop/azure/discovery/subscriptions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ access_token: accessToken }),
+  });
+  return data.items;
+}
+
+export async function discoverAzureResources(
+  accessToken: string,
+  subscriptionId: string,
+): Promise<AzureOpenAIResourceOption[]> {
+  const data = await fetchJson<{ items: AzureOpenAIResourceOption[] }>("/api/desktop/azure/discovery/resources", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ access_token: accessToken, subscription_id: subscriptionId }),
+  });
+  return data.items;
+}
+
+export async function discoverAzureKeyVaults(
+  accessToken: string,
+  subscriptionId: string,
+): Promise<AzureKeyVaultOption[]> {
+  const data = await fetchJson<{ items: AzureKeyVaultOption[] }>("/api/desktop/azure/discovery/key-vaults", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ access_token: accessToken, subscription_id: subscriptionId }),
+  });
+  return data.items;
+}
+
+export async function discoverAzureKeyVaultSecrets(
+  accessToken: string,
+  subscriptionId: string,
+  resourceGroup: string,
+  vaultName: string,
+): Promise<AzureKeyVaultSecretOption[]> {
+  const data = await fetchJson<{ items: AzureKeyVaultSecretOption[] }>("/api/desktop/azure/discovery/key-vault-secrets", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      access_token: accessToken,
+      subscription_id: subscriptionId,
+      resource_group: resourceGroup,
+      vault_name: vaultName,
+    }),
+  });
+  return data.items;
+}
+
+export async function discoverAzureDeployments(
+  accessToken: string,
+  subscriptionId: string,
+  resourceGroup: string,
+  accountName: string,
+): Promise<AzureDeploymentOption[]> {
+  const data = await fetchJson<{ items: AzureDeploymentOption[] }>("/api/desktop/azure/discovery/deployments", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      access_token: accessToken,
+      subscription_id: subscriptionId,
+      resource_group: resourceGroup,
+      account_name: accountName,
+    }),
+  });
+  return data.items;
 }
 
 export async function saveRuntime(payload: {

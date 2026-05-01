@@ -43,6 +43,9 @@ def parse_iso_datetime(raw_value: str | None) -> datetime | None:
 
 
 def _runtime_root() -> Path:
+    override = os.environ.get("AZUL_RUNTIME_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
     return Path(__file__).resolve().parents[3] / "memory"
 
 

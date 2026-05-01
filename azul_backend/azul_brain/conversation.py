@@ -6,8 +6,6 @@ import os
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from urllib.parse import urlparse
-
 from agent_framework import Message
 
 from .cortex.fast.commentary import (
@@ -213,18 +211,9 @@ class ConversationOrchestrator:
         assistant_reply: str,
     ) -> None:
         """LLM sidebar title from the first exchange (question + answer excerpt)."""
-        import aiohttp
-
-        endpoint = os.environ.get("AZURE_OPENAI_FAST_ENDPOINT", "").strip()
-        api_key = os.environ.get("AZURE_OPENAI_FAST_API_KEY", "").strip()
         deployment = os.environ.get("AZURE_OPENAI_FAST_DEPLOYMENT", "").strip()
-        if not endpoint or not api_key or not deployment:
+        if not deployment:
             return
-
-        parsed = urlparse(endpoint)
-        v1_idx = parsed.path.find("/v1")
-        clean_path = parsed.path[: v1_idx + 3] if v1_idx != -1 else ""
-        url = f"{parsed.scheme}://{parsed.netloc}{clean_path}/chat/completions"
 
         ans = (assistant_reply or "").strip()
         if len(ans) > 1200:
@@ -240,33 +229,21 @@ class ConversationOrchestrator:
             "Do not use 'Conversation Starter', 'New chat', 'Chat', or 'Main conversation'. "
             "Reply with the title only, no quotes."
         )
-        payload = {
-            "model": deployment,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": title_prompt,
-                }
-            ],
-            "max_completion_tokens": 30,
-        }
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url, json=payload, headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=15), ssl=False,
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        raw = (data["choices"][0]["message"].get("content") or "").strip()
-                        title = self._finalize_generated_title(raw, user_message)
-                        if title:
-                            self.memory.update_conversation_title(conversation_id, title)
-                            return
+            result = await self.runtime_manager.execute_messages(
+                messages=[Message(role="user", contents=title_prompt)],
+                lane="fast",
+                title="Conversation title",
+                source="conversation-title",
+                kind="agent-run",
+                tools_enabled=False,
+                instructions="Return only a concise conversation title.",
+            )
+            raw = (result.text or "").strip()
+            title = self._finalize_generated_title(raw, user_message)
+            if title:
+                self.memory.update_conversation_title(conversation_id, title)
+                return
         except Exception as error:
             LOGGER.debug("[Brain] Title generation failed: %s", error)
 
@@ -396,7 +373,7 @@ class ConversationOrchestrator:
             return ConversationReply(
                 text=(
                     "Could not execute the cognitive layer yet. "
-                    "Check dependencies and AZURE_OPENAI_* variables.\n"
+                    "Check Azure OpenAI configuration and Microsoft Entra authentication.\n"
                     f"Technical detail: {error}"
                 ),
                 lane=lane,
@@ -440,7 +417,7 @@ class ConversationOrchestrator:
             return ConversationReply(
                 text=(
                     "Could not execute the cognitive layer yet. "
-                    "Check dependencies and AZURE_OPENAI_* variables.\n"
+                    "Check Azure OpenAI configuration and Microsoft Entra authentication.\n"
                     f"Technical detail: {error}"
                 ),
                 lane=lane,
@@ -733,14 +710,8 @@ class ConversationOrchestrator:
                 user_message,
                 reason=route.reason,
             )
-        else:
-            initial_commentary = await self.generate_fast_visible_commentary(
-                user_message,
-                reason=route.reason,
-                lane=effective_lane,
-            )
-        if on_commentary is not None:
-            await on_commentary(initial_commentary)
+            if on_commentary is not None:
+                await on_commentary(initial_commentary)
         if effective_lane == "slow" and on_progress is not None:
             await on_progress(
                 build_progress_snapshot(

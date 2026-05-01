@@ -1,0 +1,63 @@
+from __future__ import annotations
+
+import os
+import uuid
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from azul_backend.azul_brain.api.hatching_store import (
+    HatchingProfile,
+    HatchingStore,
+    MemorySettings,
+    is_vector_memory_enabled,
+    resolve_memory_db_path,
+    save_memory_settings,
+)
+
+
+class MemorySettingsTests(unittest.TestCase):
+    def _runtime_dir(self) -> str:
+        root = Path(__file__).resolve().parents[1] / "memory" / "test-runtime"
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / f"case-{uuid.uuid4().hex}"
+        path.mkdir(parents=True, exist_ok=False)
+        return str(path)
+
+    def test_defaults_to_workspace_azul_database(self) -> None:
+        tmp = self._runtime_dir()
+        workspace = Path(tmp) / "workspace"
+        with patch.dict(os.environ, {"AZUL_RUNTIME_DIR": tmp}, clear=True):
+            HatchingStore().save(HatchingProfile(workspace_root=str(workspace)))
+
+            self.assertEqual(
+                resolve_memory_db_path(),
+                str(workspace / ".azul" / "azul_memory.db"),
+            )
+            self.assertTrue(is_vector_memory_enabled())
+
+    def test_saved_memory_settings_override_legacy_env(self) -> None:
+        tmp = self._runtime_dir()
+        override = Path(tmp) / "custom" / "memory.sqlite"
+        with patch.dict(
+            os.environ,
+            {
+                "AZUL_RUNTIME_DIR": tmp,
+                "AZUL_MEMORY_DB_PATH": "legacy.sqlite",
+                "VECTOR_MEMORY_ENABLED": "true",
+            },
+            clear=True,
+        ):
+            save_memory_settings(
+                MemorySettings(
+                    memory_db_path=str(override),
+                    vector_memory_enabled=False,
+                )
+            )
+
+            self.assertEqual(resolve_memory_db_path(), str(override))
+            self.assertFalse(is_vector_memory_enabled())
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -15,6 +15,7 @@ if __package__ in (None, ""):
 
     from azul_backend.azul_brain.api.routes import register_desktop_routes
     from azul_backend.azul_brain.api.services import get_workspace_root
+    from azul_backend.azul_brain.azure_auth import AzureOpenAIAuthState
     from azul_backend.azul_brain.bootstrap import build_adapter, build_mcp_client
     from azul_backend.azul_brain.bot.azul_bot import AzulBot
     from azul_backend.azul_brain.config import HOST, load_runtime_config
@@ -28,6 +29,7 @@ if __package__ in (None, ""):
 else:
     from .api.routes import register_desktop_routes
     from .api.services import get_workspace_root
+    from .azure_auth import AzureOpenAIAuthState
     from .bootstrap import build_adapter, build_mcp_client
     from .bot.azul_bot import AzulBot
     from .config import HOST, load_runtime_config
@@ -126,6 +128,7 @@ async def create_app() -> web.Application:
 
     runtime_store = RuntimeStore()
     process_registry = ProcessRegistry(runtime_store)
+    azure_auth_state = AzureOpenAIAuthState()
     runtime_manager = AgentRuntimeManager(
         mcp_client=mcp_client,
         store=runtime_store,
@@ -146,6 +149,7 @@ async def create_app() -> web.Application:
     app["process_registry"] = process_registry
     app["runtime_manager"] = runtime_manager
     app["scheduler"] = scheduler
+    app["azure_auth_state"] = azure_auth_state
     app.router.add_post("/api/messages", messages_handler)
     register_desktop_routes(app)
 
@@ -158,6 +162,9 @@ async def create_app() -> web.Application:
     # Seed onboarding profile preferences on every startup (idempotent — skips existing rows)
     if hasattr(orchestrator, "seed_profile_facts"):
         asyncio.create_task(orchestrator.seed_profile_facts())
+
+    if azure_auth_state.snapshot().startup_enabled:
+        asyncio.create_task(azure_auth_state.ensure_authenticated())
 
     if runtime_config.service_bus_connection_string:
         sb_worker = ServiceBusWorker(

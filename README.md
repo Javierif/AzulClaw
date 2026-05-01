@@ -72,33 +72,115 @@ pip install -r requirements.txt
 
 ### 2. Configure the backend
 
+Recommended local configuration uses Azure Key Vault. The Hatching Azure wizard
+can discover Key Vault resources in your subscription and save the selected
+vault URL in the local profile, so `.env.local` does not need to hold secrets or
+the vault pointer.
+
+For headless or manual setups, keep only the vault pointer in your user/machine
+environment:
+
 ```powershell
-Copy-Item azul_backend\azul_brain\.env.example azul_backend\azul_brain\.env.local
+setx AZUL_KEY_VAULT_URL "https://your-vault.vault.azure.net"
 ```
 
-Fill in the Azure values you want to use. For local desktop iteration, only the backend config is required.
+Secret names use the environment variable name with underscores replaced by
+hyphens, for example `AZURE_OPENAI_ENDPOINT` is stored as
+`AZURE-OPENAI-ENDPOINT`.
 
-### 3. Start the backend
+AzulClaw supports Microsoft Entra ID for Azure OpenAI and treats it as the
+preferred desktop path. Assign the signed-in user an Azure role such as
+`Cognitive Services OpenAI User` on the Azure OpenAI resource.
+
+To migrate an existing local env file:
+
+```powershell
+python scripts\migrate_env_to_keyvault.py --vault your-vault --delete-env-file
+```
+
+### 3. Start the desktop shell
+
+```powershell
+cd azul_desktop
+npm install
+npm run tauri:dev
+```
+
+The native Tauri shell starts the backend automatically on `http://localhost:3978` if nothing is already listening there.
+
+For frontend-only web iteration, start the backend in one terminal:
 
 ```powershell
 python -m azul_backend.azul_brain.main_launcher
 ```
 
-The local API listens on `http://localhost:3978`.
-
-### 4. Start the desktop shell
+Then start Vite in another terminal:
 
 ```powershell
 cd azul_desktop
-npm install
 npm run dev
 ```
 
-For the native Tauri shell:
+## Windows desktop package
+
+To build the one-click Windows installer, run from the repository root:
 
 ```powershell
-npm run tauri:dev
+npm run package:desktop:win
 ```
+
+The script packages the Python backend and MCP server into internal executables,
+bundles them into the Tauri app, and writes the installer to:
+
+```text
+azul_desktop/src-tauri/target/release/bundle/nsis/
+```
+
+Install that `.exe` and launch AzulClaw from the desktop shortcut or start menu.
+The app starts its local backend automatically.
+
+## Installed app configuration
+
+The packaged Windows app does not bundle `.env.local` or any Azure secrets.
+For an installed desktop app, point the backend at Key Vault before launching
+AzulClaw from the desktop/start menu.
+
+Recommended configuration:
+
+```powershell
+setx AZUL_KEY_VAULT_URL "https://your-vault.vault.azure.net"
+```
+
+After changing them, fully close AzulClaw and launch it again. If Windows
+Explorer already had an old environment snapshot, sign out and back in.
+
+Optional Entra settings:
+
+```powershell
+setx AZURE_TENANT_ID "<your-tenant-id>"
+setx AZUL_ENABLE_INTERACTIVE_BROWSER_AUTH "true"
+setx AZUL_ENTRA_BROWSER_CLIENT_ID "<desktop-app-registration-client-id>"
+```
+
+If interactive browser auth is not configured, the backend still supports other
+`DefaultAzureCredential` sources such as Azure CLI, Visual Studio Code, and the
+Windows shared token cache.
+
+Settings now includes a backend diagnostics section that shows:
+
+- whether the local backend is reachable
+- how many model profiles are enabled
+- the Microsoft Entra sign-in state for Azure OpenAI
+- the runtime and log directories
+- recent backend and MCP launcher logs
+
+When `AZUL_AZURE_OPENAI_AUTH_MODE=entra`, the desktop app triggers Azure OpenAI
+authentication as part of startup instead of waiting for the first chat request.
+
+If chat replies with `No enabled model profiles found.`, the backend is usually
+running but missing provider configuration. In Entra mode, also verify that the
+current user can obtain a token and has Azure RBAC access to the Azure OpenAI
+resource.
 
 ## Core capabilities
 

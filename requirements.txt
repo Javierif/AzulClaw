@@ -7,4 +7,6 @@ python-dotenv
 agent-framework
 sqlite-vec
 azure-servicebus
+azure-identity
+azure-keyvault-secrets
 croniter

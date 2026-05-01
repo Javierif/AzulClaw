@@ -13,7 +13,12 @@ from .hatching_store import (
     HatchingProfile,
     HatchingStore,
     _AZUL_STATE_DIR,
+    MemorySettings,
+    default_memory_db_path,
+    is_vector_memory_enabled,
+    load_memory_settings,
     resolve_memory_db_path,
+    save_memory_settings,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -171,6 +176,40 @@ def load_hatching_profile() -> dict:
     data = HatchingStore().load().__dict__.copy()
     data["memory_db_path"] = resolve_memory_db_path()
     return data
+
+
+def load_memory_runtime_settings() -> dict:
+    """Returns effective user-editable memory settings."""
+    settings = load_memory_settings()
+    configured_path = settings.memory_db_path.strip()
+    return {
+        "memory_db_path": resolve_memory_db_path(),
+        "memory_db_path_override": configured_path,
+        "default_memory_db_path": default_memory_db_path(),
+        "vector_memory_enabled": is_vector_memory_enabled(),
+    }
+
+
+def save_memory_runtime_settings(payload: dict) -> dict:
+    """Validates and persists user-editable memory settings."""
+    raw_path = str(payload.get("memory_db_path_override", payload.get("memory_db_path", ""))).strip()
+    if raw_path:
+        db_path = Path(raw_path).expanduser()
+        if db_path.exists() and db_path.is_dir():
+            raise ValueError("memory_db_path must be a file path, not a directory.")
+        if not db_path.name:
+            raise ValueError("memory_db_path must include a file name.")
+
+    vector_enabled = bool(
+        payload.get("vector_memory_enabled", load_memory_settings().vector_memory_enabled)
+    )
+    save_memory_settings(
+        MemorySettings(
+            memory_db_path=raw_path,
+            vector_memory_enabled=vector_enabled,
+        )
+    )
+    return load_memory_runtime_settings()
 
 
 def _delete_sqlite_bundle(db_file: Path) -> None:

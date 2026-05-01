@@ -3,6 +3,7 @@ import type {
   ChatRuntimeMeta,
   HatchingProfile,
   MemoryRecord,
+  MemorySettings,
   ProcessSummary,
   RuntimeOverview,
   ScheduledJob,
@@ -70,6 +71,13 @@ export const memoryItems: MemoryRecord[] = [
     source: "Indexed document",
   },
 ];
+
+export const memorySettings: MemorySettings = {
+  memory_db_path: "C:\\Users\\javie\\Desktop\\AzulWorkspace\\.azul\\azul_memory.db",
+  memory_db_path_override: "",
+  default_memory_db_path: "C:\\Users\\javie\\Desktop\\AzulWorkspace\\.azul\\azul_memory.db",
+  vector_memory_enabled: true,
+};
 
 export const workspaceEntries: WorkspaceEntry[] = [
   { name: "Inbox", kind: "folder", path: "/Inbox" },

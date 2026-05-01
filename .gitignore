@@ -27,6 +27,8 @@ memory/
 # Desktop frontend
 azul_desktop/node_modules/
 azul_desktop/dist/
+azul_desktop/resources/backend/*
+!azul_desktop/resources/backend/.gitkeep
 
 # Tauri / Rust build artifacts
 azul_desktop/src-tauri/target/

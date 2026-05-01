@@ -43,6 +43,9 @@ The backend defaults to `http://localhost:3978`.
 
 ## Configuration
 
-Primary config lives in `azul_backend/azul_brain/.env.local`.
+Azure OpenAI auth now supports Microsoft Entra ID as the preferred desktop
+path. `.env.local` remains useful for repository-based development and
+non-secret local runtime settings, but it is no longer the recommended source
+for Azure OpenAI credentials.
 
 See [Setup and Development](../docs/02_setup_and_development.md) and [Memory System](../docs/15_memory_system.md).
