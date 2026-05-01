@@ -232,22 +232,31 @@ class AzureOpenAIAuthState:
 
     def snapshot(self) -> AzureOpenAIAuthSnapshot:
         mode = resolve_azure_openai_auth_mode()
+        has_frontend_token = has_frontend_azure_token()
+        interactive_browser_enabled = _interactive_browser_enabled()
+        startup_default_credential_enabled = _startup_default_credential_enabled()
         startup_enabled = mode == "entra" and (
-            has_frontend_azure_token()
-            or _interactive_browser_enabled()
-            or _startup_default_credential_enabled()
+            has_frontend_token
+            or interactive_browser_enabled
+            or startup_default_credential_enabled
         )
-        requires_frontend_login = mode == "entra" and not has_frontend_azure_token()
+        requires_frontend_login = (
+            mode == "entra"
+            and not has_frontend_token
+            and not interactive_browser_enabled
+            and not startup_default_credential_enabled
+            and self._status != "authenticated"
+        )
         status = self._status
         detail = self._detail
         if mode == "api_key":
             status = "disabled"
             detail = "API key mode does not use desktop sign-in"
             requires_frontend_login = False
-        elif not startup_enabled and not has_frontend_azure_token():
+        elif not startup_enabled and not has_frontend_token:
             status = "idle"
             detail = "Waiting for desktop Microsoft login"
-        source = FRONTEND_AUTH_SOURCE if has_frontend_azure_token() else "default"
+        source = FRONTEND_AUTH_SOURCE if has_frontend_token else "default"
         return AzureOpenAIAuthSnapshot(
             mode=mode,
             startup_enabled=startup_enabled,

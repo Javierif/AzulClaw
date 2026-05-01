@@ -113,6 +113,23 @@ class AzureAuthStateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot.status, "authenticated")
         self.assertEqual(snapshot.mode, "entra")
         self.assertTrue(snapshot.last_success_at)
+        self.assertFalse(snapshot.requires_frontend_login)
+
+    async def test_state_requires_frontend_login_when_no_backend_auth_path_exists(self) -> None:
+        state = azure_auth.AzureOpenAIAuthState()
+        with patch.dict(
+            os.environ,
+            {
+                "AZUL_AZURE_OPENAI_AUTH_MODE": "entra",
+                "AZURE_OPENAI_API_KEY": "",
+                "AZUL_ENABLE_STARTUP_DEFAULT_AZURE_CREDENTIAL": "false",
+                "AZUL_ENABLE_INTERACTIVE_BROWSER_AUTH": "false",
+            },
+            clear=False,
+        ):
+            snapshot = state.snapshot()
+
+        self.assertEqual(snapshot.status, "idle")
         self.assertTrue(snapshot.requires_frontend_login)
 
     async def test_state_reports_failure_when_token_acquisition_fails(self) -> None:

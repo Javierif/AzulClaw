@@ -572,7 +572,7 @@ export function HatchingShell({
           );
         } catch (error) {
           setAzureError(
-            `Key Vault selected. Secret discovery is not available from the running backend yet; restart the backend or type the secret names manually. ${error instanceof Error ? error.message : String(error)}`,
+            `Key Vault selected, but secret discovery failed. Verify Azure ARM permissions, Key Vault access policy/RBAC, and network/API access, or type the secret names manually. ${error instanceof Error ? error.message : String(error)}`,
           );
         }
       }
@@ -636,7 +636,7 @@ export function HatchingShell({
         lastConnectedAt: "",
       }));
       setAzureError(
-        `Key Vault selected. Secret discovery is not available from the running backend yet; restart the backend or type the secret names manually. ${error instanceof Error ? error.message : String(error)}`,
+        `Key Vault selected, but secret discovery failed. Verify Azure ARM permissions, Key Vault access policy/RBAC, and network/API access, or type the secret names manually. ${error instanceof Error ? error.message : String(error)}`,
       );
     } finally {
       setAzureDiscoveryBusy(false);

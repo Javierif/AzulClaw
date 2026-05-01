@@ -2,8 +2,10 @@
 
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 from aiohttp import web
 from botbuilder.schema import Activity
@@ -44,12 +46,41 @@ else:
 LOGGER = logging.getLogger(__name__)
 CORS_ALLOWED_METHODS = "GET,POST,PUT,DELETE,OPTIONS"
 CORS_ALLOWED_HEADERS = "Content-Type,Authorization"
+DEFAULT_CORS_ALLOWED_ORIGINS = {
+    "http://localhost:1420",
+    "http://127.0.0.1:1420",
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+    "tauri://localhost",
+}
+
+
+def _allowed_cors_origins() -> set[str]:
+    configured = {
+        item.strip().rstrip("/").lower()
+        for item in os.environ.get("AZUL_CORS_ALLOWED_ORIGINS", "").split(",")
+        if item.strip()
+    }
+    return DEFAULT_CORS_ALLOWED_ORIGINS | configured
+
+
+def _is_allowed_cors_origin(origin: str) -> bool:
+    if not origin:
+        return True
+    parsed = urlparse(origin.strip())
+    if not parsed.scheme or not parsed.netloc:
+        return False
+    normalized = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+    return normalized in _allowed_cors_origins()
 
 
 def apply_cors_headers(req: web.Request, response: web.StreamResponse) -> None:
     """Applies CORS headers also to streaming responses and framework errors."""
     origin = req.headers.get("Origin", "").strip()
     requested_headers = req.headers.get("Access-Control-Request-Headers", "").strip()
+
+    if origin and not _is_allowed_cors_origin(origin):
+        return
 
     response.headers["Access-Control-Allow-Origin"] = origin or "*"
     response.headers["Access-Control-Allow-Methods"] = CORS_ALLOWED_METHODS
@@ -68,6 +99,8 @@ async def cors_on_prepare(req: web.Request, response: web.StreamResponse) -> Non
 async def cors_middleware(req: web.Request, handler):
     """Applies simple CORS headers for the desktop app in development."""
     if req.method == "OPTIONS":
+        if not _is_allowed_cors_origin(req.headers.get("Origin", "").strip()):
+            return web.Response(status=403)
         response = web.Response(status=204)
         apply_cors_headers(req, response)
         return response

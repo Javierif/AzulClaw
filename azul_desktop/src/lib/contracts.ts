@@ -43,6 +43,7 @@ export interface MemorySettings {
   memory_db_path_override: string;
   default_memory_db_path: string;
   vector_memory_enabled: boolean;
+  reload_ok?: boolean;
   reload_error?: string;
 }
 

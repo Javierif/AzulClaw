@@ -202,6 +202,11 @@ async def desktop_azure_connect_handler(req: web.Request) -> web.Response:
         return web.json_response({"error": "endpoint is required"}, status=400)
     if not deployment:
         return web.json_response({"error": "deployment is required"}, status=400)
+    if key_vault_url:
+        try:
+            key_vault_url = _validate_key_vault_url(key_vault_url)
+        except ValueError as error:
+            return web.json_response({"error": str(error)}, status=400)
 
     try:
         set_frontend_azure_token(
