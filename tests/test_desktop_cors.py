@@ -33,6 +33,13 @@ class DesktopCorsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status, 403)
 
+    async def test_simple_request_from_disallowed_origin_is_rejected(self) -> None:
+        request = make_mocked_request("POST", "/api/desktop/azure/connect", headers={"Origin": "https://example.com"})
+
+        response = await cors_middleware(request, lambda _: web.Response(status=200))
+
+        self.assertEqual(response.status, 403)
+
     def test_env_can_add_allowed_origin(self) -> None:
         request = make_mocked_request("GET", "/api/desktop/backend/status", headers={"Origin": "http://localhost:5173"})
         response = web.Response()

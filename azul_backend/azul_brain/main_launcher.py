@@ -98,9 +98,9 @@ async def cors_on_prepare(req: web.Request, response: web.StreamResponse) -> Non
 @web.middleware
 async def cors_middleware(req: web.Request, handler):
     """Applies simple CORS headers for the desktop app in development."""
+    if not _is_allowed_cors_origin(req.headers.get("Origin", "").strip()):
+        return web.Response(status=403)
     if req.method == "OPTIONS":
-        if not _is_allowed_cors_origin(req.headers.get("Origin", "").strip()):
-            return web.Response(status=403)
         response = web.Response(status=204)
         apply_cors_headers(req, response)
         return response

@@ -73,9 +73,9 @@ export const memoryItems: MemoryRecord[] = [
 ];
 
 export const memorySettings: MemorySettings = {
-  memory_db_path: "C:\\Users\\javie\\Desktop\\AzulWorkspace\\.azul\\azul_memory.db",
+  memory_db_path: "C:\\Users\\<user>\\Desktop\\AzulWorkspace\\.azul\\azul_memory.db",
   memory_db_path_override: "",
-  default_memory_db_path: "C:\\Users\\javie\\Desktop\\AzulWorkspace\\.azul\\azul_memory.db",
+  default_memory_db_path: "C:\\Users\\<user>\\Desktop\\AzulWorkspace\\.azul\\azul_memory.db",
   vector_memory_enabled: true,
 };
 
@@ -95,7 +95,7 @@ export const defaultHatchingProfile: HatchingProfile = {
   style: "Explanatory",
   autonomy: "Moderately autonomous",
   archetype: "Companion",
-  workspace_root: "C:\\Users\\javie\\Desktop\\AzulWorkspace",
+  workspace_root: "C:\\Users\\<user>\\Desktop\\AzulWorkspace",
   confirm_sensitive_actions: true,
   is_hatched: false,
   completed_at: "",

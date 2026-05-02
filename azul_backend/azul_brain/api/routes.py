@@ -250,29 +250,29 @@ def _secret_name_from_payload(payload: dict, field: str, default_name: str) -> s
 
 async def _key_vault_get_secret(
     *,
+    session: aiohttp.ClientSession,
     access_token: str,
     vault_url: str,
     secret_name: str,
 ) -> str:
     url = f"{vault_url.rstrip('/')}/secrets/{quote(secret_name)}?api-version=7.4"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
-            url,
-            headers={"Authorization": f"Bearer {access_token}"},
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as response:
-            data = await response.json(content_type=None)
-            if response.status >= 400:
-                detail = data.get("error", {}).get("message") if isinstance(data, dict) else ""
-                raise web.HTTPBadRequest(
-                    text=json.dumps(
-                        {"error": detail or f"Key Vault secret request failed ({response.status})"}
-                    ),
-                    content_type="application/json",
-                )
-            if not isinstance(data, dict):
-                return ""
-            return str(data.get("value", "") or "")
+    async with session.get(
+        url,
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=aiohttp.ClientTimeout(total=30),
+    ) as response:
+        data = await response.json(content_type=None)
+        if response.status >= 400:
+            detail = data.get("error", {}).get("message") if isinstance(data, dict) else ""
+            raise web.HTTPBadRequest(
+                text=json.dumps(
+                    {"error": detail or f"Key Vault secret request failed ({response.status})"}
+                ),
+                content_type="application/json",
+            )
+        if not isinstance(data, dict):
+            return ""
+        return str(data.get("value", "") or "")
 
 
 async def desktop_azure_key_vault_hydrate_handler(req: web.Request) -> web.Response:
@@ -305,15 +305,17 @@ async def desktop_azure_key_vault_hydrate_handler(req: web.Request) -> web.Respo
     }
 
     hydrated: list[str] = []
-    for env_key, secret_name in secret_fields.items():
-        value = await _key_vault_get_secret(
-            access_token=access_token,
-            vault_url=vault_url,
-            secret_name=secret_name,
-        )
-        if value:
-            os.environ[env_key] = value
-            hydrated.append(env_key)
+    async with aiohttp.ClientSession() as session:
+        for env_key, secret_name in secret_fields.items():
+            value = await _key_vault_get_secret(
+                session=session,
+                access_token=access_token,
+                vault_url=vault_url,
+                secret_name=secret_name,
+            )
+            if value:
+                os.environ[env_key] = value
+                hydrated.append(env_key)
 
     os.environ["AZUL_KEY_VAULT_URL"] = vault_url
 

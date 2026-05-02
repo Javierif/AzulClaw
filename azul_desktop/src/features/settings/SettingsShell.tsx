@@ -50,6 +50,7 @@ export function SettingsShell({ onLocalDataWiped }: SettingsShellProps) {
   const [wipeCopied, setWipeCopied] = useState(false);
   const [logsCopied, setLogsCopied] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState("");
   const [profile, setProfile] = useState<HatchingProfile>(defaultHatchingProfile);
   const [memorySettings, setMemorySettings] = useState<MemorySettings>(defaultMemorySettings);
   const [memoryPathDraft, setMemoryPathDraft] = useState("");
@@ -120,6 +121,7 @@ export function SettingsShell({ onLocalDataWiped }: SettingsShellProps) {
 
   async function handleEnsureAuth() {
     setAuthBusy(true);
+    setAuthError("");
     try {
       const auth = await ensureBackendAuth();
       if (auth.requires_frontend_login && profileCanRenewAzureLogin(profile)) {
@@ -127,6 +129,8 @@ export function SettingsShell({ onLocalDataWiped }: SettingsShellProps) {
       }
       const backendData = await loadBackendStatus();
       setBackendStatus(backendData);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : String(error));
     } finally {
       setAuthBusy(false);
     }
@@ -320,6 +324,11 @@ export function SettingsShell({ onLocalDataWiped }: SettingsShellProps) {
               {logsCopied ? "Logs copied" : "Copy logs"}
             </button>
           </div>
+          {authError && (
+            <p className="hw-inline-note hw-inline-note-warning" style={{ marginTop: "12px" }}>
+              Authentication failed: {authError}
+            </p>
+          )}
 
           {backendStatus.logs.length > 0 && (
             <div style={{ display: "grid", gap: "12px", marginTop: "12px" }}>
