@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import logging
 import os
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
 from .channels.access_control import parse_csv_allowlist
 
@@ -13,6 +14,11 @@ KEY_VAULT_NAME_ENV = "AZUL_KEY_VAULT_NAME"
 KEY_VAULT_ENV_KEYS_ENV = "AZUL_KEY_VAULT_ENV_KEYS"
 KEY_VAULT_SECRET_NAMES_ENV = "AZUL_KEY_VAULT_SECRET_NAMES"
 KEY_VAULT_STRICT_ENV = "AZUL_KEY_VAULT_STRICT"
+KEY_VAULT_HOST_SUFFIXES = (
+    "vault.azure.net",
+    "vault.azure.cn",
+    "vault.usgovcloudapi.net",
+)
 DEFAULT_PORT = 3978
 HOST = "localhost"
 
@@ -260,32 +266,54 @@ def _parse_bool(raw_value: str | None, default: bool = False) -> bool:
     return default
 
 
+def _normalize_key_vault_url(raw_url: str) -> str:
+    """Accepts only HTTPS Azure Key Vault endpoints without paths."""
+    parsed = urlparse(raw_url.strip())
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not host:
+        raise ValueError("Key Vault URL must be an HTTPS Azure Key Vault endpoint.")
+    if parsed.path not in ("", "/") or parsed.params or parsed.query or parsed.fragment:
+        raise ValueError("Key Vault URL must not include paths, query strings, or fragments.")
+    if parsed.port:
+        raise ValueError("Key Vault URL must not include a custom port.")
+    if not any(host.endswith(f".{suffix}") for suffix in KEY_VAULT_HOST_SUFFIXES):
+        raise ValueError("Key Vault URL host must be an Azure Key Vault hostname.")
+    return urlunparse(("https", host, "", "", "", "")).rstrip("/")
+
+
 def resolve_key_vault_url() -> str:
     """Resolves the configured Key Vault URL from URL or vault name settings."""
     explicit_url = os.environ.get(KEY_VAULT_URL_ENV, "").strip()
     if explicit_url:
-        return explicit_url.rstrip("/")
+        return _normalize_key_vault_url(explicit_url)
     vault_name = os.environ.get(KEY_VAULT_NAME_ENV, "").strip()
     if not vault_name:
         azure_config = _load_azure_hatching_config()
         profile_url = str(azure_config.get("keyVaultUrl", "")).strip()
         if profile_url:
-            return profile_url.rstrip("/")
+            return _normalize_key_vault_url(profile_url)
         vault_name = str(azure_config.get("keyVaultName", "")).strip()
     if not vault_name:
         return ""
     if vault_name.startswith("https://"):
-        return vault_name.rstrip("/")
+        return _normalize_key_vault_url(vault_name)
     return f"https://{vault_name}.vault.azure.net"
 
 
 def load_key_vault_secrets(secret_client=None) -> None:
     """Hydrates unset runtime environment variables from Azure Key Vault."""
-    vault_url = resolve_key_vault_url()
+    strict = _parse_bool(os.environ.get(KEY_VAULT_STRICT_ENV), False)
+    try:
+        vault_url = resolve_key_vault_url()
+    except ValueError as error:
+        message = f"Invalid Key Vault configuration: {error}"
+        if strict:
+            raise RuntimeError(message) from error
+        LOGGER.warning("%s Continuing without Key Vault settings.", message)
+        return
     if not vault_url:
         return
 
-    strict = _parse_bool(os.environ.get(KEY_VAULT_STRICT_ENV), False)
     if secret_client is None:
         try:
             from azure.identity import DefaultAzureCredential

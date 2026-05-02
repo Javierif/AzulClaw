@@ -13,6 +13,7 @@ from azul_backend.azul_brain.api.hatching_store import (
     HatchingStore,
     MemorySettings,
     is_vector_memory_enabled,
+    load_memory_settings,
     resolve_memory_db_path,
     save_memory_settings,
 )
@@ -60,6 +61,30 @@ class MemorySettingsTests(unittest.TestCase):
 
             self.assertEqual(resolve_memory_db_path(), str(override))
             self.assertFalse(is_vector_memory_enabled())
+
+    def test_memory_db_path_expands_home_shortcut(self) -> None:
+        tmp = self._runtime_dir()
+        home = Path(tmp) / "home"
+        with patch.dict(
+            os.environ,
+            {
+                "AZUL_RUNTIME_DIR": tmp,
+                "HOME": str(home),
+                "USERPROFILE": str(home),
+            },
+            clear=True,
+        ):
+            saved = save_memory_settings(
+                MemorySettings(
+                    memory_db_path="~/azul/memory.sqlite",
+                    vector_memory_enabled=True,
+                )
+            )
+            expected = str(home / "azul" / "memory.sqlite")
+
+            self.assertEqual(saved.memory_db_path, expected)
+            self.assertEqual(load_memory_settings().memory_db_path, expected)
+            self.assertEqual(resolve_memory_db_path(), expected)
 
     def test_save_memory_settings_parses_string_false(self) -> None:
         tmp = self._runtime_dir()

@@ -79,8 +79,11 @@ def save_memory_settings(settings: MemorySettings) -> MemorySettings:
     """Persists user memory settings under the local runtime directory."""
     settings_path = _memory_settings_path()
     settings_path.parent.mkdir(parents=True, exist_ok=True)
+    memory_db_path = settings.memory_db_path.strip()
+    if memory_db_path:
+        memory_db_path = str(Path(memory_db_path).expanduser())
     cleaned = MemorySettings(
-        memory_db_path=settings.memory_db_path.strip(),
+        memory_db_path=memory_db_path,
         vector_memory_enabled=bool(settings.vector_memory_enabled),
     )
     settings_path.write_text(
@@ -98,7 +101,7 @@ def resolve_memory_db_path() -> str:
     """
     configured_path = load_memory_settings().memory_db_path.strip()
     if configured_path:
-        return configured_path
+        return str(Path(configured_path).expanduser())
     return default_memory_db_path()
 
 

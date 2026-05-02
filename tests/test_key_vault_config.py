@@ -81,6 +81,20 @@ class KeyVaultConfigTests(unittest.TestCase):
                 "https://profile.vault.azure.net",
             )
 
+    def test_resolve_key_vault_url_rejects_non_vault_hosts(self) -> None:
+        for value in (
+            "http://profile.vault.azure.net",
+            "https://localhost",
+            "https://example.com",
+            "https://profile.vault.azure.net.evil.com",
+            "https://profile.vault.azure.net/secrets/foo",
+            "https://profile.vault.azure.net:8443",
+        ):
+            with self.subTest(value=value):
+                with patch.dict(os.environ, {"AZUL_KEY_VAULT_URL": value}, clear=True):
+                    with self.assertRaises(ValueError):
+                        config.resolve_key_vault_url()
+
     def test_validate_key_vault_url_rejects_non_vault_hosts(self) -> None:
         self.assertEqual(
             _validate_key_vault_url("https://profile.vault.azure.net/"),
@@ -196,7 +210,11 @@ class KeyVaultConfigTests(unittest.TestCase):
             }
         )
 
-        with patch.dict(os.environ, {"AZUL_KEY_VAULT_URL": "https://vault.example"}, clear=True):
+        with patch.dict(
+            os.environ,
+            {"AZUL_KEY_VAULT_URL": "https://test.vault.azure.net"},
+            clear=True,
+        ):
             config.load_key_vault_secrets(secret_client=client)
 
             self.assertEqual(
@@ -211,7 +229,7 @@ class KeyVaultConfigTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "AZUL_KEY_VAULT_URL": "https://vault.example",
+                "AZUL_KEY_VAULT_URL": "https://test.vault.azure.net",
                 "AZURE_OPENAI_ENDPOINT": "from-env",
             },
             clear=True,
@@ -225,7 +243,7 @@ class KeyVaultConfigTests(unittest.TestCase):
         profile = HatchingProfile(
             skill_configs={
                 "Azure": {
-                    "keyVaultUrl": "https://vault.example",
+                    "keyVaultUrl": "https://test.vault.azure.net",
                     "microsoftAppIdSecretName": "bot-app-id",
                     "microsoftAppPasswordSecretName": "bot-app-password",
                     "microsoftAppTenantIdSecretName": "bot-tenant-id",
@@ -253,7 +271,11 @@ class KeyVaultConfigTests(unittest.TestCase):
             self.assertEqual(os.environ["MicrosoftAppTenantId"], "tenant-id")
 
     def test_load_key_vault_secrets_is_non_blocking_by_default(self) -> None:
-        with patch.dict(os.environ, {"AZUL_KEY_VAULT_URL": "https://vault.example"}, clear=True):
+        with patch.dict(
+            os.environ,
+            {"AZUL_KEY_VAULT_URL": "https://test.vault.azure.net"},
+            clear=True,
+        ):
             config.load_key_vault_secrets(secret_client=_FailingSecretClient())
 
             self.assertNotIn("MicrosoftAppId", os.environ)
@@ -261,7 +283,10 @@ class KeyVaultConfigTests(unittest.TestCase):
     def test_load_key_vault_secrets_can_fail_fast_in_strict_mode(self) -> None:
         with patch.dict(
             os.environ,
-            {"AZUL_KEY_VAULT_URL": "https://vault.example", "AZUL_KEY_VAULT_STRICT": "true"},
+            {
+                "AZUL_KEY_VAULT_URL": "https://test.vault.azure.net",
+                "AZUL_KEY_VAULT_STRICT": "true",
+            },
             clear=True,
         ):
             with self.assertRaises(RuntimeError):
