@@ -18,6 +18,7 @@ KEY_VAULT_HOST_SUFFIXES = (
     "vault.azure.net",
     "vault.azure.cn",
     "vault.usgovcloudapi.net",
+    "vault.microsoftazure.de",
 )
 DEFAULT_PORT = 3978
 HOST = "localhost"

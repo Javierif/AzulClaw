@@ -315,6 +315,7 @@ async def desktop_azure_key_vault_hydrate_handler(req: web.Request) -> web.Respo
         ),
     }
 
+    current_config = req.app["runtime_config"]
     hydrated: list[str] = []
     missing: list[str] = []
     async with aiohttp.ClientSession() as session:
@@ -329,17 +330,15 @@ async def desktop_azure_key_vault_hydrate_handler(req: web.Request) -> web.Respo
                 os.environ[env_key] = value
                 hydrated.append(env_key)
             else:
-                os.environ.pop(env_key, None)
                 missing.append(env_key)
 
     os.environ["AZUL_KEY_VAULT_URL"] = vault_url
 
-    current_config = req.app["runtime_config"]
     next_config = replace(
         current_config,
-        app_id=os.environ.get("MicrosoftAppId", ""),
-        app_password=os.environ.get("MicrosoftAppPassword", ""),
-        tenant_id=os.environ.get("MicrosoftAppTenantId", ""),
+        app_id=os.environ.get("MicrosoftAppId", current_config.app_id),
+        app_password=os.environ.get("MicrosoftAppPassword", current_config.app_password),
+        tenant_id=os.environ.get("MicrosoftAppTenantId", current_config.tenant_id),
     )
     req.app["runtime_config"] = next_config
     req.app["adapter"] = build_adapter(

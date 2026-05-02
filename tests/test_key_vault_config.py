@@ -66,6 +66,16 @@ class KeyVaultConfigTests(unittest.TestCase):
                 "https://example.vault.azure.net",
             )
 
+        with patch.dict(
+            os.environ,
+            {"AZUL_KEY_VAULT_URL": "https://example.vault.microsoftazure.de/"},
+            clear=True,
+        ):
+            self.assertEqual(
+                config.resolve_key_vault_url(),
+                "https://example.vault.microsoftazure.de",
+            )
+
     def test_resolve_key_vault_url_reads_hatching_profile(self) -> None:
         profile = HatchingProfile(
             skill_configs={"Azure": {"keyVaultUrl": "https://profile.vault.azure.net/"}}
@@ -99,6 +109,10 @@ class KeyVaultConfigTests(unittest.TestCase):
         self.assertEqual(
             _validate_key_vault_url("https://profile.vault.azure.net/"),
             "https://profile.vault.azure.net",
+        )
+        self.assertEqual(
+            _validate_key_vault_url("https://profile.vault.microsoftazure.de/"),
+            "https://profile.vault.microsoftazure.de",
         )
         for value in (
             "http://profile.vault.azure.net",

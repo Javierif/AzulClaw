@@ -63,7 +63,7 @@ class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("AZURE_OPENAI_FAST_DEPLOYMENT", os.environ)
             self.assertNotIn("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", os.environ)
 
-    async def test_key_vault_hydrate_reports_missing_optional_bot_secrets(self) -> None:
+    async def test_key_vault_hydrate_preserves_missing_optional_bot_secrets(self) -> None:
         payload = {
             "access_token": "token",
             "expires_on": int(time.time()) + 3600,
@@ -72,9 +72,9 @@ class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
         request = make_mocked_request("POST", "/api/desktop/azure/key-vault/hydrate")
         request._read_bytes = json.dumps(payload).encode("utf-8")
         request.app["runtime_config"] = RuntimeConfig(
-            app_id="",
-            app_password="",
-            tenant_id="",
+            app_id="runtime-app-id",
+            app_password="runtime-password",
+            tenant_id="runtime-tenant",
             port=3978,
         )
         request.app["servicebus_worker"] = None
@@ -92,13 +92,14 @@ class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
                 clear=True,
             ),
             patch("azul_backend.azul_brain.api.routes._key_vault_get_secret", new=AsyncMock(side_effect=fake_get_secret)),
-            patch("azul_backend.azul_brain.api.routes.build_adapter", return_value=object()),
+            patch("azul_backend.azul_brain.api.routes.build_adapter", return_value=object()) as build_adapter,
         ):
             response = await routes.desktop_azure_key_vault_hydrate_handler(request)
             body = json.loads(response.text)
 
-            self.assertNotIn("MicrosoftAppPassword", os.environ)
-            self.assertNotIn("MicrosoftAppTenantId", os.environ)
+            self.assertEqual(os.environ["MicrosoftAppPassword"], "old-password")
+            self.assertEqual(os.environ["MicrosoftAppTenantId"], "old-tenant")
+            build_adapter.assert_called_once_with("app-id", "old-password", "old-tenant")
 
         self.assertEqual(response.status, 200)
         self.assertEqual(body["hydrated"], ["MicrosoftAppId"])
