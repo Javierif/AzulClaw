@@ -103,7 +103,7 @@ class RuntimeSerializationTests(unittest.TestCase):
 
         self.assertEqual(
             _serialize_runtime_text(result),
-            "Use  in documentation when describing the tag.",
+            "Use </think> in documentation when describing the tag.",
         )
 
 

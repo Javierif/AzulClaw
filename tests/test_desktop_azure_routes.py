@@ -63,6 +63,9 @@ class _FakeRuntimeManager:
     def load_settings(self) -> RuntimeSettings:
         return self.settings
 
+    def list_model_status(self) -> list[dict]:
+        return [{"id": model.id, "enabled": model.enabled} for model in self.settings.models]
+
     def save_settings(self, payload: dict) -> RuntimeSettings:
         self.saved_payloads.append(payload)
         by_id = {model.id: model for model in self.settings.models}
@@ -80,6 +83,31 @@ class _FakeRuntimeManager:
             )
         self.settings.models = list(by_id.values())
         return self.settings
+
+
+class _FakeJsonResponse:
+    def __init__(self, status: int, body: dict) -> None:
+        self.status = status
+        self._body = body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    async def json(self, content_type=None):
+        return self._body
+
+
+class _FakeSession:
+    def __init__(self, pages: dict[str, dict]) -> None:
+        self.pages = pages
+        self.requested: list[str] = []
+
+    def get(self, url: str, **_kwargs):
+        self.requested.append(url)
+        return _FakeJsonResponse(200, self.pages[url])
 
 
 class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
@@ -122,6 +150,80 @@ class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(runtime_manager.probe_cache, {})
             self.assertEqual(runtime_manager.cooldowns, {})
             self.assertEqual(runtime_manager.last_errors, {})
+
+    async def test_connect_rejects_non_azure_openai_endpoint(self) -> None:
+        payload = {
+            "access_token": "token",
+            "expires_on": int(time.time()) + 3600,
+            "endpoint": "https://example.com",
+            "deployment": "gpt-main",
+        }
+        app = web.Application()
+        app["azure_auth_state"] = _FakeAuthState()
+        app["runtime_manager"] = _FakeRuntimeManager()
+        request = make_mocked_request("POST", "/api/desktop/azure/connect", app=app)
+        request._read_bytes = json.dumps(payload).encode("utf-8")
+
+        response = await routes.desktop_azure_connect_handler(request)
+        body = json.loads(response.text)
+
+        self.assertEqual(response.status, 400)
+        self.assertIn("Azure OpenAI endpoint", body["error"])
+
+    async def test_arm_get_json_follows_next_link_pages(self) -> None:
+        first_url = "https://management.azure.com/subscriptions?api-version=2022-12-01"
+        second_url = "https://management.azure.com/subscriptions?page=2"
+        session = _FakeSession(
+            {
+                first_url: {"value": [{"id": "one"}], "nextLink": second_url},
+                second_url: {"value": [{"id": "two"}]},
+            }
+        )
+
+        result = await routes._get_paginated_json(
+            session=session,
+            url=first_url,
+            headers={},
+            allowed_next_link_hosts={"management.azure.com"},
+            error_prefix="Azure request failed",
+        )
+
+        self.assertEqual(result["value"], [{"id": "one"}, {"id": "two"}])
+        self.assertEqual(session.requested, [first_url, second_url])
+
+    async def test_paginated_json_rejects_untrusted_next_link_host(self) -> None:
+        first_url = "https://management.azure.com/subscriptions?api-version=2022-12-01"
+        session = _FakeSession(
+            {
+                first_url: {
+                    "value": [{"id": "one"}],
+                    "nextLink": "https://example.com/subscriptions?page=2",
+                },
+            }
+        )
+
+        with self.assertRaises(web.HTTPBadRequest):
+            await routes._get_paginated_json(
+                session=session,
+                url=first_url,
+                headers={},
+                allowed_next_link_hosts={"management.azure.com"},
+                error_prefix="Azure request failed",
+            )
+
+    async def test_backend_status_reports_default_runtime_dir(self) -> None:
+        app = web.Application()
+        app["runtime_manager"] = _FakeRuntimeManager()
+        app["scheduler"] = type("Scheduler", (), {"get_status": lambda self: {"scheduler_running": False}})()
+        app["azure_auth_state"] = type("AuthState", (), {"snapshot": lambda self: _FakeAuthSnapshot()})()
+        request = make_mocked_request("GET", "/api/desktop/backend/status", app=app)
+
+        with patch.dict(os.environ, {}, clear=True):
+            response = await routes.desktop_backend_status_handler(request)
+            body = json.loads(response.text)
+
+        self.assertTrue(body["runtime_dir"].endswith("memory"))
+        self.assertNotEqual(body["runtime_dir"], "")
 
     async def test_key_vault_hydrate_preserves_missing_optional_bot_secrets(self) -> None:
         payload = {

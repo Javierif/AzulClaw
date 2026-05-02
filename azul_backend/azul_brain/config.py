@@ -20,6 +20,15 @@ KEY_VAULT_HOST_SUFFIXES = (
     "vault.usgovcloudapi.net",
     "vault.microsoftazure.de",
 )
+AZURE_OPENAI_ENDPOINT_HOST_SUFFIXES = (
+    "openai.azure.com",
+    "services.ai.azure.com",
+    "cognitiveservices.azure.com",
+    "openai.azure.us",
+    "cognitiveservices.azure.us",
+    "openai.azure.cn",
+    "cognitiveservices.azure.cn",
+)
 DEFAULT_PORT = 3978
 HOST = "localhost"
 
@@ -176,6 +185,17 @@ def _set_env_if_value(env_key: str, value: str, *, overwrite: bool = False) -> b
     return True
 
 
+def _sync_required_profile_env(env_key: str, value: str) -> bool:
+    cleaned = str(value or "").strip()
+    if os.environ.get(env_key) == cleaned:
+        return False
+    if cleaned:
+        os.environ[env_key] = cleaned
+    else:
+        os.environ.pop(env_key, None)
+    return True
+
+
 def _sync_optional_profile_env(env_key: str, value: str) -> bool:
     cleaned = str(value or "").strip()
     if cleaned:
@@ -184,6 +204,23 @@ def _sync_optional_profile_env(env_key: str, value: str) -> bool:
         os.environ[env_key] = cleaned
         return True
     return os.environ.pop(env_key, None) is not None
+
+
+def normalize_azure_openai_endpoint(raw_url: str) -> str:
+    """Accepts only HTTPS Azure OpenAI or Azure AI Services endpoints."""
+    parsed = urlparse(raw_url.strip().rstrip("/"))
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not host:
+        raise ValueError("Azure OpenAI endpoint must be an HTTPS Azure endpoint.")
+    if parsed.username or parsed.password:
+        raise ValueError("Azure OpenAI endpoint must not contain credentials.")
+    if parsed.path not in ("", "/") or parsed.params or parsed.query or parsed.fragment:
+        raise ValueError("Azure OpenAI endpoint must be the resource base URL.")
+    if parsed.port not in (None, 443):
+        raise ValueError("Azure OpenAI endpoint must not include a custom port.")
+    if not any(host.endswith(f".{suffix}") for suffix in AZURE_OPENAI_ENDPOINT_HOST_SUFFIXES):
+        raise ValueError("Azure OpenAI endpoint must point to an Azure OpenAI host.")
+    return f"https://{host}"
 
 
 def apply_hatching_azure_runtime_settings() -> None:
@@ -199,15 +236,20 @@ def apply_hatching_azure_runtime_settings() -> None:
 
     loaded = 0
     endpoint = azure_config.get("endpoint", "").strip().rstrip("/")
-    if _set_env_if_value("AZURE_OPENAI_ENDPOINT", endpoint):
+    if endpoint:
+        try:
+            endpoint = normalize_azure_openai_endpoint(endpoint)
+        except ValueError as error:
+            LOGGER.warning("Ignoring invalid Azure endpoint in desktop profile: %s", error)
+            endpoint = ""
+    if _sync_required_profile_env("AZURE_OPENAI_ENDPOINT", endpoint):
         loaded += 1
 
     deployment = azure_config.get("deployment", "").strip()
-    if deployment:
-        if _set_env_if_value("AZURE_OPENAI_DEPLOYMENT", deployment):
-            loaded += 1
-        if _set_env_if_value("AZURE_OPENAI_SLOW_DEPLOYMENT", deployment):
-            loaded += 1
+    if _sync_required_profile_env("AZURE_OPENAI_DEPLOYMENT", deployment):
+        loaded += 1
+    if _sync_required_profile_env("AZURE_OPENAI_SLOW_DEPLOYMENT", deployment):
+        loaded += 1
 
     if _sync_optional_profile_env(
         "AZURE_OPENAI_FAST_DEPLOYMENT",
@@ -224,17 +266,20 @@ def apply_hatching_azure_runtime_settings() -> None:
     if _sync_optional_profile_env(KEY_VAULT_URL_ENV, key_vault_url):
         loaded += 1
 
-    if _set_env_if_value("AZURE_TENANT_ID", azure_config.get("tenantId", "").strip()):
+    if _sync_required_profile_env("AZURE_TENANT_ID", azure_config.get("tenantId", "").strip()):
         loaded += 1
-    if _set_env_if_value(
+    if _sync_required_profile_env(
         "AZUL_ENTRA_BROWSER_CLIENT_ID",
         azure_config.get("clientId", "").strip(),
     ):
         loaded += 1
 
     if azure_config.get("connected", "").strip().lower() == "true":
-        if _set_env_if_value("AZUL_AZURE_OPENAI_AUTH_MODE", "entra"):
-            loaded += 1
+        auth_mode = "entra"
+    else:
+        auth_mode = ""
+    if _sync_required_profile_env("AZUL_AZURE_OPENAI_AUTH_MODE", auth_mode):
+        loaded += 1
 
     if loaded:
         LOGGER.info("Applied %s Azure setting(s) from the desktop profile.", loaded)

@@ -159,20 +159,27 @@ class KeyVaultConfigTests(unittest.TestCase):
             self.assertEqual(os.environ["AZUL_AZURE_OPENAI_AUTH_MODE"], "entra")
             self.assertNotIn("AZUL_ENABLE_INTERACTIVE_BROWSER_AUTH", os.environ)
 
-    def test_apply_hatching_azure_runtime_settings_keeps_explicit_env(self) -> None:
+    def test_apply_hatching_azure_runtime_settings_overwrites_stale_profile_env(self) -> None:
         profile = HatchingProfile(
             skill_configs={
                 "Azure": {
                     "connected": "true",
                     "endpoint": "https://profile.openai.azure.com/",
                     "deployment": "gpt-main",
+                    "tenantId": "profile-tenant",
+                    "clientId": "profile-client",
                 }
             }
         )
         with (
             patch.dict(
                 os.environ,
-                {"AZURE_OPENAI_ENDPOINT": "https://env.openai.azure.com"},
+                {
+                    "AZURE_OPENAI_ENDPOINT": "https://env.openai.azure.com",
+                    "AZURE_OPENAI_DEPLOYMENT": "old-main",
+                    "AZURE_TENANT_ID": "old-tenant",
+                    "AZUL_ENTRA_BROWSER_CLIENT_ID": "old-client",
+                },
                 clear=True,
             ),
             patch("azul_backend.azul_brain.api.hatching_store.HatchingStore") as store_cls,
@@ -181,7 +188,10 @@ class KeyVaultConfigTests(unittest.TestCase):
 
             config.apply_hatching_azure_runtime_settings()
 
-            self.assertEqual(os.environ["AZURE_OPENAI_ENDPOINT"], "https://env.openai.azure.com")
+            self.assertEqual(os.environ["AZURE_OPENAI_ENDPOINT"], "https://profile.openai.azure.com")
+            self.assertEqual(os.environ["AZURE_OPENAI_DEPLOYMENT"], "gpt-main")
+            self.assertEqual(os.environ["AZURE_TENANT_ID"], "profile-tenant")
+            self.assertEqual(os.environ["AZUL_ENTRA_BROWSER_CLIENT_ID"], "profile-client")
 
     def test_apply_hatching_azure_runtime_settings_clears_removed_optional_values(self) -> None:
         profile = HatchingProfile(
@@ -193,6 +203,8 @@ class KeyVaultConfigTests(unittest.TestCase):
                     "fastDeployment": "",
                     "embeddingDeployment": "",
                     "keyVaultUrl": "",
+                    "tenantId": "",
+                    "clientId": "",
                 }
             }
         )
@@ -203,6 +215,8 @@ class KeyVaultConfigTests(unittest.TestCase):
                     "AZURE_OPENAI_FAST_DEPLOYMENT": "old-fast",
                     "AZURE_OPENAI_EMBEDDING_DEPLOYMENT": "old-embedding",
                     "AZUL_KEY_VAULT_URL": "https://old.vault.azure.net",
+                    "AZURE_TENANT_ID": "old-tenant",
+                    "AZUL_ENTRA_BROWSER_CLIENT_ID": "old-client",
                 },
                 clear=True,
             ),
@@ -215,6 +229,29 @@ class KeyVaultConfigTests(unittest.TestCase):
             self.assertNotIn("AZURE_OPENAI_FAST_DEPLOYMENT", os.environ)
             self.assertNotIn("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", os.environ)
             self.assertNotIn("AZUL_KEY_VAULT_URL", os.environ)
+            self.assertNotIn("AZURE_TENANT_ID", os.environ)
+            self.assertNotIn("AZUL_ENTRA_BROWSER_CLIENT_ID", os.environ)
+
+    def test_normalize_azure_openai_endpoint_rejects_non_azure_hosts(self) -> None:
+        self.assertEqual(
+            config.normalize_azure_openai_endpoint("https://profile.openai.azure.com/"),
+            "https://profile.openai.azure.com",
+        )
+        self.assertEqual(
+            config.normalize_azure_openai_endpoint("https://profile.services.ai.azure.com/"),
+            "https://profile.services.ai.azure.com",
+        )
+        for value in (
+            "http://profile.openai.azure.com",
+            "https://localhost",
+            "https://example.com",
+            "https://profile.openai.azure.com.evil.com",
+            "https://profile.openai.azure.com/openai/deployments",
+            "https://profile.openai.azure.com:8443",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    config.normalize_azure_openai_endpoint(value)
 
     def test_load_key_vault_secrets_hydrates_unset_values(self) -> None:
         client = _FakeSecretClient(

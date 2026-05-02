@@ -73,8 +73,8 @@ def _strip_reasoning_artifacts(text: str) -> str:
         suffix = cleaned[first_close.end():]
         if first_close.start() <= 200 and suffix and not suffix[0].isspace():
             cleaned = suffix
-    cleaned = _THINK_OPEN_RE.sub("", cleaned)
-    cleaned = _THINK_CLOSE_RE.sub("", cleaned)
+    if _THINK_OPEN_RE.search(cleaned) and not _THINK_CLOSE_RE.search(cleaned):
+        cleaned = _THINK_OPEN_RE.sub("", cleaned)
     return cleaned.strip()
 
 

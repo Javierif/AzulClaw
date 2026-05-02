@@ -16,7 +16,7 @@ from aiohttp.client_exceptions import ClientConnectionResetError, ContentTypeErr
 
 from ..azure_auth import AZURE_OPENAI_SCOPE, set_frontend_azure_token
 from ..bootstrap import build_adapter
-from ..config import apply_hatching_azure_runtime_settings
+from ..config import apply_hatching_azure_runtime_settings, normalize_azure_openai_endpoint
 from .services import (
     list_workspace_entries,
     load_hatching_profile,
@@ -37,6 +37,8 @@ AZURE_ARM_BASE_URL = "https://management.azure.com"
 AZURE_SUBSCRIPTIONS_API_VERSION = "2022-12-01"
 AZURE_COGNITIVE_API_VERSION = "2024-10-01"
 AZURE_KEY_VAULT_API_VERSION = "2023-07-01"
+AZURE_ARM_HOST = "management.azure.com"
+MAX_AZURE_DISCOVERY_PAGES = 50
 KEY_VAULT_HOST_SUFFIXES = (
     "vault.azure.net",
     "vault.azure.cn",
@@ -71,6 +73,13 @@ def _default_backend_log_dir() -> Path:
     if runtime_override:
         return Path(runtime_override).expanduser().parent / "logs"
     return Path(__file__).resolve().parents[3] / "memory" / "runtime-logs"
+
+
+def _default_runtime_dir() -> Path:
+    override = os.environ.get("AZUL_RUNTIME_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return Path(__file__).resolve().parents[3] / "memory"
 
 
 def _tail_text(path: Path, max_bytes: int = 20000) -> str:
@@ -116,7 +125,7 @@ def _validate_key_vault_url(value: str) -> str:
 
 async def desktop_backend_status_handler(req: web.Request) -> web.Response:
     """Returns backend diagnostics and recent launcher logs for Settings."""
-    runtime_dir = os.environ.get("AZUL_RUNTIME_DIR", "").strip()
+    runtime_dir = _default_runtime_dir()
     log_dir = _default_backend_log_dir()
     models = req.app["runtime_manager"].list_model_status()
     enabled_models = [model for model in models if model.get("enabled")]
@@ -144,7 +153,7 @@ async def desktop_backend_status_handler(req: web.Request) -> web.Response:
         {
             "status": "running",
             "api_base": _request_api_base(req),
-            "runtime_dir": runtime_dir,
+            "runtime_dir": str(runtime_dir),
             "log_dir": str(log_dir),
             "models_total": len(models),
             "models_enabled": len(enabled_models),
@@ -202,6 +211,10 @@ async def desktop_azure_connect_handler(req: web.Request) -> web.Response:
         return web.json_response({"error": "access_token is expired"}, status=400)
     if not endpoint:
         return web.json_response({"error": "endpoint is required"}, status=400)
+    try:
+        endpoint = normalize_azure_openai_endpoint(endpoint)
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
     if not deployment:
         return web.json_response({"error": "deployment is required"}, status=400)
     if key_vault_url:
@@ -363,21 +376,78 @@ def _arm_headers(access_token: str) -> dict[str, str]:
     }
 
 
-async def _arm_get_json(access_token: str, url: str) -> dict:
-    async with aiohttp.ClientSession() as session:
+def _is_allowed_next_link(url: str, allowed_hosts: set[str]) -> bool:
+    parsed = urlparse(str(url or "").strip())
+    host = (parsed.hostname or "").lower()
+    return parsed.scheme == "https" and host in allowed_hosts
+
+
+def _combine_page_data(pages: list[dict]) -> dict:
+    if not pages:
+        return {}
+    combined = dict(pages[0])
+    values: list = []
+    has_value = False
+    for page in pages:
+        value = page.get("value")
+        if isinstance(value, list):
+            has_value = True
+            values.extend(value)
+    if has_value:
+        combined["value"] = values
+        combined.pop("nextLink", None)
+    return combined
+
+
+async def _get_paginated_json(
+    *,
+    session: aiohttp.ClientSession,
+    url: str,
+    headers: dict[str, str],
+    allowed_next_link_hosts: set[str],
+    error_prefix: str,
+) -> dict:
+    pages: list[dict] = []
+    next_url = url
+    for _ in range(MAX_AZURE_DISCOVERY_PAGES):
         async with session.get(
-            url,
-            headers=_arm_headers(access_token),
+            next_url,
+            headers=headers,
             timeout=aiohttp.ClientTimeout(total=30),
         ) as response:
             data = await response.json(content_type=None)
             if response.status >= 400:
                 detail = data.get("error", {}).get("message") if isinstance(data, dict) else ""
                 raise web.HTTPBadRequest(
-                    text=json.dumps({"error": detail or f"Azure request failed ({response.status})"}),
+                    text=json.dumps({"error": detail or f"{error_prefix} ({response.status})"}),
                     content_type="application/json",
                 )
-            return data if isinstance(data, dict) else {}
+            page = data if isinstance(data, dict) else {}
+            pages.append(page)
+            next_link = str(page.get("nextLink", "")).strip()
+            if not next_link:
+                return _combine_page_data(pages)
+            if not _is_allowed_next_link(next_link, allowed_next_link_hosts):
+                raise web.HTTPBadRequest(
+                    text=json.dumps({"error": f"{error_prefix}: unsupported nextLink host"}),
+                    content_type="application/json",
+                )
+            next_url = next_link
+    raise web.HTTPBadRequest(
+        text=json.dumps({"error": f"{error_prefix}: too many pages"}),
+        content_type="application/json",
+    )
+
+
+async def _arm_get_json(access_token: str, url: str) -> dict:
+    async with aiohttp.ClientSession() as session:
+        return await _get_paginated_json(
+            session=session,
+            url=url,
+            headers=_arm_headers(access_token),
+            allowed_next_link_hosts={AZURE_ARM_HOST},
+            error_prefix="Azure request failed",
+        )
 
 
 def _resource_group_from_id(resource_id: str) -> str:
@@ -562,18 +632,13 @@ async def desktop_azure_discovery_key_vault_secrets_handler(req: web.Request) ->
         return web.json_response({"error": str(error)}, status=400)
 
     async with aiohttp.ClientSession() as session:
-        async with session.get(
-            f"{vault_url}/secrets?api-version=7.4",
+        data = await _get_paginated_json(
+            session=session,
+            url=f"{vault_url}/secrets?api-version=7.4",
             headers={"Authorization": f"Bearer {access_token}"},
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as response:
-            data = await response.json(content_type=None)
-            if response.status >= 400:
-                detail = data.get("error", {}).get("message") if isinstance(data, dict) else ""
-                return web.json_response(
-                    {"error": detail or f"Key Vault secret discovery failed ({response.status})"},
-                    status=400,
-                )
+            allowed_next_link_hosts={(urlparse(vault_url).hostname or "").lower()},
+            error_prefix="Key Vault secret discovery failed",
+        )
     items = []
     for item in data.get("value", []):
         if not isinstance(item, dict):
@@ -892,6 +957,15 @@ async def desktop_hatching_put_handler(req: web.Request) -> web.Response:
     """Saves the Hatching profile sent by the desktop app."""
     import asyncio
     payload = await req.json()
+    skill_configs = payload.get("skill_configs", {})
+    azure_config = skill_configs.get("Azure", {}) if isinstance(skill_configs, dict) else {}
+    if isinstance(azure_config, dict):
+        endpoint = str(azure_config.get("endpoint", "")).strip()
+        if endpoint:
+            try:
+                azure_config["endpoint"] = normalize_azure_openai_endpoint(endpoint)
+            except ValueError as error:
+                return web.json_response({"error": str(error)}, status=400)
     result = save_hatching_profile(payload)
     apply_hatching_azure_runtime_settings()
     try:
