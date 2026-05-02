@@ -98,6 +98,15 @@ class RuntimeSerializationTests(unittest.TestCase):
         self.assertEqual(_serialize_runtime_text(result), "Hola. ¿En qué puedo ayudarte?")
 
 
+    def test_serialize_runtime_text_preserves_literal_closing_think_tag_context(self) -> None:
+        result = ResultLike("Use </think> in documentation when describing the tag.")
+
+        self.assertEqual(
+            _serialize_runtime_text(result),
+            "Use  in documentation when describing the tag.",
+        )
+
+
 class RuntimeStreamingTests(unittest.IsolatedAsyncioTestCase):
     async def test_streaming_result_initializes_value(self) -> None:
         manager = AgentRuntimeManager(

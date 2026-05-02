@@ -452,18 +452,14 @@ export async function discoverAzureKeyVaults(
 
 export async function discoverAzureKeyVaultSecrets(
   accessToken: string,
-  subscriptionId: string,
-  resourceGroup: string,
-  vaultName: string,
+  vaultUrl: string,
 ): Promise<AzureKeyVaultSecretOption[]> {
   const data = await fetchJson<{ items: AzureKeyVaultSecretOption[] }>("/api/desktop/azure/discovery/key-vault-secrets", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       access_token: accessToken,
-      subscription_id: subscriptionId,
-      resource_group: resourceGroup,
-      vault_name: vaultName,
+      vault_url: vaultUrl,
     }),
   });
   return data.items;

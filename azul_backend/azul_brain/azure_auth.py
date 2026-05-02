@@ -205,7 +205,9 @@ def describe_azure_openai_auth(
         return False, "azure-identity is not installed"
     if _interactive_browser_enabled():
         return True, "Azure Entra ID ready (interactive browser enabled)"
-    return True, "Azure Entra ID ready"
+    if _startup_default_credential_enabled():
+        return True, "Azure Entra ID ready (default credential enabled)"
+    return False, "Azure Entra ID requires desktop Microsoft login"
 
 
 @dataclass

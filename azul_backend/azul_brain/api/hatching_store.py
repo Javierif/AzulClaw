@@ -93,6 +93,14 @@ def save_memory_settings(settings: MemorySettings) -> MemorySettings:
     return cleaned
 
 
+def reset_memory_settings() -> None:
+    """Removes persisted memory Settings so defaults apply again."""
+    try:
+        _memory_settings_path().unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def resolve_memory_db_path() -> str:
     """SQLite path shared by vector store, SafeMemory, and episodic store.
 

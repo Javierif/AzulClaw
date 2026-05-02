@@ -40,12 +40,33 @@ class AzureAuthTests(unittest.TestCase):
         ):
             self.assertEqual(azure_auth.resolve_azure_openai_auth_mode("secret"), "api_key")
 
-    def test_describe_entra_auth_reports_ready_without_api_key(self) -> None:
+    def test_describe_entra_auth_requires_login_without_backend_auth_path(self) -> None:
         with patch.dict(
             os.environ,
             {
                 "AZUL_AZURE_OPENAI_AUTH_MODE": "entra",
                 "AZURE_OPENAI_API_KEY": "",
+                "AZUL_ENABLE_STARTUP_DEFAULT_AZURE_CREDENTIAL": "false",
+                "AZUL_ENABLE_INTERACTIVE_BROWSER_AUTH": "false",
+            },
+            clear=False,
+        ):
+            available, detail = azure_auth.describe_azure_openai_auth(
+                endpoint="https://example.openai.azure.com/",
+                deployment="gpt-4o",
+                explicit_api_key="",
+            )
+
+        self.assertFalse(available)
+        self.assertIn("login", detail.lower())
+
+    def test_describe_entra_auth_accepts_startup_default_credential(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AZUL_AZURE_OPENAI_AUTH_MODE": "entra",
+                "AZURE_OPENAI_API_KEY": "",
+                "AZUL_ENABLE_STARTUP_DEFAULT_AZURE_CREDENTIAL": "true",
             },
             clear=False,
         ):
@@ -56,7 +77,7 @@ class AzureAuthTests(unittest.TestCase):
             )
 
         self.assertTrue(available)
-        self.assertIn("Entra ID", detail)
+        self.assertIn("default credential", detail)
 
     def test_describe_api_key_mode_requires_a_key(self) -> None:
         with patch.dict(
@@ -172,6 +193,7 @@ class AgentRuntimeAzureProbeTests(unittest.TestCase):
                 "AZUL_AZURE_OPENAI_AUTH_MODE": "entra",
                 "AZURE_OPENAI_ENDPOINT": "https://example.openai.azure.com/",
                 "AZURE_OPENAI_API_KEY": "",
+                "AZUL_ENABLE_STARTUP_DEFAULT_AZURE_CREDENTIAL": "true",
             },
             clear=False,
         ):

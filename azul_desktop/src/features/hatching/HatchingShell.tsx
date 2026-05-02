@@ -318,6 +318,7 @@ export function HatchingShell({
   const [answers, setAnswers] = useState<string[]>(initialState.answers);
   const [azureConfig, setAzureConfig] = useState<AzureConfig>(initialState.azureConfig);
   const [azureManagementToken, setAzureManagementToken] = useState("");
+  const [azureKeyVaultToken, setAzureKeyVaultToken] = useState("");
   const [azureBusy, setAzureBusy] = useState(false);
   const [azureDiscoveryBusy, setAzureDiscoveryBusy] = useState(false);
   const [azureError, setAzureError] = useState("");
@@ -343,6 +344,18 @@ export function HatchingShell({
   const [skillModalError, setSkillModalError] = useState("");
   const [showAzureSkipWarning, setShowAzureSkipWarning] = useState(false);
 
+  async function ensureAzureKeyVaultToken(): Promise<string> {
+    if (azureKeyVaultToken) {
+      return azureKeyVaultToken;
+    }
+    const login = await loginWithMicrosoftForKeyVault({
+      tenantId: azureConfig.tenantId,
+      clientId: azureConfig.clientId,
+    });
+    setAzureKeyVaultToken(login.accessToken);
+    return login.accessToken;
+  }
+
   useEffect(() => {
     setCurrentStep(Math.min(Math.max(initialStep, 0), wizardQuestions.length));
   }, [initialStep]);
@@ -354,6 +367,7 @@ export function HatchingShell({
     setAnswers(nextState.answers);
     setAzureConfig(nextState.azureConfig);
     setAzureManagementToken("");
+    setAzureKeyVaultToken("");
     setAzureSubscriptions([]);
     setAzureResources([]);
     setAzureKeyVaults([]);
@@ -525,6 +539,7 @@ export function HatchingShell({
       );
       const subscriptions = await discoverAzureSubscriptions(login.accessToken);
       setAzureManagementToken(login.accessToken);
+      setAzureKeyVaultToken("");
       setAzureSubscriptions(subscriptions);
       const nextTenantId = subscriptions[0]?.tenant_id?.trim() || azureConfig.tenantId;
       const nextSubscriptionId =
@@ -568,11 +583,10 @@ export function HatchingShell({
       let secrets: AzureKeyVaultSecretOption[] = [];
       if (selectedVault) {
         try {
+          const keyVaultToken = await ensureAzureKeyVaultToken();
           secrets = await discoverAzureKeyVaultSecrets(
-            azureManagementToken,
-            selectedVault.subscription_id,
-            selectedVault.resource_group,
-            selectedVault.name,
+            keyVaultToken,
+            selectedVault.vault_uri,
           );
         } catch (error) {
           setAzureError(
@@ -611,11 +625,10 @@ export function HatchingShell({
     setAzureDiscoveryBusy(true);
     setAzureError("");
     try {
+      const keyVaultToken = await ensureAzureKeyVaultToken();
       const secrets = await discoverAzureKeyVaultSecrets(
-        azureManagementToken,
-        vault.subscription_id,
-        vault.resource_group,
-        vault.name,
+        keyVaultToken,
+        vault.vault_uri,
       );
       setAzureKeyVaultSecrets(secrets);
       setAzureConfig((current) => ({

@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
+from urllib.parse import urlparse, urlunparse
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from azul_backend.azul_brain.config import KEY_VAULT_HOST_SUFFIXES
 from azul_backend.azul_brain.config import env_key_to_key_vault_secret_name
 
 
@@ -37,8 +39,18 @@ def resolve_vault_url(raw_value: str) -> str:
     if not value:
         raise ValueError("A Key Vault URL or name is required.")
     if value.startswith("https://"):
-        return value
-    return f"https://{value}.vault.azure.net"
+        parsed = urlparse(value)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or not host:
+            raise ValueError("Key Vault URL must be an HTTPS endpoint.")
+        if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+            raise ValueError("Key Vault URL must be the vault base URL.")
+        if parsed.port:
+            raise ValueError("Key Vault URL must not include a custom port.")
+        if not any(host.endswith(f".{suffix}") for suffix in KEY_VAULT_HOST_SUFFIXES):
+            raise ValueError("Key Vault URL host must be an Azure Key Vault hostname.")
+        return urlunparse(("https", host, "", "", "", ""))
+    return resolve_vault_url(f"https://{value}.vault.azure.net")
 
 
 def migrate(

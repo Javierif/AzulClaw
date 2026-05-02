@@ -69,7 +69,10 @@ def _strip_reasoning_artifacts(text: str) -> str:
     cleaned = _THINK_BLOCK_RE.sub("", text)
     dangling_close = list(_THINK_CLOSE_RE.finditer(cleaned))
     if dangling_close:
-        cleaned = cleaned[dangling_close[-1].end():]
+        first_close = dangling_close[0]
+        suffix = cleaned[first_close.end():]
+        if first_close.start() <= 200 and suffix and not suffix[0].isspace():
+            cleaned = suffix
     cleaned = _THINK_OPEN_RE.sub("", cleaned)
     cleaned = _THINK_CLOSE_RE.sub("", cleaned)
     return cleaned.strip()

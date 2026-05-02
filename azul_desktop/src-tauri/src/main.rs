@@ -55,7 +55,7 @@ fn backend_is_running() -> bool {
     let _ = stream.set_read_timeout(Some(Duration::from_millis(700)));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(700)));
     let request = format!(
-        "GET /health HTTP/1.1\r\nHost: {BACKEND_HOST}:{BACKEND_PORT}\r\nConnection: close\r\n\r\n"
+        "GET /api/health HTTP/1.1\r\nHost: {BACKEND_HOST}:{BACKEND_PORT}\r\nConnection: close\r\n\r\n"
     );
     if stream.write_all(request.as_bytes()).is_err() {
         return false;

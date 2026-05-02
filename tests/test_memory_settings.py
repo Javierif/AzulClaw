@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from azul_backend.azul_brain.api.services import save_memory_runtime_settings
+from azul_backend.azul_brain.api.services import WIPE_CONFIRMATION_PHRASE, save_memory_runtime_settings, wipe_local_user_data
 from azul_backend.azul_brain.api.hatching_store import (
     HatchingProfile,
     HatchingStore,
@@ -100,6 +100,34 @@ class MemorySettingsTests(unittest.TestCase):
         with patch.dict(os.environ, {"AZUL_RUNTIME_DIR": tmp}, clear=True):
             with self.assertRaises(ValueError):
                 save_memory_runtime_settings({"vector_memory_enabled": "definitely"})
+
+    def test_wipe_local_user_data_resets_memory_settings(self) -> None:
+        tmp = self._runtime_dir()
+        workspace = Path(tmp) / "workspace"
+        override = Path(tmp) / "custom" / "memory.sqlite"
+        home = Path(tmp) / "home"
+        with patch.dict(
+            os.environ,
+            {
+                "AZUL_RUNTIME_DIR": tmp,
+                "HOME": str(home),
+                "USERPROFILE": str(home),
+            },
+            clear=True,
+        ):
+            HatchingStore().save(HatchingProfile(workspace_root=str(workspace)))
+            save_memory_settings(
+                MemorySettings(
+                    memory_db_path=str(override),
+                    vector_memory_enabled=False,
+                )
+            )
+
+            result = wipe_local_user_data(WIPE_CONFIRMATION_PHRASE)
+
+            self.assertEqual(result["memory_db_path"], str(Path(result["workspace_root"]) / ".azul" / "azul_memory.db"))
+            self.assertEqual(load_memory_settings(), MemorySettings())
+            self.assertTrue(is_vector_memory_enabled())
 
 
 if __name__ == "__main__":

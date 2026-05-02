@@ -582,23 +582,30 @@ async def desktop_azure_discovery_key_vaults_handler(req: web.Request) -> web.Re
 async def desktop_azure_discovery_key_vault_secrets_handler(req: web.Request) -> web.Response:
     payload = await req.json()
     access_token = str(payload.get("access_token", "")).strip()
-    subscription_id = str(payload.get("subscription_id", "")).strip()
-    resource_group = str(payload.get("resource_group", "")).strip()
-    vault_name = str(payload.get("vault_name", "")).strip()
-    if not access_token or not subscription_id or not resource_group or not vault_name:
+    vault_url = str(payload.get("vault_url", "")).strip().rstrip("/")
+    if not access_token or not vault_url:
         return web.json_response(
-            {"error": "access_token, subscription_id, resource_group and vault_name are required"},
+            {"error": "access_token and vault_url are required"},
             status=400,
         )
+    try:
+        vault_url = _validate_key_vault_url(vault_url)
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
 
-    data = await _arm_get_json(
-        access_token,
-        (
-            f"{AZURE_ARM_BASE_URL}/subscriptions/{quote(subscription_id)}/resourceGroups/{quote(resource_group)}"
-            f"/providers/Microsoft.KeyVault/vaults/{quote(vault_name)}/secrets"
-            f"?api-version={AZURE_KEY_VAULT_API_VERSION}"
-        ),
-    )
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            f"{vault_url}/secrets?api-version=7.4",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as response:
+            data = await response.json(content_type=None)
+            if response.status >= 400:
+                detail = data.get("error", {}).get("message") if isinstance(data, dict) else ""
+                return web.json_response(
+                    {"error": detail or f"Key Vault secret discovery failed ({response.status})"},
+                    status=400,
+                )
     items = []
     for item in data.get("value", []):
         if not isinstance(item, dict):

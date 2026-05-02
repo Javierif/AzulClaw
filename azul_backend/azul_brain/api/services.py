@@ -17,6 +17,7 @@ from .hatching_store import (
     default_memory_db_path,
     is_vector_memory_enabled,
     load_memory_settings,
+    reset_memory_settings,
     resolve_memory_db_path,
     save_memory_settings,
 )
@@ -271,6 +272,7 @@ def wipe_local_user_data(confirmation: str) -> dict:
     if not removed_azul:
         _delete_sqlite_bundle(db_file)
 
+    reset_memory_settings()
     fresh = HatchingProfile()
     store.save(fresh)
     try:
