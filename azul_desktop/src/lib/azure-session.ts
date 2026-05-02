@@ -32,15 +32,19 @@ export async function renewAzureLoginFromProfile(profile: HatchingProfile): Prom
 
   const login = await loginWithMicrosoftForAzure({ tenantId, clientId });
   if (keyVaultUrl) {
-    const keyVaultLogin = await loginWithMicrosoftForKeyVault({ tenantId, clientId });
-    await hydrateAzureKeyVaultSecrets({
-      key_vault_url: keyVaultUrl,
-      access_token: keyVaultLogin.accessToken,
-      expires_on: keyVaultLogin.expiresOn,
-      microsoft_app_id_secret_name: (config.microsoftAppIdSecretName ?? "").trim(),
-      microsoft_app_password_secret_name: (config.microsoftAppPasswordSecretName ?? "").trim(),
-      microsoft_app_tenant_id_secret_name: (config.microsoftAppTenantIdSecretName ?? "").trim(),
-    });
+    try {
+      const keyVaultLogin = await loginWithMicrosoftForKeyVault({ tenantId, clientId });
+      await hydrateAzureKeyVaultSecrets({
+        key_vault_url: keyVaultUrl,
+        access_token: keyVaultLogin.accessToken,
+        expires_on: keyVaultLogin.expiresOn,
+        microsoft_app_id_secret_name: (config.microsoftAppIdSecretName ?? "").trim(),
+        microsoft_app_password_secret_name: (config.microsoftAppPasswordSecretName ?? "").trim(),
+        microsoft_app_tenant_id_secret_name: (config.microsoftAppTenantIdSecretName ?? "").trim(),
+      });
+    } catch (error) {
+      console.warn("Azure Key Vault hydration failed during login renewal.", error);
+    }
   }
 
   return connectAzure({
