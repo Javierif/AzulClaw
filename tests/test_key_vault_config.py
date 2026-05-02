@@ -155,6 +155,39 @@ class KeyVaultConfigTests(unittest.TestCase):
 
             self.assertEqual(os.environ["AZURE_OPENAI_ENDPOINT"], "https://env.openai.azure.com")
 
+    def test_apply_hatching_azure_runtime_settings_clears_removed_optional_values(self) -> None:
+        profile = HatchingProfile(
+            skill_configs={
+                "Azure": {
+                    "connected": "true",
+                    "endpoint": "https://profile.openai.azure.com/",
+                    "deployment": "gpt-main",
+                    "fastDeployment": "",
+                    "embeddingDeployment": "",
+                    "keyVaultUrl": "",
+                }
+            }
+        )
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "AZURE_OPENAI_FAST_DEPLOYMENT": "old-fast",
+                    "AZURE_OPENAI_EMBEDDING_DEPLOYMENT": "old-embedding",
+                    "AZUL_KEY_VAULT_URL": "https://old.vault.azure.net",
+                },
+                clear=True,
+            ),
+            patch("azul_backend.azul_brain.api.hatching_store.HatchingStore") as store_cls,
+        ):
+            store_cls.return_value.load.return_value = profile
+
+            config.apply_hatching_azure_runtime_settings()
+
+            self.assertNotIn("AZURE_OPENAI_FAST_DEPLOYMENT", os.environ)
+            self.assertNotIn("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", os.environ)
+            self.assertNotIn("AZUL_KEY_VAULT_URL", os.environ)
+
     def test_load_key_vault_secrets_hydrates_unset_values(self) -> None:
         client = _FakeSecretClient(
             {

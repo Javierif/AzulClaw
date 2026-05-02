@@ -169,6 +169,16 @@ def _set_env_if_value(env_key: str, value: str, *, overwrite: bool = False) -> b
     return True
 
 
+def _sync_optional_profile_env(env_key: str, value: str) -> bool:
+    cleaned = str(value or "").strip()
+    if cleaned:
+        if os.environ.get(env_key) == cleaned:
+            return False
+        os.environ[env_key] = cleaned
+        return True
+    return os.environ.pop(env_key, None) is not None
+
+
 def apply_hatching_azure_runtime_settings() -> None:
     """Applies persisted desktop Azure settings to the backend process.
 
@@ -192,19 +202,19 @@ def apply_hatching_azure_runtime_settings() -> None:
         if _set_env_if_value("AZURE_OPENAI_SLOW_DEPLOYMENT", deployment):
             loaded += 1
 
-    if _set_env_if_value(
+    if _sync_optional_profile_env(
         "AZURE_OPENAI_FAST_DEPLOYMENT",
         azure_config.get("fastDeployment", "").strip(),
     ):
         loaded += 1
-    if _set_env_if_value(
+    if _sync_optional_profile_env(
         "AZURE_OPENAI_EMBEDDING_DEPLOYMENT",
         azure_config.get("embeddingDeployment", "").strip(),
     ):
         loaded += 1
 
     key_vault_url = azure_config.get("keyVaultUrl", "").strip().rstrip("/")
-    if key_vault_url and _set_env_if_value(KEY_VAULT_URL_ENV, key_vault_url):
+    if _sync_optional_profile_env(KEY_VAULT_URL_ENV, key_vault_url):
         loaded += 1
 
     if _set_env_if_value("AZURE_TENANT_ID", azure_config.get("tenantId", "").strip()):

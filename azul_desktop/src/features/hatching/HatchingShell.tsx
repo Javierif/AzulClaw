@@ -344,6 +344,10 @@ export function HatchingShell({
   const [showAzureSkipWarning, setShowAzureSkipWarning] = useState(false);
 
   useEffect(() => {
+    setCurrentStep(Math.min(Math.max(initialStep, 0), wizardQuestions.length));
+  }, [initialStep]);
+
+  useEffect(() => {
     if (!incomingProfile) return;
     const nextState = buildWizardState(incomingProfile, onboardingRequired);
     setProfile(incomingProfile);

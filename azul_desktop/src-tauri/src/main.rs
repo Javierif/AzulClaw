@@ -2,7 +2,8 @@
 
 use std::{
     fs::{self, OpenOptions},
-    net::{TcpStream, ToSocketAddrs},
+    io::{Read, Write},
+    net::TcpStream,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
@@ -42,13 +43,29 @@ impl Drop for BackendProcess {
 }
 
 fn backend_is_running() -> bool {
-    let Ok(addresses) = (BACKEND_HOST, BACKEND_PORT).to_socket_addrs() else {
+    let Ok(mut stream) = TcpStream::connect_timeout(
+        &format!("{BACKEND_HOST}:{BACKEND_PORT}")
+            .parse()
+            .unwrap_or_else(|_| ([127, 0, 0, 1], BACKEND_PORT).into()),
+        Duration::from_millis(300),
+    ) else {
         return false;
     };
 
-    addresses
-        .into_iter()
-        .any(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok())
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(700)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(700)));
+    let request = format!(
+        "GET /health HTTP/1.1\r\nHost: {BACKEND_HOST}:{BACKEND_PORT}\r\nConnection: close\r\n\r\n"
+    );
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+
+    let mut response = String::new();
+    if stream.read_to_string(&mut response).is_err() {
+        return false;
+    }
+    response.starts_with("HTTP/1.1 200") && response.contains("\"status\": \"ok\"")
 }
 
 fn repository_root() -> Option<PathBuf> {
@@ -166,6 +183,9 @@ fn development_backend_launch() -> Result<BackendLaunch, String> {
 }
 
 fn backend_launch(app: &tauri::App) -> Result<BackendLaunch, String> {
+    if cfg!(debug_assertions) {
+        return development_backend_launch();
+    }
     if let Some(launch) = packaged_backend_launch(app)? {
         return Ok(launch);
     }

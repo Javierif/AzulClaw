@@ -329,6 +329,7 @@ async def desktop_azure_key_vault_hydrate_handler(req: web.Request) -> web.Respo
                 os.environ[env_key] = value
                 hydrated.append(env_key)
             else:
+                os.environ.pop(env_key, None)
                 missing.append(env_key)
 
     os.environ["AZUL_KEY_VAULT_URL"] = vault_url

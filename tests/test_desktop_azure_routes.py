@@ -83,12 +83,22 @@ class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
             return "app-id" if kwargs["secret_name"] == "MicrosoftAppId" else ""
 
         with (
-            patch.dict(os.environ, {}, clear=True),
+            patch.dict(
+                os.environ,
+                {
+                    "MicrosoftAppPassword": "old-password",
+                    "MicrosoftAppTenantId": "old-tenant",
+                },
+                clear=True,
+            ),
             patch("azul_backend.azul_brain.api.routes._key_vault_get_secret", new=AsyncMock(side_effect=fake_get_secret)),
             patch("azul_backend.azul_brain.api.routes.build_adapter", return_value=object()),
         ):
             response = await routes.desktop_azure_key_vault_hydrate_handler(request)
             body = json.loads(response.text)
+
+            self.assertNotIn("MicrosoftAppPassword", os.environ)
+            self.assertNotIn("MicrosoftAppTenantId", os.environ)
 
         self.assertEqual(response.status, 200)
         self.assertEqual(body["hydrated"], ["MicrosoftAppId"])
