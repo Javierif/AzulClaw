@@ -63,11 +63,13 @@ The product should fail usefully:
 - workspace access is isolated behind MCP
 - the Windows desktop package can launch its bundled backend and MCP server without a separate console
 - desktop settings now expose backend reachability, enabled model counts, runtime paths, and recent logs
+- Hatching and Settings now provide a first-run Azure setup path for endpoint, deployments, Key Vault URL, and Microsoft login
+- installed builds can reapply persisted non-secret provider configuration without requiring users to edit local environment files
 
 ## Current gaps
 
 - richer loop detection is still limited
 - advanced observability remains light
 - some reliability patterns are documented more clearly than they are productized
-- installed builds still rely on external environment variables for provider credentials and model deployments
-- there is no first-run settings flow yet for storing provider configuration securely on the user's machine
+- installed-build validation still needs a clean-machine pass for the NSIS installer and bundled backend resources
+- Key Vault, Entra app registration, and Azure RBAC prerequisites still need clear release notes because the app cannot create those cloud resources automatically

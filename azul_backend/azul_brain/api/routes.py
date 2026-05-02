@@ -12,7 +12,7 @@ from urllib.parse import quote, urlparse
 
 import aiohttp
 from aiohttp import web
-from aiohttp.client_exceptions import ClientConnectionResetError
+from aiohttp.client_exceptions import ClientConnectionResetError, ContentTypeError
 
 from ..azure_auth import AZURE_OPENAI_SCOPE, set_frontend_azure_token
 from ..bootstrap import build_adapter
@@ -224,10 +224,16 @@ async def desktop_azure_connect_handler(req: web.Request) -> web.Response:
     os.environ["AZURE_OPENAI_SLOW_DEPLOYMENT"] = deployment
     if key_vault_url:
         os.environ["AZUL_KEY_VAULT_URL"] = key_vault_url
+    else:
+        os.environ.pop("AZUL_KEY_VAULT_URL", None)
     if fast_deployment:
         os.environ["AZURE_OPENAI_FAST_DEPLOYMENT"] = fast_deployment
+    else:
+        os.environ.pop("AZURE_OPENAI_FAST_DEPLOYMENT", None)
     if embedding_deployment:
         os.environ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] = embedding_deployment
+    else:
+        os.environ.pop("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", None)
 
     auth_snapshot = await req.app["azure_auth_state"].ensure_authenticated()
     return web.json_response(
@@ -261,7 +267,12 @@ async def _key_vault_get_secret(
         headers={"Authorization": f"Bearer {access_token}"},
         timeout=aiohttp.ClientTimeout(total=30),
     ) as response:
-        data = await response.json(content_type=None)
+        try:
+            data = await response.json(content_type=None)
+        except ContentTypeError:
+            data = {}
+        if response.status == 404:
+            return ""
         if response.status >= 400:
             detail = data.get("error", {}).get("message") if isinstance(data, dict) else ""
             raise web.HTTPBadRequest(
@@ -305,6 +316,7 @@ async def desktop_azure_key_vault_hydrate_handler(req: web.Request) -> web.Respo
     }
 
     hydrated: list[str] = []
+    missing: list[str] = []
     async with aiohttp.ClientSession() as session:
         for env_key, secret_name in secret_fields.items():
             value = await _key_vault_get_secret(
@@ -316,6 +328,8 @@ async def desktop_azure_key_vault_hydrate_handler(req: web.Request) -> web.Respo
             if value:
                 os.environ[env_key] = value
                 hydrated.append(env_key)
+            else:
+                missing.append(env_key)
 
     os.environ["AZUL_KEY_VAULT_URL"] = vault_url
 
@@ -336,7 +350,7 @@ async def desktop_azure_key_vault_hydrate_handler(req: web.Request) -> web.Respo
     if servicebus_worker is not None:
         servicebus_worker.adapter = req.app["adapter"]
 
-    return web.json_response({"hydrated": hydrated})
+    return web.json_response({"hydrated": hydrated, "missing": missing})
 
 
 def _arm_headers(access_token: str) -> dict[str, str]:

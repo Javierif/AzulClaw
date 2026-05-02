@@ -97,11 +97,24 @@ fn packaged_backend_launch(app: &tauri::App) -> Result<Option<BackendLaunch>, St
     };
 
     let backend_root = resource_dir.join("backend");
+    if !cfg!(debug_assertions) && !backend_root.exists() {
+        return Err(format!(
+            "packaged backend resources are missing at {}",
+            backend_root.display()
+        ));
+    }
+
     let backend_exe = backend_root
         .join("azul-backend")
         .join(executable_name("azul-backend"));
 
     if !backend_exe.exists() {
+        if !cfg!(debug_assertions) {
+            return Err(format!(
+                "packaged backend executable is missing at {}",
+                backend_exe.display()
+            ));
+        }
         return Ok(None);
     }
 
