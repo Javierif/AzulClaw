@@ -254,6 +254,41 @@ def _secret_name_from_payload(payload: dict, field: str, default_name: str) -> s
     return str(payload.get(field, "")).strip() or default_name
 
 
+def _sync_runtime_models_from_azure_profile(runtime_manager, profile: dict) -> None:
+    """Keeps persisted runtime model deployments aligned with Azure Settings."""
+    if runtime_manager is None or not hasattr(runtime_manager, "load_settings"):
+        return
+    if not hasattr(runtime_manager, "save_settings"):
+        return
+
+    skill_configs = profile.get("skill_configs", {})
+    if not isinstance(skill_configs, dict):
+        return
+    azure_config = skill_configs.get("Azure", {})
+    if not isinstance(azure_config, dict):
+        return
+
+    deployment = str(azure_config.get("deployment", "")).strip()
+    fast_deployment = str(azure_config.get("fastDeployment", "")).strip()
+    if not deployment and not fast_deployment:
+        return
+
+    settings = runtime_manager.load_settings()
+    updates: list[dict[str, str]] = []
+    for model in settings.models:
+        next_deployment = ""
+        if model.id == "slow" and deployment:
+            next_deployment = deployment
+        elif model.id == "fast" and fast_deployment:
+            next_deployment = fast_deployment
+
+        if next_deployment and model.deployment != next_deployment:
+            updates.append({"id": model.id, "deployment": next_deployment})
+
+    if updates:
+        runtime_manager.save_settings({"models": updates})
+
+
 async def _key_vault_get_secret(
     *,
     session: aiohttp.ClientSession,
@@ -884,6 +919,10 @@ async def desktop_hatching_put_handler(req: web.Request) -> web.Response:
     payload = await req.json()
     result = save_hatching_profile(payload)
     apply_hatching_azure_runtime_settings()
+    try:
+        _sync_runtime_models_from_azure_profile(req.app.get("runtime_manager"), result)
+    except Exception as error:
+        LOGGER.warning("[Runtime] model sync after hatching save failed: %s", error)
     orchestrator = req.app.get("orchestrator")
     if orchestrator is not None and hasattr(orchestrator, "reload_persistent_memory"):
         try:

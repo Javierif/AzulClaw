@@ -11,6 +11,7 @@ from aiohttp.test_utils import make_mocked_request
 
 from azul_backend.azul_brain.api import routes
 from azul_backend.azul_brain.config import RuntimeConfig
+from azul_backend.azul_brain.runtime.store import RuntimeModelProfile, RuntimeSettings
 
 
 class _FakeAuthSnapshot:
@@ -27,6 +28,54 @@ class _FakeAuthSnapshot:
 class _FakeAuthState:
     async def ensure_authenticated(self) -> _FakeAuthSnapshot:
         return _FakeAuthSnapshot()
+
+
+class _FakeRuntimeManager:
+    def __init__(self) -> None:
+        self.settings = RuntimeSettings(
+            models=[
+                RuntimeModelProfile(
+                    id="fast",
+                    label="Fast brain",
+                    lane="fast",
+                    provider="azure",
+                    deployment="old-fast",
+                    enabled=False,
+                    streaming_enabled=True,
+                ),
+                RuntimeModelProfile(
+                    id="slow",
+                    label="Slow brain",
+                    lane="slow",
+                    provider="azure",
+                    deployment="old-slow",
+                    enabled=True,
+                    streaming_enabled=False,
+                ),
+            ]
+        )
+        self.saved_payloads: list[dict] = []
+
+    def load_settings(self) -> RuntimeSettings:
+        return self.settings
+
+    def save_settings(self, payload: dict) -> RuntimeSettings:
+        self.saved_payloads.append(payload)
+        by_id = {model.id: model for model in self.settings.models}
+        for item in payload.get("models", []):
+            model = by_id[item["id"]]
+            by_id[item["id"]] = RuntimeModelProfile(
+                id=model.id,
+                label=model.label,
+                lane=model.lane,
+                provider=model.provider,
+                deployment=item["deployment"],
+                enabled=model.enabled,
+                streaming_enabled=model.streaming_enabled,
+                description=model.description,
+            )
+        self.settings.models = list(by_id.values())
+        return self.settings
 
 
 class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
@@ -104,6 +153,47 @@ class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(body["hydrated"], ["MicrosoftAppId"])
         self.assertEqual(body["missing"], ["MicrosoftAppPassword", "MicrosoftAppTenantId"])
+
+    async def test_hatching_save_syncs_runtime_model_deployments(self) -> None:
+        payload = {
+            "skill_configs": {
+                "Azure": {
+                    "deployment": "new-slow",
+                    "fastDeployment": "new-fast",
+                }
+            }
+        }
+        runtime_manager = _FakeRuntimeManager()
+        app = web.Application()
+        app["runtime_manager"] = runtime_manager
+        app["orchestrator"] = None
+        request = make_mocked_request("PUT", "/api/desktop/hatching", app=app)
+        request._read_bytes = json.dumps(payload).encode("utf-8")
+
+        with (
+            patch("azul_backend.azul_brain.api.routes.save_hatching_profile", return_value=payload),
+            patch("azul_backend.azul_brain.api.routes.apply_hatching_azure_runtime_settings"),
+        ):
+            response = await routes.desktop_hatching_put_handler(request)
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(
+            runtime_manager.saved_payloads,
+            [
+                {
+                    "models": [
+                        {"id": "fast", "deployment": "new-fast"},
+                        {"id": "slow", "deployment": "new-slow"},
+                    ]
+                }
+            ],
+        )
+        models = {model.id: model for model in runtime_manager.settings.models}
+        self.assertEqual(models["fast"].deployment, "new-fast")
+        self.assertFalse(models["fast"].enabled)
+        self.assertTrue(models["fast"].streaming_enabled)
+        self.assertEqual(models["slow"].deployment, "new-slow")
+        self.assertTrue(models["slow"].enabled)
 
 
 if __name__ == "__main__":
