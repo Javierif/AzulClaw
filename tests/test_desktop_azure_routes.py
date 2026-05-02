@@ -55,6 +55,10 @@ class _FakeRuntimeManager:
             ]
         )
         self.saved_payloads: list[dict] = []
+        self.agent_cache = {"old-agent": object()}
+        self.probe_cache = {"old-probe": object()}
+        self.cooldowns = {"fast": 1.0}
+        self.last_errors = {"slow": "old error"}
 
     def load_settings(self) -> RuntimeSettings:
         return self.settings
@@ -89,9 +93,12 @@ class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
             "fast_deployment": "",
             "embedding_deployment": "",
         }
-        request = make_mocked_request("POST", "/api/desktop/azure/connect")
+        runtime_manager = _FakeRuntimeManager()
+        app = web.Application()
+        app["azure_auth_state"] = _FakeAuthState()
+        app["runtime_manager"] = runtime_manager
+        request = make_mocked_request("POST", "/api/desktop/azure/connect", app=app)
         request._read_bytes = json.dumps(payload).encode("utf-8")
-        request.app["azure_auth_state"] = _FakeAuthState()
 
         with (
             patch.dict(
@@ -111,6 +118,10 @@ class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("AZUL_KEY_VAULT_URL", os.environ)
             self.assertNotIn("AZURE_OPENAI_FAST_DEPLOYMENT", os.environ)
             self.assertNotIn("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", os.environ)
+            self.assertEqual(runtime_manager.agent_cache, {})
+            self.assertEqual(runtime_manager.probe_cache, {})
+            self.assertEqual(runtime_manager.cooldowns, {})
+            self.assertEqual(runtime_manager.last_errors, {})
 
     async def test_key_vault_hydrate_preserves_missing_optional_bot_secrets(self) -> None:
         payload = {
@@ -194,6 +205,8 @@ class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(models["fast"].streaming_enabled)
         self.assertEqual(models["slow"].deployment, "new-slow")
         self.assertTrue(models["slow"].enabled)
+        self.assertEqual(runtime_manager.agent_cache, {})
+        self.assertEqual(runtime_manager.probe_cache, {})
 
 
 if __name__ == "__main__":

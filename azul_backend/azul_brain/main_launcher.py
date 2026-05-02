@@ -16,7 +16,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(project_root))
 
     from azul_backend.azul_brain.api.routes import register_desktop_routes
-    from azul_backend.azul_brain.api.services import get_workspace_root
+    from azul_backend.azul_brain.api.services import get_workspace_root, sync_runtime_models_from_saved_hatching_profile
     from azul_backend.azul_brain.azure_auth import AzureOpenAIAuthState
     from azul_backend.azul_brain.bootstrap import build_adapter, build_mcp_client
     from azul_backend.azul_brain.bot.azul_bot import AzulBot
@@ -30,7 +30,7 @@ if __package__ in (None, ""):
     from azul_backend.azul_brain.channels.servicebus_worker import ServiceBusWorker
 else:
     from .api.routes import register_desktop_routes
-    from .api.services import get_workspace_root
+    from .api.services import get_workspace_root, sync_runtime_models_from_saved_hatching_profile
     from .azure_auth import AzureOpenAIAuthState
     from .bootstrap import build_adapter, build_mcp_client
     from .bot.azul_bot import AzulBot
@@ -169,6 +169,10 @@ async def create_app() -> web.Application:
         store=runtime_store,
         process_registry=process_registry,
     )
+    try:
+        sync_runtime_models_from_saved_hatching_profile(runtime_manager)
+    except Exception as error:
+        LOGGER.warning("[Runtime] model sync from hatching profile failed: %s", error)
     orchestrator = ConversationOrchestrator(mcp_client, runtime_manager)
     scheduler = RuntimeScheduler(store=runtime_store, orchestrator=orchestrator)
     await scheduler.start()

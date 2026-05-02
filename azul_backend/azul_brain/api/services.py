@@ -225,6 +225,56 @@ def save_memory_runtime_settings(payload: dict) -> dict:
     return load_memory_runtime_settings()
 
 
+def sync_runtime_models_from_azure_profile(runtime_manager, profile: dict) -> None:
+    """Keeps persisted runtime model deployments aligned with Azure Settings."""
+    if runtime_manager is None or not hasattr(runtime_manager, "load_settings"):
+        return
+    if not hasattr(runtime_manager, "save_settings"):
+        return
+
+    skill_configs = profile.get("skill_configs", {})
+    if not isinstance(skill_configs, dict):
+        return
+    azure_config = skill_configs.get("Azure", {})
+    if not isinstance(azure_config, dict):
+        return
+
+    deployment = str(azure_config.get("deployment", "")).strip()
+    fast_deployment = str(azure_config.get("fastDeployment", "")).strip()
+    if not deployment and not fast_deployment:
+        return
+
+    settings = runtime_manager.load_settings()
+    updates: list[dict[str, str]] = []
+    for model in settings.models:
+        next_deployment = ""
+        if model.id == "slow" and deployment:
+            next_deployment = deployment
+        elif model.id == "fast" and fast_deployment:
+            next_deployment = fast_deployment
+
+        if next_deployment and model.deployment != next_deployment:
+            updates.append({"id": model.id, "deployment": next_deployment})
+
+    if updates:
+        runtime_manager.save_settings({"models": updates})
+
+
+def sync_runtime_models_from_saved_hatching_profile(runtime_manager) -> None:
+    """Applies persisted Hatching Azure deployments to runtime settings."""
+    sync_runtime_models_from_azure_profile(runtime_manager, load_hatching_profile())
+
+
+def invalidate_runtime_model_caches(runtime_manager) -> None:
+    """Drops model clients/probes that may hold stale Azure endpoint or auth state."""
+    if runtime_manager is None:
+        return
+    for attribute in ("agent_cache", "probe_cache", "cooldowns", "last_errors"):
+        cache = getattr(runtime_manager, attribute, None)
+        if hasattr(cache, "clear"):
+            cache.clear()
+
+
 def _delete_sqlite_bundle(db_file: Path) -> None:
     """Removes the main DB file and common SQLite sidecar files in the same folder."""
     if not db_file.name:
