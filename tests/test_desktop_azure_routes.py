@@ -310,6 +310,44 @@ class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runtime_manager.agent_cache, {})
         self.assertEqual(runtime_manager.probe_cache, {})
 
+    async def test_hatching_save_clears_runtime_fast_deployment(self) -> None:
+        payload = {
+            "skill_configs": {
+                "Azure": {
+                    "deployment": "new-slow",
+                    "fastDeployment": "",
+                }
+            }
+        }
+        runtime_manager = _FakeRuntimeManager()
+        app = web.Application()
+        app["runtime_manager"] = runtime_manager
+        app["orchestrator"] = None
+        request = make_mocked_request("PUT", "/api/desktop/hatching", app=app)
+        request._read_bytes = json.dumps(payload).encode("utf-8")
+
+        with (
+            patch("azul_backend.azul_brain.api.routes.save_hatching_profile", return_value=payload),
+            patch("azul_backend.azul_brain.api.routes.apply_hatching_azure_runtime_settings"),
+        ):
+            response = await routes.desktop_hatching_put_handler(request)
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(
+            runtime_manager.saved_payloads,
+            [
+                {
+                    "models": [
+                        {"id": "fast", "deployment": ""},
+                        {"id": "slow", "deployment": "new-slow"},
+                    ]
+                }
+            ],
+        )
+        models = {model.id: model for model in runtime_manager.settings.models}
+        self.assertEqual(models["fast"].deployment, "")
+        self.assertEqual(models["slow"].deployment, "new-slow")
+
 
 if __name__ == "__main__":
     unittest.main()

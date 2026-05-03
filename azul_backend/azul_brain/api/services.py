@@ -240,20 +240,22 @@ def sync_runtime_models_from_azure_profile(runtime_manager, profile: dict) -> No
         return
 
     deployment = str(azure_config.get("deployment", "")).strip()
+    has_fast_deployment = "fastDeployment" in azure_config
     fast_deployment = str(azure_config.get("fastDeployment", "")).strip()
     if not deployment and not fast_deployment:
-        return
+        if not has_fast_deployment:
+            return
 
     settings = runtime_manager.load_settings()
     updates: list[dict[str, str]] = []
     for model in settings.models:
-        next_deployment = ""
+        next_deployment: str | None = None
         if model.id == "slow" and deployment:
             next_deployment = deployment
-        elif model.id == "fast" and fast_deployment:
+        elif model.id == "fast" and has_fast_deployment:
             next_deployment = fast_deployment
 
-        if next_deployment and model.deployment != next_deployment:
+        if next_deployment is not None and model.deployment != next_deployment:
             updates.append({"id": model.id, "deployment": next_deployment})
 
     if updates:
