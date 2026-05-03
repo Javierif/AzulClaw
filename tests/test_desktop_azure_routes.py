@@ -225,6 +225,20 @@ class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(body["runtime_dir"].endswith("memory"))
         self.assertNotEqual(body["runtime_dir"], "")
 
+    async def test_key_vault_secret_display_name_uses_secret_id(self) -> None:
+        self.assertEqual(
+            routes._key_vault_secret_display_name(
+                {"id": "https://example.vault.azure.net/secrets/MicrosoftAppPassword"}
+            ),
+            "MicrosoftAppPassword",
+        )
+        self.assertEqual(
+            routes._key_vault_secret_display_name(
+                {"id": "https://example.vault.azure.net/secrets/MicrosoftAppPassword/version-id"}
+            ),
+            "",
+        )
+
     async def test_key_vault_hydrate_preserves_missing_optional_bot_secrets(self) -> None:
         payload = {
             "access_token": "token",

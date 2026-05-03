@@ -138,7 +138,7 @@ The packaging flow:
 Output:
 
 ```text
-azul_desktop/src-tauri/target/release/bundle/nsis/AzulClaw_0.1.0_x64-setup.exe
+azul_desktop/src-tauri/target/release/bundle/nsis/AzulClaw_0.2.0_x64-setup.exe
 ```
 
 The installer creates a start menu entry and a desktop shortcut. The installed

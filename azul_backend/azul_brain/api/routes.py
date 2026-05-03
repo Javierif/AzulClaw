@@ -516,6 +516,17 @@ def _suggest_deployment_capabilities(item: dict) -> list[str]:
     return capabilities
 
 
+def _key_vault_secret_display_name(item: dict) -> str:
+    name = str(item.get("name", "")).strip()
+    if name:
+        return name
+    parsed = urlparse(str(item.get("id", "")).strip())
+    parts = [part for part in parsed.path.split("/") if part]
+    if parts and parts[-2:-1] == ["secrets"]:
+        return parts[-1]
+    return ""
+
+
 async def desktop_azure_discovery_subscriptions_handler(req: web.Request) -> web.Response:
     payload = await req.json()
     access_token = str(payload.get("access_token", "")).strip()
@@ -643,7 +654,7 @@ async def desktop_azure_discovery_key_vault_secrets_handler(req: web.Request) ->
     for item in data.get("value", []):
         if not isinstance(item, dict):
             continue
-        name = str(item.get("name", "")).strip()
+        name = _key_vault_secret_display_name(item)
         if not name:
             continue
         attributes = item.get("attributes", {}) if isinstance(item.get("attributes"), dict) else {}
