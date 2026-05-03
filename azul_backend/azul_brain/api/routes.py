@@ -969,7 +969,12 @@ async def desktop_hatching_put_handler(req: web.Request) -> web.Response:
     result = save_hatching_profile(payload)
     apply_hatching_azure_runtime_settings()
     try:
-        sync_runtime_models_from_azure_profile(req.app.get("runtime_manager"), result)
+        sync_profile = dict(result)
+        if isinstance(skill_configs, dict) and "Azure" in skill_configs:
+            sync_skill_configs = dict(result.get("skill_configs", {}))
+            sync_skill_configs["Azure"] = azure_config
+            sync_profile["skill_configs"] = sync_skill_configs
+        sync_runtime_models_from_azure_profile(req.app.get("runtime_manager"), sync_profile)
         invalidate_runtime_model_caches(req.app.get("runtime_manager"))
     except Exception as error:
         LOGGER.warning("[Runtime] model sync after hatching save failed: %s", error)

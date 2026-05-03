@@ -100,6 +100,32 @@ fn append_log(path: &Path) -> Option<Stdio> {
         .map(Stdio::from)
 }
 
+fn append_text_log(path: &Path, message: &str) {
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{message}");
+    }
+}
+
+fn autostart_error_log_path(app: &tauri::App) -> Option<PathBuf> {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|dir| dir.join("logs").join("desktop-backend.err.log"))
+}
+
+fn record_backend_autostart_error(app: &tauri::App, error: &str) {
+    eprintln!("AzulClaw backend autostart failed: {error}");
+    if let Some(log_path) = autostart_error_log_path(app) {
+        append_text_log(
+            &log_path,
+            &format!("AzulClaw backend autostart failed before backend logging was available: {error}"),
+        );
+    }
+}
+
 fn executable_name(name: &str) -> String {
     if cfg!(target_os = "windows") {
         format!("{name}.exe")
@@ -245,7 +271,7 @@ fn main() {
                     app.manage(BackendProcess(Mutex::new(child)));
                 }
                 Err(error) => {
-                    eprintln!("AzulClaw backend autostart failed: {error}");
+                    record_backend_autostart_error(app, &error);
                     app.manage(BackendProcess(Mutex::new(None)));
                 }
             }

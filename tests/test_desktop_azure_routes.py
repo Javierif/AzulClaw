@@ -319,6 +319,13 @@ class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
                 }
             }
         }
+        saved_payload = {
+            "skill_configs": {
+                "Azure": {
+                    "deployment": "new-slow",
+                }
+            }
+        }
         runtime_manager = _FakeRuntimeManager()
         app = web.Application()
         app["runtime_manager"] = runtime_manager
@@ -327,7 +334,7 @@ class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
         request._read_bytes = json.dumps(payload).encode("utf-8")
 
         with (
-            patch("azul_backend.azul_brain.api.routes.save_hatching_profile", return_value=payload),
+            patch("azul_backend.azul_brain.api.routes.save_hatching_profile", return_value=saved_payload),
             patch("azul_backend.azul_brain.api.routes.apply_hatching_azure_runtime_settings"),
         ):
             response = await routes.desktop_hatching_put_handler(request)
