@@ -1,6 +1,7 @@
 """Startup utilities for the main AzulClaw components."""
 
 import logging
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -37,5 +38,14 @@ def build_mcp_script_path(base_path: Path) -> Path:
 
 def build_mcp_client(base_path: Path) -> AzulHandsClient:
     """Builds the AzulClaw MCP client."""
+    packaged_mcp_command = os.environ.get("AZUL_HANDS_MCP_COMMAND", "").strip()
+    if packaged_mcp_command:
+        return AzulHandsClient(
+            packaged_mcp_command,
+            command=packaged_mcp_command,
+            args=[],
+            cwd=Path(packaged_mcp_command).parent,
+        )
+
     mcp_script_path = build_mcp_script_path(base_path)
     return AzulHandsClient(str(mcp_script_path))

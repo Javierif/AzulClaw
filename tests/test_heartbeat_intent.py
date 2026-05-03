@@ -8,6 +8,7 @@ import unittest
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 
 from azul_backend.azul_brain.runtime.heartbeat_intent import (
@@ -16,10 +17,10 @@ from azul_backend.azul_brain.runtime.heartbeat_intent import (
     HeartbeatDraftModel,
     HeartbeatIntentService,
     HeartbeatRouteModel,
-    PENDING_CONFIRMATION_CLARIFICATION,
     PendingHeartbeatStore,
 )
 from azul_backend.azul_brain.runtime.store import RuntimeStore
+from azul_backend.azul_brain.runtime.store import to_iso_z, utc_now
 
 
 TEST_TMP_ROOT = Path(__file__).resolve().parents[1] / "memory" / "test-heartbeat-intent"
@@ -335,7 +336,34 @@ class HeartbeatIntentServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(outcome)
             self.assertEqual(runtime.calls, 1)
 
-    async def test_semantic_routing_failure_preserves_pending_confirmation(self) -> None:
+    async def test_semantic_routing_failure_does_not_hijack_chat_with_pending_confirmation(self) -> None:
+        with temp_runtime_dir() as root:
+            store = make_store(root)
+            pending_store = PendingHeartbeatStore(root / "pending.json")
+            pending_store.save_for_user(
+                "desktop-user",
+                HeartbeatDraft(
+                    name="Water reminder",
+                    prompt="Remind me to drink water.",
+                    cron_expression="0 * * * *",
+                    lane="fast",
+                ),
+            )
+            runtime = FailingRuntimeManager(store)
+            service = HeartbeatIntentService(
+                runtime_manager=runtime,
+                store=store,
+                pending_store=pending_store,
+            )
+
+            with fake_agent_framework_module():
+                outcome = await service.handle_message("desktop-user", "estas vivo")
+
+            self.assertIsNone(outcome)
+            self.assertIsNotNone(pending_store.get_for_user("desktop-user"))
+            self.assertEqual(store.load_jobs(), [])
+
+    async def test_semantic_routing_failure_still_accepts_explicit_local_confirmation(self) -> None:
         with temp_runtime_dir() as root:
             store = make_store(root)
             pending_store = PendingHeartbeatStore(root / "pending.json")
@@ -360,8 +388,45 @@ class HeartbeatIntentServiceTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertIsNotNone(outcome)
             assert outcome is not None
-            self.assertEqual(outcome.response, PENDING_CONFIRMATION_CLARIFICATION)
-            self.assertIsNotNone(pending_store.get_for_user("desktop-user"))
+            self.assertIn("I created the heartbeat", outcome.response)
+            self.assertEqual(pending_store.load(), [])
+            self.assertEqual(len(store.load_jobs()), 1)
+
+    async def test_pending_confirmation_expires_after_ttl(self) -> None:
+        with temp_runtime_dir() as root:
+            store = make_store(root)
+            pending_path = root / "pending.json"
+            pending_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": "pending-heartbeat-create",
+                            "user_id": "desktop-user",
+                            "draft": {
+                                "name": "Expired reminder",
+                                "prompt": "Remind me to drink water.",
+                                "cron_expression": "0 * * * *",
+                                "lane": "fast",
+                            },
+                            "created_at": to_iso_z(utc_now() - timedelta(minutes=11)),
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            pending_store = PendingHeartbeatStore(pending_path)
+            runtime = FailingRuntimeManager(store)
+            service = HeartbeatIntentService(
+                runtime_manager=runtime,
+                store=store,
+                pending_store=pending_store,
+            )
+
+            with fake_agent_framework_module():
+                outcome = await service.handle_message("desktop-user", "yes")
+
+            self.assertIsNone(outcome)
+            self.assertEqual(pending_store.load(), [])
             self.assertEqual(store.load_jobs(), [])
 
 

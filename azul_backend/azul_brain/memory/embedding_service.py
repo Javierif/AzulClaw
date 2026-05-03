@@ -10,6 +10,11 @@ import aiohttp
 from agent_framework.azure import AzureOpenAIEmbeddingClient
 from agent_framework.openai import OpenAIEmbeddingClient
 
+from ..azure_auth import (
+    get_azure_openai_token_provider,
+    get_default_azure_credential,
+    resolve_azure_openai_auth_mode,
+)
 from ..foundry_url import (
     is_foundry_endpoint,
     normalize_azure_openai_endpoint,
@@ -57,6 +62,7 @@ class EmbeddingService:
         """Creates an EmbeddingService from environment variables."""
         endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip()
         api_key = os.environ.get("AZURE_OPENAI_API_KEY", "").strip()
+        auth_mode = resolve_azure_openai_auth_mode(api_key)
         model = os.environ.get(
             "AZURE_OPENAI_EMBEDDING_DEPLOYMENT",
             _DEFAULT_AZURE_EMBEDDING_MODEL,
@@ -64,21 +70,29 @@ class EmbeddingService:
         api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21").strip()
 
         client: AzureOpenAIEmbeddingClient | OpenAIEmbeddingClient | None = None
-        if endpoint and api_key:
+        if endpoint and model and (auth_mode == "entra" or api_key):
             try:
                 if is_foundry_endpoint(endpoint):
-                    client = OpenAIEmbeddingClient(
-                        model_id=model,
-                        api_key=api_key,
-                        base_url=normalize_foundry_base_url(endpoint),
-                    )
+                    kwargs = {
+                        "model_id": model,
+                        "base_url": normalize_foundry_base_url(endpoint),
+                    }
+                    if auth_mode == "entra":
+                        kwargs["api_key"] = get_azure_openai_token_provider()
+                    else:
+                        kwargs["api_key"] = api_key
+                    client = OpenAIEmbeddingClient(**kwargs)
                 else:
-                    client = AzureOpenAIEmbeddingClient(
-                        deployment_name=model,
-                        api_key=api_key,
-                        endpoint=normalize_azure_openai_endpoint(endpoint),
-                        api_version=api_version,
-                    )
+                    kwargs = {
+                        "deployment_name": model,
+                        "endpoint": normalize_azure_openai_endpoint(endpoint),
+                        "api_version": api_version,
+                    }
+                    if auth_mode == "entra":
+                        kwargs["credential"] = get_default_azure_credential()
+                    else:
+                        kwargs["api_key"] = api_key
+                    client = AzureOpenAIEmbeddingClient(**kwargs)
             except Exception as error:
                 LOGGER.warning("[Embedding] Azure embedding client unavailable: %s", error)
                 client = None

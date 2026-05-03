@@ -23,7 +23,7 @@ import struct
 import uuid
 from pathlib import Path
 
-from ..api.hatching_store import resolve_memory_db_path
+from ..api.hatching_store import is_vector_memory_enabled, resolve_memory_db_path
 
 LOGGER = logging.getLogger(__name__)
 
@@ -94,8 +94,8 @@ class VectorMemoryStore:
 
         Raises RuntimeError if vector memory is explicitly disabled.
         """
-        if os.environ.get("VECTOR_MEMORY_ENABLED", "true").strip().lower() == "false":
-            raise RuntimeError("Vector memory is disabled via VECTOR_MEMORY_ENABLED=false.")
+        if not is_vector_memory_enabled():
+            raise RuntimeError("Vector memory is disabled in Settings.")
 
         db_path = resolve_memory_db_path()
         dim = int(os.environ.get("AZUL_EMBEDDING_DIM", str(_DEFAULT_EMBEDDING_DIM)))

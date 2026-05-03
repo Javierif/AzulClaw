@@ -2,8 +2,10 @@
 
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 from aiohttp import web
 from botbuilder.schema import Activity
@@ -14,7 +16,8 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(project_root))
 
     from azul_backend.azul_brain.api.routes import register_desktop_routes
-    from azul_backend.azul_brain.api.services import get_workspace_root
+    from azul_backend.azul_brain.api.services import get_workspace_root, sync_runtime_models_from_saved_hatching_profile
+    from azul_backend.azul_brain.azure_auth import AzureOpenAIAuthState
     from azul_backend.azul_brain.bootstrap import build_adapter, build_mcp_client
     from azul_backend.azul_brain.bot.azul_bot import AzulBot
     from azul_backend.azul_brain.config import HOST, load_runtime_config
@@ -27,7 +30,8 @@ if __package__ in (None, ""):
     from azul_backend.azul_brain.channels.servicebus_worker import ServiceBusWorker
 else:
     from .api.routes import register_desktop_routes
-    from .api.services import get_workspace_root
+    from .api.services import get_workspace_root, sync_runtime_models_from_saved_hatching_profile
+    from .azure_auth import AzureOpenAIAuthState
     from .bootstrap import build_adapter, build_mcp_client
     from .bot.azul_bot import AzulBot
     from .config import HOST, load_runtime_config
@@ -42,12 +46,43 @@ else:
 LOGGER = logging.getLogger(__name__)
 CORS_ALLOWED_METHODS = "GET,POST,PUT,DELETE,OPTIONS"
 CORS_ALLOWED_HEADERS = "Content-Type,Authorization"
+DEFAULT_CORS_ALLOWED_ORIGINS = {
+    "http://localhost:1420",
+    "http://127.0.0.1:1420",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+    "tauri://localhost",
+}
+
+
+def _allowed_cors_origins() -> set[str]:
+    configured = {
+        item.strip().rstrip("/").lower()
+        for item in os.environ.get("AZUL_CORS_ALLOWED_ORIGINS", "").split(",")
+        if item.strip()
+    }
+    return DEFAULT_CORS_ALLOWED_ORIGINS | configured
+
+
+def _is_allowed_cors_origin(origin: str) -> bool:
+    if not origin:
+        return True
+    parsed = urlparse(origin.strip())
+    if not parsed.scheme or not parsed.netloc:
+        return False
+    normalized = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+    return normalized in _allowed_cors_origins()
 
 
 def apply_cors_headers(req: web.Request, response: web.StreamResponse) -> None:
     """Applies CORS headers also to streaming responses and framework errors."""
     origin = req.headers.get("Origin", "").strip()
     requested_headers = req.headers.get("Access-Control-Request-Headers", "").strip()
+
+    if origin and not _is_allowed_cors_origin(origin):
+        return
 
     response.headers["Access-Control-Allow-Origin"] = origin or "*"
     response.headers["Access-Control-Allow-Methods"] = CORS_ALLOWED_METHODS
@@ -65,6 +100,8 @@ async def cors_on_prepare(req: web.Request, response: web.StreamResponse) -> Non
 @web.middleware
 async def cors_middleware(req: web.Request, handler):
     """Applies simple CORS headers for the desktop app in development."""
+    if not _is_allowed_cors_origin(req.headers.get("Origin", "").strip()):
+        return web.Response(status=403)
     if req.method == "OPTIONS":
         response = web.Response(status=204)
         apply_cors_headers(req, response)
@@ -126,11 +163,16 @@ async def create_app() -> web.Application:
 
     runtime_store = RuntimeStore()
     process_registry = ProcessRegistry(runtime_store)
+    azure_auth_state = AzureOpenAIAuthState()
     runtime_manager = AgentRuntimeManager(
         mcp_client=mcp_client,
         store=runtime_store,
         process_registry=process_registry,
     )
+    try:
+        sync_runtime_models_from_saved_hatching_profile(runtime_manager)
+    except Exception as error:
+        LOGGER.warning("[Runtime] model sync from hatching profile failed: %s", error)
     orchestrator = ConversationOrchestrator(mcp_client, runtime_manager)
     scheduler = RuntimeScheduler(store=runtime_store, orchestrator=orchestrator)
     await scheduler.start()
@@ -146,6 +188,7 @@ async def create_app() -> web.Application:
     app["process_registry"] = process_registry
     app["runtime_manager"] = runtime_manager
     app["scheduler"] = scheduler
+    app["azure_auth_state"] = azure_auth_state
     app.router.add_post("/api/messages", messages_handler)
     register_desktop_routes(app)
 
@@ -158,6 +201,9 @@ async def create_app() -> web.Application:
     # Seed onboarding profile preferences on every startup (idempotent — skips existing rows)
     if hasattr(orchestrator, "seed_profile_facts"):
         asyncio.create_task(orchestrator.seed_profile_facts())
+
+    if azure_auth_state.snapshot().startup_enabled:
+        asyncio.create_task(azure_auth_state.ensure_authenticated())
 
     if runtime_config.service_bus_connection_string:
         sb_worker = ServiceBusWorker(

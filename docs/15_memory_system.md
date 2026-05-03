@@ -1,6 +1,6 @@
 # Memory System
 
-Last reviewed: 2026-04-15
+Last reviewed: 2026-04-23
 
 ## Purpose
 
@@ -48,6 +48,7 @@ AzulClaw uses hybrid retrieval:
 AZUL_WORKSPACE_ROOT=
 AZUL_MEMORY_DB_PATH=
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT=
+AZUL_AZURE_OPENAI_AUTH_MODE=entra
 AZUL_EMBEDDING_DIM=3072
 VECTOR_MEMORY_ENABLED=true
 AZUL_HYBRID_VECTOR_WEIGHT=0.7
@@ -55,3 +56,8 @@ AZUL_HYBRID_TEXT_WEIGHT=0.3
 AZUL_PREFERENCE_EXTRACTION_ENABLED=true
 MEMORY_MAX_MESSAGES=50
 ```
+
+The embedding layer follows the same Azure OpenAI authentication mode as the
+rest of the backend. In desktop scenarios, Microsoft Entra ID is the preferred
+path. If remote embeddings are unavailable, AzulClaw falls back to local
+OpenAI-compatible embeddings and then to deterministic hash embeddings.

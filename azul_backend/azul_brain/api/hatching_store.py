@@ -19,20 +19,98 @@ def _default_workspace_root() -> str:
 
 _AZUL_STATE_DIR = ".azul"
 _MEMORY_DB_FILENAME = "azul_memory.db"
+_MEMORY_SETTINGS_FILENAME = "memory_settings.json"
+
+
+@dataclass
+class MemorySettings:
+    """User-editable memory persistence settings."""
+
+    memory_db_path: str = ""
+    vector_memory_enabled: bool = True
+
+
+def _runtime_root() -> Path:
+    override = os.environ.get("AZUL_RUNTIME_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return Path(__file__).resolve().parents[3] / "memory"
+
+
+def _default_profile_path() -> Path:
+    return _runtime_root() / "hatching_profile.json"
+
+
+def _memory_settings_path() -> Path:
+    return _runtime_root() / _MEMORY_SETTINGS_FILENAME
+
+
+def default_memory_db_path() -> str:
+    """Returns the default SQLite DB path derived from the current workspace."""
+    profile = HatchingStore().load()
+    root = Path(profile.workspace_root).expanduser()
+    return str(root / _AZUL_STATE_DIR / _MEMORY_DB_FILENAME)
+
+
+def load_memory_settings() -> MemorySettings:
+    """Loads user memory settings, falling back to legacy env vars if no file exists."""
+    settings_path = _memory_settings_path()
+    if settings_path.exists():
+        try:
+            raw = json.loads(settings_path.read_text(encoding="utf-8"))
+            return MemorySettings(
+                memory_db_path=str(raw.get("memory_db_path", "")).strip(),
+                vector_memory_enabled=bool(raw.get("vector_memory_enabled", True)),
+            )
+        except Exception:
+            return MemorySettings()
+
+    legacy_path = os.environ.get("AZUL_MEMORY_DB_PATH", "").strip()
+    legacy_vector_enabled = (
+        os.environ.get("VECTOR_MEMORY_ENABLED", "true").strip().lower() != "false"
+    )
+    return MemorySettings(
+        memory_db_path=legacy_path,
+        vector_memory_enabled=legacy_vector_enabled,
+    )
+
+
+def save_memory_settings(settings: MemorySettings) -> MemorySettings:
+    """Persists user memory settings under the local runtime directory."""
+    settings_path = _memory_settings_path()
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    memory_db_path = settings.memory_db_path.strip()
+    if memory_db_path:
+        memory_db_path = str(Path(memory_db_path).expanduser())
+    cleaned = MemorySettings(
+        memory_db_path=memory_db_path,
+        vector_memory_enabled=bool(settings.vector_memory_enabled),
+    )
+    settings_path.write_text(
+        json.dumps(asdict(cleaned), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return cleaned
+
+
+def reset_memory_settings() -> None:
+    """Removes persisted memory Settings so defaults apply again."""
+    try:
+        _memory_settings_path().unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def resolve_memory_db_path() -> str:
     """SQLite path shared by vector store, SafeMemory, and episodic store.
 
-    If ``AZUL_MEMORY_DB_PATH`` is set, it wins. Otherwise the file is
-    ``<workspace_root>/.azul/azul_memory.db`` from the hatching profile.
+    Settings win. Legacy ``AZUL_MEMORY_DB_PATH`` is only used when no
+    persisted memory settings exist.
     """
-    env_path = os.environ.get("AZUL_MEMORY_DB_PATH", "").strip()
-    if env_path:
-        return env_path
-    profile = HatchingStore().load()
-    root = Path(profile.workspace_root).expanduser()
-    return str(root / _AZUL_STATE_DIR / _MEMORY_DB_FILENAME)
+    configured_path = load_memory_settings().memory_db_path.strip()
+    if configured_path:
+        return str(Path(configured_path).expanduser())
+    return default_memory_db_path()
 
 
 @dataclass
@@ -56,8 +134,9 @@ class HatchingProfile:
     skill_configs: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
-def _default_profile_path() -> Path:
-    return Path(__file__).resolve().parents[3] / "memory" / "hatching_profile.json"
+def is_vector_memory_enabled() -> bool:
+    """Returns whether semantic/vector memory is enabled in Settings."""
+    return load_memory_settings().vector_memory_enabled
 
 
 class HatchingStore:

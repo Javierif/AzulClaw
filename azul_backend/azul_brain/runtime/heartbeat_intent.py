@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -11,17 +12,14 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, field_validator
 
 from ..api.hatching_store import HatchingStore
-from .store import RuntimeStore, ScheduledJob, to_iso_z, utc_now
+from .store import RuntimeStore, ScheduledJob, parse_iso_datetime, to_iso_z, utc_now
 
 
 HEARTBEAT_CONFIRMATION_ID = "pending-heartbeat-create"
+PENDING_HEARTBEAT_TTL_SECONDS = 10 * 60
 FREQUENCY_CLARIFICATION = (
     "I could not process the frequency. Could you confirm how often you want me "
     "to run this task? For example: 'every 2 hours'."
-)
-PENDING_CONFIRMATION_CLARIFICATION = (
-    "I still have a heartbeat draft waiting for confirmation. "
-    "Please use the card buttons, or reply 'yes, create it' or 'no'."
 )
 HEARTBEAT_CREATION_ERROR = (
     "I could not create the heartbeat because the schedule is invalid. "
@@ -31,6 +29,9 @@ HEARTBEAT_CREATION_ERROR = (
 
 
 def _runtime_root() -> Path:
+    override = os.environ.get("AZUL_RUNTIME_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
     return Path(__file__).resolve().parents[3] / "memory"
 
 
@@ -94,8 +95,9 @@ class HeartbeatIntentOutcome:
 class PendingHeartbeatStore:
     """Small JSON store for pending heartbeat confirmations."""
 
-    def __init__(self, path: Path | None = None):
+    def __init__(self, path: Path | None = None, ttl_seconds: int = PENDING_HEARTBEAT_TTL_SECONDS):
         self.path = path or _default_pending_actions_path()
+        self.ttl_seconds = ttl_seconds
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def load(self) -> list[PendingHeartbeatAction]:
@@ -125,7 +127,10 @@ class PendingHeartbeatStore:
                     created_at=str(item.get("created_at", "")).strip(),
                 )
             )
-        return items
+        active_items = [item for item in items if not self._is_expired(item)]
+        if len(active_items) != len(items):
+            self._save(active_items)
+        return active_items
 
     def get_for_user(self, user_id: str) -> PendingHeartbeatAction | None:
         safe_user_id = str(user_id).strip()
@@ -159,6 +164,14 @@ class PendingHeartbeatStore:
             encoding="utf-8",
         )
 
+    def _is_expired(self, item: PendingHeartbeatAction) -> bool:
+        if self.ttl_seconds <= 0:
+            return False
+        created_at = parse_iso_datetime(item.created_at)
+        if created_at is None:
+            return False
+        return (utc_now() - created_at).total_seconds() > self.ttl_seconds
+
 
 class HeartbeatIntentService:
     """Turns semantically-routed chat requests into scheduled heartbeat jobs."""
@@ -180,12 +193,9 @@ class HeartbeatIntentService:
         route = await self._semantic_route(user_message, has_pending=pending is not None)
 
         if route is None:
-            if pending is not None:
-                return HeartbeatIntentOutcome(
-                    response=PENDING_CONFIRMATION_CLARIFICATION,
-                    pending=pending,
-                )
-            return None
+            route = self._local_pending_route(user_message) if pending is not None else None
+            if route is None:
+                return None
 
         if pending is not None:
             if route.route == "confirm_pending":
@@ -227,6 +237,41 @@ class HeartbeatIntentService:
         except ValueError:
             return HeartbeatIntentOutcome(response=HEARTBEAT_CREATION_ERROR)
         return HeartbeatIntentOutcome(response=self._created_response(job), job=job)
+
+    def _local_pending_route(self, user_message: str) -> HeartbeatRouteModel | None:
+        """Fallback for explicit pending confirmation/cancellation when the router is unavailable."""
+        normalized = " ".join((user_message or "").strip().casefold().split())
+        normalized = normalized.strip(" .!¡?¿")
+        confirm = {
+            "yes",
+            "yes create it",
+            "yes, create it",
+            "create it",
+            "confirm",
+            "ok",
+            "okay",
+            "si",
+            "sí",
+            "si crealo",
+            "sí créalo",
+            "crealo",
+            "créalo",
+            "confirmar",
+        }
+        cancel = {
+            "no",
+            "cancel",
+            "cancel it",
+            "cancelar",
+            "descartar",
+            "no lo crees",
+            "no crear",
+        }
+        if normalized in confirm:
+            return HeartbeatRouteModel(route="confirm_pending")
+        if normalized in cancel:
+            return HeartbeatRouteModel(route="cancel_pending")
+        return None
 
     async def _semantic_route(
         self,

@@ -173,7 +173,10 @@ async def list_tools() -> list[types.Tool]:
 
 async def main():
     """Starts the MCP server over STDIO for communication with AzulBrain."""
-    print(f"[Info] AzulHands MCP Server started via STDIO (locked to: {WORKSPACE_DIR})")
+    print(
+        f"[Info] AzulHands MCP Server started via STDIO (locked to: {WORKSPACE_DIR})",
+        file=sys.stderr,
+    )
     async with stdio_server() as (read_stream, write_stream):
         await app.run(read_stream, write_stream, app.create_initialization_options())
 
