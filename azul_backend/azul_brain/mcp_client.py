@@ -2,6 +2,8 @@
 
 import contextlib
 import logging
+import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -10,6 +12,33 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _force_windows_popen_stdio() -> None:
+    """Avoids asyncio pipe creation failures seen on Windows/Python 3.13."""
+    if sys.platform != "win32":
+        return
+
+    try:
+        import mcp.client.stdio as stdio_module
+        from mcp.os.win32.utilities import FallbackProcess
+    except Exception:
+        return
+
+    async def create_windows_process(command, args, env=None, errlog=sys.stderr, cwd=None):
+        popen_obj = subprocess.Popen(
+            [command, *args],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=errlog,
+            env=env,
+            cwd=cwd,
+            bufsize=0,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return FallbackProcess(popen_obj)
+
+    stdio_module.create_windows_process = create_windows_process
 
 
 def _format_tool_names(tools: list[Any]) -> str:
@@ -23,12 +52,19 @@ class AzulHandsClient:
     secure filesystem tool operations.
     """
 
-    def __init__(self, server_script_path: str):
+    def __init__(
+        self,
+        server_script_path: str,
+        command: str | None = None,
+        args: list[str] | None = None,
+        cwd: str | Path | None = None,
+    ):
         """Configures startup parameters for the MCP child server."""
         self.server_parameters = StdioServerParameters(
-            command=sys.executable,
-            args=[server_script_path],
-            env=None,
+            command=command or sys.executable,
+            args=args if args is not None else [server_script_path],
+            env=os.environ.copy(),
+            cwd=cwd,
         )
         self.session: ClientSession | None = None
         self._exit_stack = contextlib.AsyncExitStack()
@@ -39,8 +75,17 @@ class AzulHandsClient:
         """Starts the STDIO transport, creates an MCP session, and runs initialize()."""
         LOGGER.info("Connecting AzulBrain to AzulHands (MCP Server)...")
         try:
+            _force_windows_popen_stdio()
+            errlog = sys.stderr
+            log_dir = os.environ.get("AZUL_BACKEND_LOG_DIR", "").strip()
+            if log_dir:
+                log_path = Path(log_dir).expanduser() / "azul-hands-mcp.err.log"
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                errlog = self._exit_stack.enter_context(
+                    log_path.open("a", encoding="utf-8")
+                )
             stdio_transport = await self._exit_stack.enter_async_context(
-                stdio_client(self.server_parameters)
+                stdio_client(self.server_parameters, errlog=errlog)
             )
             self.read_stream, self.write_stream = stdio_transport
             self.session = await self._exit_stack.enter_async_context(
@@ -51,7 +96,7 @@ class AzulHandsClient:
                 "MCP connection established. AzulClaw now has access to tools."
             )
         except Exception as error:
-            LOGGER.error("Error connecting to AzulHands: %s", error)
+            LOGGER.exception("Error connecting to AzulHands: %s", error)
             raise
 
     async def list_available_tools(self) -> list[Any]:

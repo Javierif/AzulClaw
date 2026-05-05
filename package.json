@@ -8,6 +8,8 @@
     "frontend": "npm run dev --prefix azul_desktop",
     "desktop": "npm run dev --prefix azul_desktop",
     "tauri": "npm run tauri:dev --prefix azul_desktop",
+    "package:backend:win": "powershell -ExecutionPolicy Bypass -File scripts/package_backend.ps1",
+    "package:desktop:win": "powershell -ExecutionPolicy Bypass -File scripts/package_desktop.ps1",
     "workspace:info": "python3 scripts/print_workspace.py"
   }
 }

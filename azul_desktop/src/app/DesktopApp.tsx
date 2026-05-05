@@ -12,7 +12,8 @@ import { ProcessesShell } from "../features/processes/ProcessesShell";
 import { SettingsShell } from "../features/settings/SettingsShell";
 import { SkillsShell } from "../features/skills/SkillsShell";
 import { WorkspaceShell } from "../features/workspace/WorkspaceShell";
-import { loadHatching } from "../lib/api";
+import { ensureBackendAuth, loadBackendStatus, loadHatching } from "../lib/api";
+import { profileCanRenewAzureLogin, renewAzureLoginFromProfile } from "../lib/azure-session";
 import { DEFAULT_CONVERSATION_TITLE, normalizeConversationTitle } from "../lib/conversation-copy";
 import type { AppView, HatchingProfile } from "../lib/contracts";
 import { defaultHatchingProfile } from "../lib/mock-data";
@@ -92,6 +93,10 @@ export function DesktopApp() {
   const [activeView, setActiveView] = useState<AppView>("chat");
   const [profile, setProfile] = useState<HatchingProfile>(defaultHatchingProfile);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [authPromptVisible, setAuthPromptVisible] = useState(false);
+  const [authPromptBusy, setAuthPromptBusy] = useState(false);
+  const [authPromptError, setAuthPromptError] = useState("");
+  const [authPromptDismissWarning, setAuthPromptDismissWarning] = useState(false);
   const [topbarLabel, setTopbarLabel] = useState<{ text: string; mode: "thinking" | "typing" } | null>(null);
   const [conversationTitle, setConversationTitle] = useState(DEFAULT_CONVERSATION_TITLE);
   const newChatFnRef = useRef<() => void>(() => {});
@@ -103,12 +108,37 @@ export function DesktopApp() {
   useEffect(() => {
     let isMounted = true;
 
-    loadHatching().then((data) => {
+    loadHatching().then(async (data) => {
       if (isMounted) {
         setProfile(data);
         setIsBootstrapping(false);
         if (!data.is_hatched) {
           setActiveView("hatching");
+        }
+      }
+      try {
+        const auth = await ensureBackendAuth();
+        if (
+          isMounted &&
+          auth.mode === "entra" &&
+          auth.requires_frontend_login &&
+          profileCanRenewAzureLogin(data)
+        ) {
+          setAuthPromptVisible(true);
+        }
+      } catch {
+        try {
+          const status = await loadBackendStatus();
+          if (
+            isMounted &&
+            status.auth.mode === "entra" &&
+            status.auth.requires_frontend_login &&
+            profileCanRenewAzureLogin(data)
+          ) {
+            setAuthPromptVisible(true);
+          }
+        } catch {
+          /* backend unavailable; regular offline handling remains in views */
         }
       }
     });
@@ -117,6 +147,30 @@ export function DesktopApp() {
       isMounted = false;
     };
   }, []);
+
+  async function handleRenewAzureLogin() {
+    setAuthPromptBusy(true);
+    setAuthPromptError("");
+    setAuthPromptDismissWarning(false);
+    try {
+      await renewAzureLoginFromProfile(profile);
+      setAuthPromptVisible(false);
+    } catch (error) {
+      setAuthPromptError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAuthPromptBusy(false);
+    }
+  }
+
+  function handleDismissAzureLogin() {
+    if (!authPromptDismissWarning) {
+      setAuthPromptDismissWarning(true);
+      setAuthPromptError("");
+      return;
+    }
+    setAuthPromptVisible(false);
+    setAuthPromptDismissWarning(false);
+  }
 
   const onThinkingChange = useCallback((thinking: boolean) => {
     isThinkingRef.current = thinking;
@@ -250,6 +304,43 @@ export function DesktopApp() {
           },
           setConversationTitle,
           (fn) => { newChatFnRef.current = fn; },
+        )}
+        {authPromptVisible && (
+          <div className="hw-modal-backdrop">
+            <section
+              className="hw-modal-card"
+              role="dialog"
+              aria-modal="true"
+              style={{ maxWidth: "520px" }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="hw-modal-head">
+                <div>
+                  <p className="hw-label">MICROSOFT LOGIN</p>
+                  <h3 className="hw-modal-title">Azure needs a fresh sign-in</h3>
+                </div>
+              </div>
+              <p className="hw-inline-note">
+                AzulClaw kept your Azure resource, model and Key Vault settings. It only needs a new Microsoft token for this session.
+              </p>
+              {authPromptDismissWarning && (
+                <p className="hw-inline-note hw-inline-note-warning" style={{ marginTop: "10px" }}>
+                  Without Microsoft sign-in, AzulClaw cannot call Azure OpenAI or use your Azure-backed resources in this session.
+                </p>
+              )}
+              {authPromptError && (
+                <p className="hw-inline-note hw-inline-note-warning" style={{ marginTop: "10px" }}>{authPromptError}</p>
+              )}
+              <div className="hw-modal-actions" style={{ marginTop: "16px" }}>
+                <button type="button" className="hw-btn-ghost" onClick={handleDismissAzureLogin} disabled={authPromptBusy}>
+                  {authPromptDismissWarning ? "Continue without sign-in" : "Not now"}
+                </button>
+                <button type="button" className="hw-btn-primary" onClick={() => void handleRenewAzureLogin()} disabled={authPromptBusy}>
+                  {authPromptBusy ? "Signing in..." : "Sign in with Microsoft"}
+                </button>
+              </div>
+            </section>
+          </div>
         )}
       </main>
     </div>

@@ -38,6 +38,15 @@ export interface MemoryRecord {
   created_at?: string;
 }
 
+export interface MemorySettings {
+  memory_db_path: string;
+  memory_db_path_override: string;
+  default_memory_db_path: string;
+  vector_memory_enabled: boolean;
+  reload_ok?: boolean;
+  reload_error?: string;
+}
+
 export interface ChatExchange {
   id: string;
   role: "user" | "assistant";
@@ -135,6 +144,81 @@ export interface RuntimeOverview {
   jobs_total: number;
   jobs_running: number;
   processes_visible: number;
+}
+
+export interface BackendLogTail {
+  name: string;
+  path: string;
+  exists: boolean;
+  content: string;
+}
+
+export interface BackendAuthStatus {
+  mode: "api_key" | "entra";
+  startup_enabled: boolean;
+  status: "idle" | "authenticating" | "authenticated" | "failed" | "disabled";
+  detail: string;
+  last_error: string;
+  last_success_at: string;
+  source?: "default" | "frontend" | string;
+  requires_frontend_login?: boolean;
+}
+
+export interface AzureSubscriptionOption {
+  id: string;
+  display_name: string;
+  state: string;
+  tenant_id?: string;
+}
+
+export interface AzureOpenAIResourceOption {
+  id: string;
+  name: string;
+  location: string;
+  resource_group: string;
+  subscription_id: string;
+  kind: string;
+  endpoint: string;
+}
+
+export interface AzureKeyVaultOption {
+  id: string;
+  name: string;
+  location: string;
+  resource_group: string;
+  subscription_id: string;
+  vault_uri: string;
+}
+
+export interface AzureKeyVaultSecretOption {
+  id: string;
+  name: string;
+  enabled: boolean;
+  content_type: string;
+}
+
+export interface AzureDeploymentOption {
+  id: string;
+  name: string;
+  model_name: string;
+  model_version: string;
+  model_format: string;
+  sku_name: string;
+  provisioning_state: string;
+  capabilities: string[];
+}
+
+export interface BackendStatus {
+  status: "running" | "offline";
+  api_base: string;
+  runtime_dir: string;
+  log_dir: string;
+  models_total: number;
+  models_enabled: number;
+  scheduler_running: boolean;
+  auth: BackendAuthStatus;
+  logs: BackendLogTail[];
+  error?: string;
 }
 
 export interface ScheduledJob {

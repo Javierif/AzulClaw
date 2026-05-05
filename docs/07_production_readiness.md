@@ -1,6 +1,6 @@
 # Production Readiness
 
-Last reviewed: 2026-04-15
+Last reviewed: 2026-04-23
 
 ## Purpose
 
@@ -44,6 +44,8 @@ Minimum production visibility should include:
 - process id
 - queue correlation id for channel traffic
 - scheduler execution outcomes
+- backend startup status for installed desktop builds
+- recent launcher and MCP stderr logs exposed without opening the install folder
 
 ### Safe degradation
 
@@ -59,9 +61,15 @@ The product should fail usefully:
 - channel delivery can be decoupled through Service Bus
 - desktop chat already exposes runtime metadata
 - workspace access is isolated behind MCP
+- the Windows desktop package can launch its bundled backend and MCP server without a separate console
+- desktop settings now expose backend reachability, enabled model counts, runtime paths, and recent logs
+- Hatching and Settings now provide a first-run Azure setup path for endpoint, deployments, Key Vault URL, and Microsoft login
+- installed builds can reapply persisted non-secret provider configuration without requiring users to edit local environment files
 
 ## Current gaps
 
 - richer loop detection is still limited
 - advanced observability remains light
 - some reliability patterns are documented more clearly than they are productized
+- installed-build validation still needs a clean-machine pass for the NSIS installer and bundled backend resources
+- Key Vault, Entra app registration, and Azure RBAC prerequisites still need clear release notes because the app cannot create those cloud resources automatically

@@ -1,7 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "AzulClaw",
-  "version": "0.1.0",
+  "mainBinaryName": "AzulClaw",
+  "version": "0.2.0",
   "identifier": "com.azulclaw.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -26,8 +27,20 @@
     }
   },
   "bundle": {
-    "active": false,
-    "targets": "all",
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "resources": {
+      "../resources/backend": "backend"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "startMenuFolder": "AzulClaw",
+        "installerHooks": "nsis/desktop-shortcut.nsh"
+      }
+    },
     "icon": [
       "icons/icon.ico"
     ]

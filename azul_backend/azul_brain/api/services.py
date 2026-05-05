@@ -13,12 +13,30 @@ from .hatching_store import (
     HatchingProfile,
     HatchingStore,
     _AZUL_STATE_DIR,
+    MemorySettings,
+    default_memory_db_path,
+    is_vector_memory_enabled,
+    load_memory_settings,
+    reset_memory_settings,
     resolve_memory_db_path,
+    save_memory_settings,
 )
 
 LOGGER = logging.getLogger(__name__)
 
 WIPE_CONFIRMATION_PHRASE = "RESET_ALL_LOCAL_DATA"
+
+
+def _parse_bool_setting(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    raise ValueError("vector_memory_enabled must be a boolean.")
 
 
 def get_workspace_root() -> Path:
@@ -173,6 +191,92 @@ def load_hatching_profile() -> dict:
     return data
 
 
+def load_memory_runtime_settings() -> dict:
+    """Returns effective user-editable memory settings."""
+    settings = load_memory_settings()
+    configured_path = settings.memory_db_path.strip()
+    return {
+        "memory_db_path": resolve_memory_db_path(),
+        "memory_db_path_override": configured_path,
+        "default_memory_db_path": default_memory_db_path(),
+        "vector_memory_enabled": is_vector_memory_enabled(),
+    }
+
+
+def save_memory_runtime_settings(payload: dict) -> dict:
+    """Validates and persists user-editable memory settings."""
+    raw_path = str(payload.get("memory_db_path_override", payload.get("memory_db_path", ""))).strip()
+    if raw_path:
+        db_path = Path(raw_path).expanduser()
+        if db_path.exists() and db_path.is_dir():
+            raise ValueError("memory_db_path must be a file path, not a directory.")
+        if not db_path.name:
+            raise ValueError("memory_db_path must include a file name.")
+
+    vector_enabled = _parse_bool_setting(
+        payload.get("vector_memory_enabled", load_memory_settings().vector_memory_enabled)
+    )
+    save_memory_settings(
+        MemorySettings(
+            memory_db_path=raw_path,
+            vector_memory_enabled=vector_enabled,
+        )
+    )
+    return load_memory_runtime_settings()
+
+
+def sync_runtime_models_from_azure_profile(runtime_manager, profile: dict) -> None:
+    """Keeps persisted runtime model deployments aligned with Azure Settings."""
+    if runtime_manager is None or not hasattr(runtime_manager, "load_settings"):
+        return
+    if not hasattr(runtime_manager, "save_settings"):
+        return
+
+    skill_configs = profile.get("skill_configs", {})
+    if not isinstance(skill_configs, dict):
+        return
+    azure_config = skill_configs.get("Azure", {})
+    if not isinstance(azure_config, dict):
+        return
+
+    deployment = str(azure_config.get("deployment", "")).strip()
+    has_fast_deployment = "fastDeployment" in azure_config
+    fast_deployment = str(azure_config.get("fastDeployment", "")).strip()
+    if not deployment and not fast_deployment:
+        if not has_fast_deployment:
+            return
+
+    settings = runtime_manager.load_settings()
+    updates: list[dict[str, str]] = []
+    for model in settings.models:
+        next_deployment: str | None = None
+        if model.id == "slow" and deployment:
+            next_deployment = deployment
+        elif model.id == "fast" and has_fast_deployment:
+            next_deployment = fast_deployment
+
+        if next_deployment is not None and model.deployment != next_deployment:
+            updates.append({"id": model.id, "deployment": next_deployment})
+
+    if updates:
+        runtime_manager.save_settings({"models": updates})
+
+
+def sync_runtime_models_from_saved_hatching_profile(runtime_manager) -> None:
+    """Applies persisted Hatching Azure deployments to runtime settings."""
+    sync_runtime_models_from_azure_profile(runtime_manager, load_hatching_profile())
+
+
+def invalidate_runtime_model_caches(runtime_manager) -> None:
+    """Drops model clients/probes that may hold stale Azure endpoint or auth state."""
+    if runtime_manager is None:
+        return
+    for attribute in ("agent_cache", "probe_cache", "cooldowns", "last_errors"):
+        cache = getattr(runtime_manager, attribute, None)
+        if hasattr(cache, "clear"):
+            cache.clear()
+
+
 def _delete_sqlite_bundle(db_file: Path) -> None:
     """Removes the main DB file and common SQLite sidecar files in the same folder."""
     if not db_file.name:
@@ -220,6 +324,7 @@ def wipe_local_user_data(confirmation: str) -> dict:
     if not removed_azul:
         _delete_sqlite_bundle(db_file)
 
+    reset_memory_settings()
     fresh = HatchingProfile()
     store.save(fresh)
     try:

@@ -6,17 +6,36 @@ import adultMascot from "../../../../img/azulclaw.png";
 import babyMascot from "../../../../img/hatching_azulclaw.png";
 
 import { Tooltip } from "../../components/Tooltip";
-import { saveHatching } from "../../lib/api";
-import type { HatchingProfile } from "../../lib/contracts";
+import {
+  connectAzure,
+  discoverAzureDeployments,
+  discoverAzureKeyVaults,
+  discoverAzureKeyVaultSecrets,
+  discoverAzureResources,
+  discoverAzureSubscriptions,
+  hydrateAzureKeyVaultSecrets,
+  saveHatching,
+} from "../../lib/api";
+import { AZURE_ARM_SCOPE, loginWithMicrosoft, loginWithMicrosoftForAzure, loginWithMicrosoftForKeyVault } from "../../lib/azure-auth";
+import type {
+  AzureDeploymentOption,
+  AzureKeyVaultOption,
+  AzureKeyVaultSecretOption,
+  AzureOpenAIResourceOption,
+  AzureSubscriptionOption,
+  HatchingProfile,
+} from "../../lib/contracts";
 import { defaultHatchingProfile } from "../../lib/mock-data";
 
 interface HatchingShellProps {
   profile?: HatchingProfile;
   onboardingRequired?: boolean;
+  forceWizard?: boolean;
+  initialStep?: number;
   onProfileSaved?: (profile: HatchingProfile) => void;
 }
 
-type StepType = "text" | "textarea" | "skills" | "superpowers" | "path";
+type StepType = "text" | "textarea" | "azure" | "skills" | "superpowers" | "path";
 type NavDir = "forward" | "back";
 type SkillFieldType = "text" | "password" | "url";
 
@@ -46,10 +65,33 @@ interface SkillDefinition {
 
 interface WizardState {
   answers: string[];
+  azureConfig: AzureConfig;
   configuredSkills: string[];
   skillConfigs: Record<string, Record<string, string>>;
   workspaceRoot: string;
   confirmSensitiveActions: boolean;
+}
+
+interface AzureConfig {
+  tenantId: string;
+  clientId: string;
+  accountKind: "work" | "personal";
+  mode: "guided" | "manual";
+  endpoint: string;
+  deployment: string;
+  fastDeployment: string;
+  embeddingDeployment: string;
+  connected: boolean;
+  lastConnectedAt: string;
+  subscriptionId: string;
+  resourceGroup: string;
+  accountName: string;
+  keyVaultName: string;
+  keyVaultResourceGroup: string;
+  keyVaultUrl: string;
+  microsoftAppIdSecretName: string;
+  microsoftAppPasswordSecretName: string;
+  microsoftAppTenantIdSecretName: string;
 }
 
 const wizardQuestions: WizardQuestion[] = [
@@ -57,9 +99,10 @@ const wizardQuestions: WizardQuestion[] = [
   { id: "ROLE", title: "What do you want it to be for you?", helper: "Answer freely. There is no wrong answer.", placeholder: "I want you to be my technical assistant for organising tasks, code and decisions.", type: "textarea", emoji: "Role" },
   { id: "MISSION", title: "What should its main mission be?", helper: "This defines where it should focus when working with you.", placeholder: "Help me move forward with focus, context and order.", type: "textarea", emoji: "Mission" },
   { id: "CHARACTER", title: "How do you want it to talk and act?", helper: "Describe its tone, style and how much autonomy you want to give it.", placeholder: "Direct, clear, technical and proactive, but confirm sensitive actions.", type: "textarea", emoji: "Tone" },
+  { id: "AZURE", title: "Connect your Azure", helper: "Sign in with Microsoft so AzulClaw can use your Azure resources without local API keys.", placeholder: "", type: "azure", emoji: "Azure" },
   { id: "CAPABILITIES", title: "Which integrations do you want to activate?", helper: "Connect external tools like email or messaging. Click an integration to configure it — it activates once you complete the setup.", placeholder: "", type: "skills", emoji: "Skills" },
   { id: "SUPERPOWERS", title: "Give it superpowers", helper: "", placeholder: "", type: "superpowers", emoji: "Power" },
-  { id: "WORKSPACE", title: "Which folder will be its workspace?", helper: "Pick a folder: file tools use it as the sandbox, and persistent memory (SQLite) is stored in a .azul subfolder inside it unless you override AZUL_MEMORY_DB_PATH in .env.local.", placeholder: "~/Documents/dev/AzulWorkspace", type: "path", emoji: "Desk" },
+  { id: "WORKSPACE", title: "Which folder will be its workspace?", helper: "Pick a folder: file tools use it as the sandbox, and persistent memory (SQLite) is stored in a .azul subfolder inside it. You can change the memory path later from Settings.", placeholder: "~/Documents/dev/AzulWorkspace", type: "path", emoji: "Desk" },
 ];
 
 const SKILL_CATALOG: SkillDefinition[] = [
@@ -117,9 +160,59 @@ function buildTextAnswers(profile: HatchingProfile) {
   return [profile.name, profile.role, profile.mission, [profile.tone, profile.style, profile.autonomy].filter(Boolean).join(", ")];
 }
 
+function buildAzureConfig(profile: HatchingProfile): AzureConfig {
+  const saved = profile.skill_configs?.Azure ?? {};
+  return {
+    tenantId: saved.tenantId ?? "",
+    clientId: saved.clientId ?? "",
+    accountKind: saved.accountKind === "personal" ? "personal" : "work",
+    mode: saved.mode === "manual" ? "manual" : "guided",
+    endpoint: saved.endpoint ?? "",
+    deployment: saved.deployment ?? "gpt-4o",
+    fastDeployment: saved.fastDeployment ?? "gpt-4o-mini",
+    embeddingDeployment: saved.embeddingDeployment ?? "text-embedding-3-large",
+    connected: saved.connected === "true",
+    lastConnectedAt: saved.lastConnectedAt ?? "",
+    subscriptionId: saved.subscriptionId ?? "",
+    resourceGroup: saved.resourceGroup ?? "",
+    accountName: saved.accountName ?? "",
+    keyVaultName: saved.keyVaultName ?? "",
+    keyVaultResourceGroup: saved.keyVaultResourceGroup ?? "",
+    keyVaultUrl: saved.keyVaultUrl ?? saved.keyVaultUri ?? "",
+    microsoftAppIdSecretName: saved.microsoftAppIdSecretName ?? "",
+    microsoftAppPasswordSecretName: saved.microsoftAppPasswordSecretName ?? "",
+    microsoftAppTenantIdSecretName: saved.microsoftAppTenantIdSecretName ?? "",
+  };
+}
+
+function serializeAzureConfig(config: AzureConfig): Record<string, string> {
+  return {
+    tenantId: config.tenantId.trim(),
+    clientId: config.clientId.trim(),
+    accountKind: config.accountKind,
+    mode: config.mode,
+    endpoint: config.endpoint.trim(),
+    deployment: config.deployment.trim(),
+    fastDeployment: config.fastDeployment.trim(),
+    embeddingDeployment: config.embeddingDeployment.trim(),
+    connected: config.connected ? "true" : "false",
+    lastConnectedAt: config.lastConnectedAt,
+    subscriptionId: config.subscriptionId.trim(),
+    resourceGroup: config.resourceGroup.trim(),
+    accountName: config.accountName.trim(),
+    keyVaultName: config.keyVaultName.trim(),
+    keyVaultResourceGroup: config.keyVaultResourceGroup.trim(),
+    keyVaultUrl: config.keyVaultUrl.trim().replace(/\/$/, ""),
+    microsoftAppIdSecretName: config.microsoftAppIdSecretName.trim(),
+    microsoftAppPasswordSecretName: config.microsoftAppPasswordSecretName.trim(),
+    microsoftAppTenantIdSecretName: config.microsoftAppTenantIdSecretName.trim(),
+  };
+}
+
 function buildWizardState(profile: HatchingProfile, onboardingRequired: boolean): WizardState {
   return {
     answers: buildTextAnswers(profile),
+    azureConfig: buildAzureConfig(profile),
     configuredSkills: onboardingRequired ? [] : profile.skills.filter((skill) => SKILL_IDS.has(skill)),
     skillConfigs: onboardingRequired ? {} : profile.skill_configs,
     workspaceRoot: profile.workspace_root,
@@ -154,6 +247,10 @@ function deriveAutonomy(value: string, fallback: string) {
 
 function buildProfileFromWizard(base: HatchingProfile, state: WizardState): HatchingProfile {
   const [name, role, mission, temper] = state.answers;
+  const nextSkillConfigs = {
+    ...state.skillConfigs,
+    Azure: serializeAzureConfig(state.azureConfig),
+  };
   return {
     ...base,
     name: name.trim() || base.name,
@@ -166,7 +263,7 @@ function buildProfileFromWizard(base: HatchingProfile, state: WizardState): Hatc
     workspace_root: state.workspaceRoot.trim() || base.workspace_root,
     confirm_sensitive_actions: state.confirmSensitiveActions,
     skills: state.configuredSkills,
-    skill_configs: state.skillConfigs,
+    skill_configs: nextSkillConfigs,
   };
 }
 
@@ -174,21 +271,67 @@ function getStepEmoji(label: string) {
   return label;
 }
 
+function chooseDeploymentByCapability(
+  deployments: AzureDeploymentOption[],
+  capability: "main" | "fast" | "embedding",
+): string {
+  const exact = deployments.find((item) => item.capabilities.includes(capability));
+  if (exact) return exact.name;
+  if (capability === "embedding") {
+    return deployments.find((item) => item.model_name.toLowerCase().includes("embedding"))?.name ?? "";
+  }
+  if (capability === "fast") {
+    return deployments.find((item) => item.model_name.toLowerCase().includes("mini"))?.name ?? deployments[0]?.name ?? "";
+  }
+  return deployments.find((item) => !item.model_name.toLowerCase().includes("embedding"))?.name ?? deployments[0]?.name ?? "";
+}
+
+function chooseSecretName(
+  secrets: AzureKeyVaultSecretOption[],
+  currentValue: string,
+  envKey: string,
+): string {
+  const enabled = secrets.filter((item) => item.enabled);
+  if (currentValue && enabled.some((item) => item.name === currentValue)) {
+    return currentValue;
+  }
+  const hyphenName = envKey.replace(/_/g, "-");
+  return (
+    enabled.find((item) => item.name === envKey)?.name ??
+    enabled.find((item) => item.name === hyphenName)?.name ??
+    ""
+  );
+}
+
 export function HatchingShell({
   profile: incomingProfile,
   onboardingRequired = false,
+  forceWizard = false,
+  initialStep = 0,
   onProfileSaved,
 }: HatchingShellProps) {
   const initial = incomingProfile ?? defaultHatchingProfile;
   const initialState = buildWizardState(initial, onboardingRequired);
+  const initialCurrentStep = Math.min(Math.max(initialStep, 0), wizardQuestions.length);
 
   const [profile, setProfile] = useState<HatchingProfile>(initial);
   const [answers, setAnswers] = useState<string[]>(initialState.answers);
+  const [azureConfig, setAzureConfig] = useState<AzureConfig>(initialState.azureConfig);
+  const [azureManagementToken, setAzureManagementToken] = useState("");
+  const [azureKeyVaultToken, setAzureKeyVaultToken] = useState("");
+  const [azureBusy, setAzureBusy] = useState(false);
+  const [azureDiscoveryBusy, setAzureDiscoveryBusy] = useState(false);
+  const [azureError, setAzureError] = useState("");
+  const [azureSubscriptions, setAzureSubscriptions] = useState<AzureSubscriptionOption[]>([]);
+  const [azureResources, setAzureResources] = useState<AzureOpenAIResourceOption[]>([]);
+  const [azureKeyVaults, setAzureKeyVaults] = useState<AzureKeyVaultOption[]>([]);
+  const [azureKeyVaultSecrets, setAzureKeyVaultSecrets] = useState<AzureKeyVaultSecretOption[]>([]);
+  const [azureDeployments, setAzureDeployments] = useState<AzureDeploymentOption[]>([]);
   const [configuredSkills, setConfiguredSkills] = useState<string[]>(initialState.configuredSkills);
   const [skillConfigs, setSkillConfigs] = useState<Record<string, Record<string, string>>>(initialState.skillConfigs);
   const [workspaceRoot, setWorkspaceRoot] = useState(initialState.workspaceRoot);
   const [confirmSensitiveActions, setConfirmSensitiveActions] = useState(initialState.confirmSensitiveActions);
-  const [currentStep, setCurrentStep] = useState(0);
+  const [currentStep, setCurrentStep] = useState(initialCurrentStep);
   const [isSaving, setIsSaving] = useState(false);
   const [isPreparing, setIsPreparing] = useState(false);
   const [isAllSet, setIsAllSet] = useState(false);
@@ -199,21 +342,82 @@ export function HatchingShell({
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null);
   const [skillDraft, setSkillDraft] = useState<Record<string, string>>({});
   const [skillModalError, setSkillModalError] = useState("");
+  const [showAzureSkipWarning, setShowAzureSkipWarning] = useState(false);
+
+  async function ensureAzureKeyVaultToken(): Promise<string> {
+    if (azureKeyVaultToken) {
+      return azureKeyVaultToken;
+    }
+    const login = await loginWithMicrosoftForKeyVault({
+      tenantId: azureConfig.tenantId,
+      clientId: azureConfig.clientId,
+    });
+    setAzureKeyVaultToken(login.accessToken);
+    return login.accessToken;
+  }
+
+  useEffect(() => {
+    setCurrentStep(Math.min(Math.max(initialStep, 0), wizardQuestions.length));
+  }, [initialStep]);
 
   useEffect(() => {
     if (!incomingProfile) return;
     const nextState = buildWizardState(incomingProfile, onboardingRequired);
     setProfile(incomingProfile);
     setAnswers(nextState.answers);
+    setAzureConfig(nextState.azureConfig);
+    setAzureManagementToken("");
+    setAzureKeyVaultToken("");
+    setAzureSubscriptions([]);
+    setAzureResources([]);
+    setAzureKeyVaults([]);
+    setAzureKeyVaultSecrets([]);
+    setAzureDeployments([]);
+    setAzureError("");
     setConfiguredSkills(nextState.configuredSkills);
     setSkillConfigs(nextState.skillConfigs);
     setWorkspaceRoot(nextState.workspaceRoot);
     setConfirmSensitiveActions(nextState.confirmSensitiveActions);
   }, [incomingProfile, onboardingRequired]);
 
+  useEffect(() => {
+    if (!azureManagementToken || !azureConfig.subscriptionId || azureConfig.mode !== "guided") {
+      return;
+    }
+    void handleLoadAzureResources(azureConfig.subscriptionId);
+  }, [azureManagementToken, azureConfig.subscriptionId, azureConfig.mode]);
+
+  useEffect(() => {
+    if (
+      !azureManagementToken ||
+      azureConfig.mode !== "guided" ||
+      !azureConfig.subscriptionId ||
+      !azureConfig.resourceGroup ||
+      !azureConfig.accountName
+    ) {
+      return;
+    }
+    const resource = azureResources.find(
+      (item) =>
+        item.subscription_id === azureConfig.subscriptionId &&
+        item.resource_group === azureConfig.resourceGroup &&
+        item.name === azureConfig.accountName,
+    );
+    if (resource) {
+      void handleLoadAzureDeployments(resource);
+    }
+  }, [
+    azureManagementToken,
+    azureConfig.accountName,
+    azureConfig.mode,
+    azureConfig.resourceGroup,
+    azureConfig.subscriptionId,
+    azureResources,
+  ]);
+
   const draftProfile = useMemo(
-    () => buildProfileFromWizard(profile, { answers, configuredSkills, skillConfigs, workspaceRoot, confirmSensitiveActions }),
-    [answers, configuredSkills, confirmSensitiveActions, profile, skillConfigs, workspaceRoot],
+    () => buildProfileFromWizard(profile, { answers, azureConfig, configuredSkills, skillConfigs, workspaceRoot, confirmSensitiveActions }),
+    [answers, azureConfig, configuredSkills, confirmSensitiveActions, profile, skillConfigs, workspaceRoot],
   );
 
   const isFinalStep = currentStep === wizardQuestions.length;
@@ -221,6 +425,17 @@ export function HatchingShell({
   const stepNumber = Math.min(currentStep + 1, wizardQuestions.length);
   const mascotImage = onboardingRequired && !draftProfile.is_hatched ? babyMascot : adultMascot;
   const activeSkill = activeSkillId ? SKILL_CATALOG.find((skill) => skill.id === activeSkillId) ?? null : null;
+  const azureDiscoveryReady = Boolean(azureManagementToken && azureSubscriptions.length > 0);
+  const hasAzureDeployments = azureDeployments.length > 0;
+  const azureTenantOptions = useMemo(() => {
+    const tenants = new Map<string, string>();
+    azureSubscriptions.forEach((subscription) => {
+      const tenantId = subscription.tenant_id?.trim();
+      if (!tenantId) return;
+      tenants.set(tenantId, tenantId);
+    });
+    return Array.from(tenants, ([id, label]) => ({ id, label }));
+  }, [azureSubscriptions]);
 
   function navigate(toStep: number, dir: NavDir) {
     if (isExiting || activeSkill) return;
@@ -233,6 +448,15 @@ export function HatchingShell({
   }
 
   function handleNext() {
+    if (activeQuestion?.type === "azure" && !azureConfig.connected) {
+      setShowAzureSkipWarning(true);
+      return;
+    }
+    navigate(Math.min(currentStep + 1, wizardQuestions.length), "forward");
+  }
+
+  function confirmAzureSkip() {
+    setShowAzureSkipWarning(false);
     navigate(Math.min(currentStep + 1, wizardQuestions.length), "forward");
   }
 
@@ -255,6 +479,286 @@ export function HatchingShell({
 
   function handleAnswerChange(value: string) {
     setAnswers((current) => current.map((item, index) => (index === currentStep ? value : item)));
+  }
+
+  function handleAzureConfigChange(field: keyof AzureConfig, value: string) {
+    setAzureConfig((current) => ({
+      ...current,
+      [field]: value,
+      connected: field === "lastConnectedAt" ? current.connected : false,
+      lastConnectedAt: field === "lastConnectedAt" ? value : "",
+    }));
+    if (field === "subscriptionId") {
+      setAzureResources([]);
+      setAzureKeyVaults([]);
+      setAzureKeyVaultSecrets([]);
+      setAzureDeployments([]);
+    }
+    if (field === "accountName" || field === "resourceGroup") {
+      setAzureDeployments([]);
+    }
+    setAzureError("");
+  }
+
+  function handleAzureSubscriptionChange(subscriptionId: string) {
+    const selected = azureSubscriptions.find((item) => item.id === subscriptionId);
+    setAzureConfig((current) => ({
+      ...current,
+      subscriptionId,
+      tenantId: selected?.tenant_id?.trim() || current.tenantId,
+      connected: false,
+      lastConnectedAt: "",
+    }));
+    setAzureResources([]);
+    setAzureKeyVaults([]);
+    setAzureKeyVaultSecrets([]);
+    setAzureDeployments([]);
+    setAzureError("");
+  }
+
+  async function handleStartAzureDiscovery() {
+    setAzureError("");
+    if (!azureConfig.clientId.trim()) {
+      setAzureError("Enter the Azure app registration client ID.");
+      return;
+    }
+    if (azureConfig.accountKind === "personal" && !azureConfig.tenantId.trim()) {
+      setAzureError("Paste the Directory (tenant) ID for the Azure directory that contains your subscription.");
+      return;
+    }
+    setAzureDiscoveryBusy(true);
+    try {
+      const login = await loginWithMicrosoft(
+        {
+          tenantId: azureConfig.accountKind === "personal" ? azureConfig.tenantId : azureConfig.tenantId || "organizations",
+          clientId: azureConfig.clientId,
+        },
+        {
+          scope: AZURE_ARM_SCOPE,
+        },
+      );
+      const subscriptions = await discoverAzureSubscriptions(login.accessToken);
+      setAzureManagementToken(login.accessToken);
+      setAzureKeyVaultToken("");
+      setAzureSubscriptions(subscriptions);
+      const nextTenantId = subscriptions[0]?.tenant_id?.trim() || azureConfig.tenantId;
+      const nextSubscriptionId =
+        azureConfig.subscriptionId && subscriptions.some((item) => item.id === azureConfig.subscriptionId)
+          ? azureConfig.subscriptionId
+          : subscriptions[0]?.id ?? "";
+      setAzureConfig((current) => ({
+        ...current,
+        tenantId: nextTenantId,
+        subscriptionId: nextSubscriptionId,
+        connected: false,
+        lastConnectedAt: "",
+      }));
+    } catch (error) {
+      setAzureError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAzureDiscoveryBusy(false);
+    }
+  }
+
+  async function handleLoadAzureResources(subscriptionId: string) {
+    const safeSubscriptionId = subscriptionId.trim();
+    if (!azureManagementToken || !safeSubscriptionId) {
+      return;
+    }
+    setAzureDiscoveryBusy(true);
+    setAzureError("");
+    try {
+      const [resources, keyVaults] = await Promise.all([
+        discoverAzureResources(azureManagementToken, safeSubscriptionId),
+        discoverAzureKeyVaults(azureManagementToken, safeSubscriptionId),
+      ]);
+      setAzureResources(resources);
+      setAzureKeyVaults(keyVaults);
+      const selected =
+        resources.find((item) => item.name === azureConfig.accountName && item.resource_group === azureConfig.resourceGroup) ??
+        resources[0];
+      const selectedVault =
+        keyVaults.find((item) => item.name === azureConfig.keyVaultName && item.resource_group === azureConfig.keyVaultResourceGroup) ??
+        keyVaults[0];
+      let secrets: AzureKeyVaultSecretOption[] = [];
+      if (selectedVault) {
+        try {
+          const keyVaultToken = await ensureAzureKeyVaultToken();
+          secrets = await discoverAzureKeyVaultSecrets(
+            keyVaultToken,
+            selectedVault.vault_uri,
+          );
+        } catch (error) {
+          setAzureError(
+            `Key Vault selected, but secret discovery failed. Verify Azure ARM permissions, Key Vault access policy/RBAC, and network/API access, or type the secret names manually. ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+      setAzureKeyVaultSecrets(secrets);
+      setAzureConfig((current) => ({
+        ...current,
+        subscriptionId: safeSubscriptionId,
+        endpoint: selected?.endpoint ?? current.endpoint,
+        resourceGroup: selected?.resource_group ?? current.resourceGroup,
+        accountName: selected?.name ?? current.accountName,
+        keyVaultName: selectedVault?.name ?? "",
+        keyVaultResourceGroup: selectedVault?.resource_group ?? "",
+        keyVaultUrl: selectedVault?.vault_uri ?? "",
+        microsoftAppIdSecretName: chooseSecretName(secrets, current.microsoftAppIdSecretName, "MicrosoftAppId"),
+        microsoftAppPasswordSecretName: chooseSecretName(secrets, current.microsoftAppPasswordSecretName, "MicrosoftAppPassword"),
+        microsoftAppTenantIdSecretName: chooseSecretName(secrets, current.microsoftAppTenantIdSecretName, "MicrosoftAppTenantId"),
+        connected: false,
+        lastConnectedAt: "",
+      }));
+      setAzureDeployments([]);
+    } catch (error) {
+      setAzureError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAzureDiscoveryBusy(false);
+    }
+  }
+
+  async function handleLoadAzureKeyVaultSecrets(vault: AzureKeyVaultOption) {
+    if (!azureManagementToken) {
+      return;
+    }
+    setAzureDiscoveryBusy(true);
+    setAzureError("");
+    try {
+      const keyVaultToken = await ensureAzureKeyVaultToken();
+      const secrets = await discoverAzureKeyVaultSecrets(
+        keyVaultToken,
+        vault.vault_uri,
+      );
+      setAzureKeyVaultSecrets(secrets);
+      setAzureConfig((current) => ({
+        ...current,
+        keyVaultName: vault.name,
+        keyVaultResourceGroup: vault.resource_group,
+        keyVaultUrl: vault.vault_uri,
+        microsoftAppIdSecretName: chooseSecretName(secrets, current.microsoftAppIdSecretName, "MicrosoftAppId"),
+        microsoftAppPasswordSecretName: chooseSecretName(secrets, current.microsoftAppPasswordSecretName, "MicrosoftAppPassword"),
+        microsoftAppTenantIdSecretName: chooseSecretName(secrets, current.microsoftAppTenantIdSecretName, "MicrosoftAppTenantId"),
+        connected: false,
+        lastConnectedAt: "",
+      }));
+    } catch (error) {
+      setAzureKeyVaultSecrets([]);
+      setAzureConfig((current) => ({
+        ...current,
+        keyVaultName: vault.name,
+        keyVaultResourceGroup: vault.resource_group,
+        keyVaultUrl: vault.vault_uri,
+        connected: false,
+        lastConnectedAt: "",
+      }));
+      setAzureError(
+        `Key Vault selected, but secret discovery failed. Verify Azure ARM permissions, Key Vault access policy/RBAC, and network/API access, or type the secret names manually. ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      setAzureDiscoveryBusy(false);
+    }
+  }
+
+  async function handleLoadAzureDeployments(resource: AzureOpenAIResourceOption) {
+    if (!azureManagementToken) {
+      return;
+    }
+    setAzureDiscoveryBusy(true);
+    setAzureError("");
+    try {
+      const deployments = await discoverAzureDeployments(
+        azureManagementToken,
+        resource.subscription_id,
+        resource.resource_group,
+        resource.name,
+      );
+      setAzureDeployments(deployments);
+      setAzureConfig((current) => ({
+        ...current,
+        subscriptionId: resource.subscription_id,
+        resourceGroup: resource.resource_group,
+        accountName: resource.name,
+        endpoint: resource.endpoint,
+        deployment: deployments.some((item) => item.name === current.deployment)
+          ? current.deployment
+          : chooseDeploymentByCapability(deployments, "main"),
+        fastDeployment: deployments.some((item) => item.name === current.fastDeployment)
+          ? current.fastDeployment
+          : chooseDeploymentByCapability(deployments, "fast"),
+        embeddingDeployment: deployments.some((item) => item.name === current.embeddingDeployment)
+          ? current.embeddingDeployment
+          : chooseDeploymentByCapability(deployments, "embedding"),
+        connected: false,
+        lastConnectedAt: "",
+      }));
+    } catch (error) {
+      setAzureError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAzureDiscoveryBusy(false);
+    }
+  }
+
+  async function handleConnectAzure() {
+    setAzureError("");
+    const endpoint = azureConfig.endpoint.trim().replace(/\/$/, "");
+    if (!azureConfig.clientId.trim()) {
+      setAzureError("Enter the Azure app registration client ID.");
+      return;
+    }
+    if (!endpoint) {
+      setAzureError("Select an Azure OpenAI resource or enter the endpoint manually.");
+      return;
+    }
+    if (!azureConfig.deployment.trim()) {
+      setAzureError("Choose the main deployment.");
+      return;
+    }
+
+    setAzureBusy(true);
+    try {
+      const login = await loginWithMicrosoftForAzure({
+        tenantId: azureConfig.tenantId,
+        clientId: azureConfig.clientId,
+      });
+      if (azureConfig.keyVaultUrl.trim()) {
+        const keyVaultLogin = await loginWithMicrosoftForKeyVault({
+          tenantId: azureConfig.tenantId,
+          clientId: azureConfig.clientId,
+        });
+        await hydrateAzureKeyVaultSecrets({
+          key_vault_url: azureConfig.keyVaultUrl.trim().replace(/\/$/, ""),
+          access_token: keyVaultLogin.accessToken,
+          expires_on: keyVaultLogin.expiresOn,
+          microsoft_app_id_secret_name: azureConfig.microsoftAppIdSecretName.trim(),
+          microsoft_app_password_secret_name: azureConfig.microsoftAppPasswordSecretName.trim(),
+          microsoft_app_tenant_id_secret_name: azureConfig.microsoftAppTenantIdSecretName.trim(),
+        });
+      }
+      const connectedAt = new Date().toISOString();
+      await connectAzure({
+        tenant_id: azureConfig.tenantId.trim(),
+        client_id: azureConfig.clientId.trim(),
+        endpoint,
+        deployment: azureConfig.deployment.trim(),
+        fast_deployment: azureConfig.fastDeployment.trim(),
+        embedding_deployment: azureConfig.embeddingDeployment.trim(),
+        key_vault_url: azureConfig.keyVaultUrl.trim().replace(/\/$/, ""),
+        access_token: login.accessToken,
+        expires_on: login.expiresOn,
+        scope: login.scope,
+      });
+      setAzureConfig((current) => ({
+        ...current,
+        endpoint,
+        connected: true,
+        lastConnectedAt: connectedAt,
+      }));
+    } catch (error) {
+      setAzureError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAzureBusy(false);
+    }
   }
 
   function openSkillConfig(skillId: string) {
@@ -328,6 +832,7 @@ export function HatchingShell({
       const nextState = buildWizardState(saved, false);
       setProfile(saved);
       setAnswers(nextState.answers);
+      setAzureConfig(nextState.azureConfig);
       setConfiguredSkills(nextState.configuredSkills);
       setSkillConfigs(nextState.skillConfigs);
       setWorkspaceRoot(nextState.workspaceRoot);
@@ -355,8 +860,9 @@ export function HatchingShell({
     : navDir === "forward" ? "hw-enter-fwd" : "hw-enter-back";
 
   const shellClass = onboardingRequired ? "hw-fullscreen" : "hw-contained card";
-  const nextButtonLabel = (activeQuestion?.type === "skills" && configuredSkills.length === 0) || activeQuestion?.type === "superpowers" ? "Skip for now ->" : "Next ->";
-  const nextHint = (activeQuestion?.type === "skills" && configuredSkills.length === 0) || activeQuestion?.type === "superpowers" ? "Press Enter to skip for now" : "Press Enter to continue";
+  const canSkipStep = (activeQuestion?.type === "skills" && configuredSkills.length === 0) || activeQuestion?.type === "superpowers" || (activeQuestion?.type === "azure" && !azureConfig.connected);
+  const nextButtonLabel = canSkipStep ? "Skip for now ->" : "Next ->";
+  const nextHint = canSkipStep ? "Press Enter to skip for now" : "Press Enter to continue";
 
   if (isPreparing) {
     return (
@@ -385,7 +891,7 @@ export function HatchingShell({
     );
   }
 
-  if (!onboardingRequired) {
+  if (!onboardingRequired && !forceWizard) {
     return (
       <section className="single-panel-layout">
         <div className="card panel-stack">
@@ -516,6 +1022,407 @@ export function HatchingShell({
                 <textarea id={`hw-answer-${currentStep}`} className="hw-textarea" value={answers[currentStep] ?? ""} placeholder={activeQuestion.placeholder} onChange={(event) => handleAnswerChange(event.target.value)} autoFocus />
               )}
 
+              {activeQuestion.type === "azure" && (
+                <div className="hw-azure-wrap">
+                  <div className="hw-azure-panel">
+                    <div className="hw-azure-hero">
+                      <div className="hw-azure-orb" aria-hidden="true">Azure</div>
+                      <div>
+                        <div className="hw-azure-status-row">
+                          <span className={`hw-azure-status${azureConfig.connected ? " hw-azure-status-connected" : ""}`}>
+                            {azureConfig.connected ? "Connected" : "Action required"}
+                          </span>
+                          {azureConfig.lastConnectedAt && (
+                            <span className="hw-inline-note">Last login {new Date(azureConfig.lastConnectedAt).toLocaleString()}</span>
+                          )}
+                        </div>
+                        <p className="hw-azure-lead">Start with Microsoft sign-in using the account that owns your Azure subscription. Work, school and personal Microsoft accounts are supported.</p>
+                      </div>
+                    </div>
+
+                    <div className="hw-azure-mode-row">
+                      <button
+                        type="button"
+                        className={`hw-azure-mode-btn${azureConfig.mode === "guided" ? " hw-azure-mode-btn-active" : ""}`}
+                        onClick={() => setAzureConfig((current) => ({ ...current, mode: "guided" }))}
+                      >
+                        Discover automatically
+                      </button>
+                      <button
+                        type="button"
+                        className={`hw-azure-mode-btn${azureConfig.mode === "manual" ? " hw-azure-mode-btn-active" : ""}`}
+                        onClick={() => setAzureConfig((current) => ({ ...current, mode: "manual" }))}
+                      >
+                        Enter manually
+                      </button>
+                    </div>
+
+                    <div className="hw-azure-step hw-azure-step-active">
+                      <div className="hw-azure-step-index">1</div>
+                      <div className="hw-azure-step-body">
+                        <div className="hw-azure-step-head">
+                          <div>
+                            <p className="hw-field-label">Microsoft login</p>
+                            <h3>Connect to your Azure tenant</h3>
+                          </div>
+                        </div>
+                        {azureConfig.mode === "guided" ? (
+                          <>
+                            <div className="hw-azure-choice-row">
+                              <button
+                                type="button"
+                                className={`hw-azure-choice${azureConfig.accountKind === "work" ? " hw-azure-choice-active" : ""}`}
+                                onClick={() => setAzureConfig((current) => ({ ...current, accountKind: "work", tenantId: "", connected: false, lastConnectedAt: "" }))}
+                              >
+                                <span>Work or school account</span>
+                                <small>Use Microsoft sign-in and discover tenants automatically.</small>
+                              </button>
+                              <button
+                                type="button"
+                                className={`hw-azure-choice${azureConfig.accountKind === "personal" ? " hw-azure-choice-active" : ""}`}
+                                onClick={() => setAzureConfig((current) => ({ ...current, accountKind: "personal", connected: false, lastConnectedAt: "" }))}
+                              >
+                                <span>Personal Outlook Azure</span>
+                                <small>Use this when your subscription is paid with @outlook.com/.es.</small>
+                              </button>
+                            </div>
+                            <label className="hw-modal-field">
+                              <span className="hw-field-label">App registration client ID</span>
+                              <input
+                                className="hw-modal-input"
+                                type="text"
+                                value={azureConfig.clientId}
+                                placeholder="00000000-0000-0000-0000-000000000000"
+                                onChange={(event) => handleAzureConfigChange("clientId", event.target.value)}
+                                disabled={azureDiscoveryBusy}
+                              />
+                            </label>
+                            {azureConfig.accountKind === "personal" && (
+                              <label className="hw-modal-field">
+                                <span className="hw-field-label">Directory (tenant) ID</span>
+                                <input
+                                  className="hw-modal-input"
+                                  type="text"
+                                  value={azureConfig.tenantId}
+                                  placeholder="00000000-0000-0000-0000-000000000000"
+                                  onChange={(event) => handleAzureConfigChange("tenantId", event.target.value)}
+                                  disabled={azureDiscoveryBusy}
+                                />
+                                <span className="hw-inline-note">Find it in Azure Portal under Microsoft Entra ID or in the App Registration overview.</span>
+                              </label>
+                            )}
+                            <div className="hw-azure-actions">
+                              <button type="button" className="hw-btn-primary" onClick={() => void handleStartAzureDiscovery()} disabled={azureDiscoveryBusy}>
+                                {azureDiscoveryBusy ? "Opening Microsoft..." : azureDiscoveryReady ? "Refresh discovery" : "Sign in with Microsoft"}
+                              </button>
+                              <span className="hw-inline-note">
+                                {azureConfig.accountKind === "personal"
+                                  ? "Personal Microsoft accounts must authenticate through the Azure tenant that owns the subscription."
+                                  : "Automatic discovery starts with login. Tenant, subscription, resource and deployments unlock after Microsoft confirms your account."}
+                              </span>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="hw-azure-grid">
+                            <label className="hw-modal-field">
+                              <span className="hw-field-label">Application client ID</span>
+                              <input className="hw-modal-input" type="text" value={azureConfig.clientId} placeholder="00000000-0000-0000-0000-000000000000" onChange={(event) => handleAzureConfigChange("clientId", event.target.value)} />
+                            </label>
+                            <label className="hw-modal-field">
+                              <span className="hw-field-label">Tenant scope</span>
+                              <input className="hw-modal-input" type="text" value={azureConfig.tenantId} placeholder="common" onChange={(event) => handleAzureConfigChange("tenantId", event.target.value)} />
+                            </label>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {azureConfig.mode === "guided" ? (
+                      <div className="hw-azure-flow">
+                        {!azureDiscoveryReady && (
+                          <div className="hw-azure-locked">
+                            <span className="hw-azure-lock-dot" aria-hidden="true" />
+                            <p>Sign in first to unlock tenant, subscription and resource discovery.</p>
+                          </div>
+                        )}
+
+                        {azureDiscoveryReady && (
+                        <div className="hw-azure-step hw-azure-step-active">
+                          <div className="hw-azure-step-index">2</div>
+                          <div className="hw-azure-step-body">
+                            <div className="hw-azure-step-head">
+                              <div>
+                                <p className="hw-field-label">Resource</p>
+                                <h3>Choose where AzulClaw will run</h3>
+                              </div>
+                            </div>
+                        <div className="hw-azure-grid">
+                          <label className="hw-modal-field">
+                            <span className="hw-field-label">Tenant</span>
+                            <select className="hw-modal-input" value={azureConfig.tenantId} onChange={(event) => handleAzureConfigChange("tenantId", event.target.value)} disabled={azureTenantOptions.length === 0 || azureDiscoveryBusy}>
+                              {azureTenantOptions.length === 0 && <option value="">Tenant from Microsoft login</option>}
+                              {azureTenantOptions.map((tenant) => (
+                                <option key={tenant.id} value={tenant.id}>{tenant.label}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="hw-modal-field">
+                            <span className="hw-field-label">Subscription</span>
+                            <select className="hw-modal-input" value={azureConfig.subscriptionId} onChange={(event) => handleAzureSubscriptionChange(event.target.value)} disabled={azureSubscriptions.length === 0 || azureDiscoveryBusy}>
+                              <option value="">Select subscription</option>
+                              {azureSubscriptions.map((item) => (
+                                <option key={item.id} value={item.id}>{item.display_name}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="hw-modal-field hw-azure-wide">
+                            <span className="hw-field-label">Azure OpenAI resource</span>
+                            <select
+                              className="hw-modal-input"
+                              value={azureConfig.accountName ? `${azureConfig.resourceGroup}/${azureConfig.accountName}` : ""}
+                              onChange={(event) => {
+                                const selected = azureResources.find((item) => `${item.resource_group}/${item.name}` === event.target.value);
+                                      if (selected) {
+                                        setAzureConfig((current) => ({
+                                          ...current,
+                                          endpoint: selected.endpoint,
+                                          resourceGroup: selected.resource_group,
+                                          accountName: selected.name,
+                                          connected: false,
+                                          lastConnectedAt: "",
+                                        }));
+                                        void handleLoadAzureDeployments(selected);
+                                      }
+                                    }}
+                              disabled={azureResources.length === 0 || azureDiscoveryBusy}
+                            >
+                              <option value="">Select resource</option>
+                              {azureResources.map((item) => (
+                                <option key={item.id} value={`${item.resource_group}/${item.name}`}>{item.name} · {item.location}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="hw-modal-field hw-azure-wide">
+                            <span className="hw-field-label">Endpoint</span>
+                            <input className="hw-modal-input" type="url" value={azureConfig.endpoint} placeholder="Auto-filled from the selected resource" readOnly />
+                          </label>
+                          <label className="hw-modal-field hw-azure-wide">
+                            <span className="hw-field-label">Key Vault</span>
+                            <select
+                              className="hw-modal-input"
+                              value={azureConfig.keyVaultName ? `${azureConfig.keyVaultResourceGroup}/${azureConfig.keyVaultName}` : ""}
+                              onChange={(event) => {
+                                const selected = azureKeyVaults.find((item) => `${item.resource_group}/${item.name}` === event.target.value);
+                                if (selected) {
+                                  void handleLoadAzureKeyVaultSecrets(selected);
+                                }
+                              }}
+                              disabled={azureKeyVaults.length === 0 || azureDiscoveryBusy}
+                            >
+                              <option value="">Select Key Vault</option>
+                              {azureKeyVaults.map((item) => (
+                                <option key={item.id} value={`${item.resource_group}/${item.name}`}>{item.name} · {item.location}</option>
+                              ))}
+                            </select>
+                            <span className="hw-inline-note">Runtime settings and secrets will be loaded from this vault.</span>
+                          </label>
+                          <label className="hw-modal-field hw-azure-wide">
+                            <span className="hw-field-label">Key Vault URL</span>
+                            <input className="hw-modal-input" type="url" value={azureConfig.keyVaultUrl} placeholder="Auto-filled from the selected vault" readOnly />
+                          </label>
+                          <label className="hw-modal-field">
+                            <span className="hw-field-label">MicrosoftAppId secret</span>
+                            {azureKeyVaultSecrets.length > 0 ? (
+                              <select className="hw-modal-input" value={azureConfig.microsoftAppIdSecretName} onChange={(event) => handleAzureConfigChange("microsoftAppIdSecretName", event.target.value)} disabled={azureDiscoveryBusy}>
+                                <option value="">Default: MicrosoftAppId</option>
+                                {azureKeyVaultSecrets.map((item) => (
+                                  <option key={item.id || item.name} value={item.name}>{item.name}{item.enabled ? "" : " (disabled)"}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input className="hw-modal-input" type="text" value={azureConfig.microsoftAppIdSecretName} placeholder="MicrosoftAppId" onChange={(event) => handleAzureConfigChange("microsoftAppIdSecretName", event.target.value)} disabled={azureDiscoveryBusy} />
+                            )}
+                          </label>
+                          <label className="hw-modal-field">
+                            <span className="hw-field-label">MicrosoftAppPassword secret</span>
+                            {azureKeyVaultSecrets.length > 0 ? (
+                              <select className="hw-modal-input" value={azureConfig.microsoftAppPasswordSecretName} onChange={(event) => handleAzureConfigChange("microsoftAppPasswordSecretName", event.target.value)} disabled={azureDiscoveryBusy}>
+                                <option value="">Default: MicrosoftAppPassword</option>
+                                {azureKeyVaultSecrets.map((item) => (
+                                  <option key={item.id || item.name} value={item.name}>{item.name}{item.enabled ? "" : " (disabled)"}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input className="hw-modal-input" type="text" value={azureConfig.microsoftAppPasswordSecretName} placeholder="MicrosoftAppPassword" onChange={(event) => handleAzureConfigChange("microsoftAppPasswordSecretName", event.target.value)} disabled={azureDiscoveryBusy} />
+                            )}
+                          </label>
+                          <label className="hw-modal-field">
+                            <span className="hw-field-label">MicrosoftAppTenantId secret</span>
+                            {azureKeyVaultSecrets.length > 0 ? (
+                              <select className="hw-modal-input" value={azureConfig.microsoftAppTenantIdSecretName} onChange={(event) => handleAzureConfigChange("microsoftAppTenantIdSecretName", event.target.value)} disabled={azureDiscoveryBusy}>
+                                <option value="">Default: MicrosoftAppTenantId</option>
+                                {azureKeyVaultSecrets.map((item) => (
+                                  <option key={item.id || item.name} value={item.name}>{item.name}{item.enabled ? "" : " (disabled)"}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input className="hw-modal-input" type="text" value={azureConfig.microsoftAppTenantIdSecretName} placeholder="MicrosoftAppTenantId" onChange={(event) => handleAzureConfigChange("microsoftAppTenantIdSecretName", event.target.value)} disabled={azureDiscoveryBusy} />
+                            )}
+                          </label>
+                        </div>
+                          </div>
+                        </div>
+                        )}
+                        {azureConfig.endpoint && (
+                        <div className="hw-azure-step hw-azure-step-active">
+                          <div className="hw-azure-step-index">3</div>
+                          <div className="hw-azure-step-body">
+                            <div className="hw-azure-step-head">
+                              <div>
+                                <p className="hw-field-label">Deployments</p>
+                                <h3>Confirm model routes</h3>
+                              </div>
+                            </div>
+                        <div className="hw-azure-grid">
+                          <label className="hw-modal-field">
+                            <span className="hw-field-label">Main deployment</span>
+                            {hasAzureDeployments ? (
+                              <select className="hw-modal-input" value={azureConfig.deployment} onChange={(event) => handleAzureConfigChange("deployment", event.target.value)} disabled={azureDiscoveryBusy}>
+                                <option value="">Select deployment</option>
+                                {azureDeployments.filter((item) => item.capabilities.includes("chat")).map((item) => (
+                                  <option key={item.id} value={item.name}>{item.name} · {item.model_name}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input className="hw-modal-input" type="text" value={azureConfig.deployment} placeholder="gpt-4o" onChange={(event) => handleAzureConfigChange("deployment", event.target.value)} disabled={azureDiscoveryBusy} />
+                            )}
+                          </label>
+                          <label className="hw-modal-field">
+                            <span className="hw-field-label">Fast deployment</span>
+                            {hasAzureDeployments ? (
+                              <select className="hw-modal-input" value={azureConfig.fastDeployment} onChange={(event) => handleAzureConfigChange("fastDeployment", event.target.value)} disabled={azureDiscoveryBusy}>
+                                <option value="">Select deployment</option>
+                                {azureDeployments.filter((item) => item.capabilities.includes("chat")).map((item) => (
+                                  <option key={item.id} value={item.name}>{item.name} · {item.model_name}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input className="hw-modal-input" type="text" value={azureConfig.fastDeployment} placeholder="gpt-4o-mini" onChange={(event) => handleAzureConfigChange("fastDeployment", event.target.value)} disabled={azureDiscoveryBusy} />
+                            )}
+                          </label>
+                          <label className="hw-modal-field hw-azure-wide">
+                            <span className="hw-field-label">Embedding deployment</span>
+                            {hasAzureDeployments ? (
+                              <select className="hw-modal-input" value={azureConfig.embeddingDeployment} onChange={(event) => handleAzureConfigChange("embeddingDeployment", event.target.value)} disabled={azureDiscoveryBusy}>
+                                <option value="">Select deployment</option>
+                                {azureDeployments.filter((item) => item.capabilities.includes("embedding")).map((item) => (
+                                  <option key={item.id} value={item.name}>{item.name} · {item.model_name}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input className="hw-modal-input" type="text" value={azureConfig.embeddingDeployment} placeholder="text-embedding-3-large" onChange={(event) => handleAzureConfigChange("embeddingDeployment", event.target.value)} disabled={azureDiscoveryBusy} />
+                            )}
+                          </label>
+                        </div>
+                            {!hasAzureDeployments && !azureDiscoveryBusy && (
+                              <div className="hw-azure-empty">
+                                <p>No deployments were returned for this resource. You can type the deployment names manually, or refresh if you just created them in Azure.</p>
+                                <button
+                                  type="button"
+                                  className="hw-btn-ghost"
+                                  onClick={() => {
+                                    const selected = azureResources.find(
+                                      (item) =>
+                                        item.subscription_id === azureConfig.subscriptionId &&
+                                        item.resource_group === azureConfig.resourceGroup &&
+                                        item.name === azureConfig.accountName,
+                                    );
+                                    if (selected) void handleLoadAzureDeployments(selected);
+                                  }}
+                                >
+                                  Refresh deployments
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="hw-azure-grid">
+                        <label className="hw-modal-field hw-azure-wide">
+                          <span className="hw-field-label">Azure OpenAI endpoint</span>
+                          <input className="hw-modal-input" type="url" value={azureConfig.endpoint} placeholder="https://your-resource.openai.azure.com" onChange={(event) => handleAzureConfigChange("endpoint", event.target.value)} />
+                        </label>
+                        <label className="hw-modal-field hw-azure-wide">
+                          <span className="hw-field-label">Key Vault URL</span>
+                          <input className="hw-modal-input" type="url" value={azureConfig.keyVaultUrl} placeholder="https://your-vault.vault.azure.net" onChange={(event) => handleAzureConfigChange("keyVaultUrl", event.target.value)} />
+                        </label>
+                        <label className="hw-modal-field">
+                          <span className="hw-field-label">MicrosoftAppId secret</span>
+                          <input className="hw-modal-input" type="text" value={azureConfig.microsoftAppIdSecretName} placeholder="MicrosoftAppId" onChange={(event) => handleAzureConfigChange("microsoftAppIdSecretName", event.target.value)} />
+                        </label>
+                        <label className="hw-modal-field">
+                          <span className="hw-field-label">MicrosoftAppPassword secret</span>
+                          <input className="hw-modal-input" type="text" value={azureConfig.microsoftAppPasswordSecretName} placeholder="MicrosoftAppPassword" onChange={(event) => handleAzureConfigChange("microsoftAppPasswordSecretName", event.target.value)} />
+                        </label>
+                        <label className="hw-modal-field">
+                          <span className="hw-field-label">MicrosoftAppTenantId secret</span>
+                          <input className="hw-modal-input" type="text" value={azureConfig.microsoftAppTenantIdSecretName} placeholder="MicrosoftAppTenantId" onChange={(event) => handleAzureConfigChange("microsoftAppTenantIdSecretName", event.target.value)} />
+                        </label>
+                        <label className="hw-modal-field">
+                          <span className="hw-field-label">Main deployment</span>
+                          <input className="hw-modal-input" type="text" value={azureConfig.deployment} placeholder="gpt-4o" onChange={(event) => handleAzureConfigChange("deployment", event.target.value)} />
+                        </label>
+                        <label className="hw-modal-field">
+                          <span className="hw-field-label">Fast deployment</span>
+                          <input className="hw-modal-input" type="text" value={azureConfig.fastDeployment} placeholder="gpt-4o-mini" onChange={(event) => handleAzureConfigChange("fastDeployment", event.target.value)} />
+                        </label>
+                        <label className="hw-modal-field hw-azure-wide">
+                          <span className="hw-field-label">Embedding deployment</span>
+                          <input className="hw-modal-input" type="text" value={azureConfig.embeddingDeployment} placeholder="text-embedding-3-large" onChange={(event) => handleAzureConfigChange("embeddingDeployment", event.target.value)} />
+                        </label>
+                      </div>
+                    )}
+
+                    {azureError && <p className="hw-inline-note hw-inline-note-warning">{azureError}</p>}
+
+                    {(azureConfig.mode === "manual" || azureConfig.endpoint) && (
+                      <div className={`hw-azure-final${azureConfig.connected ? " hw-azure-final-connected" : ""}`}>
+                        {azureConfig.connected ? (
+                          <>
+                            <div className="hw-azure-success-mark" aria-hidden="true">
+                              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                                <path d="M4 9.5L7.2 12.7L14 5.8" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </div>
+                            <div>
+                              <p className="hw-field-label">Azure connected</p>
+                              <p className="hw-inline-note">
+                                Azure OpenAI access is authorized. {azureConfig.keyVaultName ? `Key Vault: ${azureConfig.keyVaultName}. ` : ""}{azureConfig.lastConnectedAt ? `Last authorized ${new Date(azureConfig.lastConnectedAt).toLocaleString()}.` : ""}
+                              </p>
+                            </div>
+                            <button type="button" className="hw-btn-ghost" onClick={() => void handleConnectAzure()} disabled={azureBusy}>
+                              {azureBusy ? "Authorizing..." : "Reauthorize"}
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <div>
+                              <p className="hw-field-label">Finish</p>
+                              <p className="hw-inline-note">AzulClaw will request an Azure OpenAI token, apply the selected Key Vault URL locally, and keep the token in memory.</p>
+                            </div>
+                            <button type="button" className="hw-btn-primary" onClick={() => void handleConnectAzure()} disabled={azureBusy}>
+                              {azureBusy ? "Authorizing..." : "Authorize Azure OpenAI access"}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {activeQuestion.type === "skills" && (
                 <div className="hw-skills-wrap">
                   <div className="hw-skills-copy">
@@ -641,6 +1548,8 @@ export function HatchingShell({
               <div className="hw-summary-item"><span className="hw-summary-label">Name</span><span className="hw-summary-value">{draftProfile.name}</span></div>
 
               <div className="hw-summary-item"><span className="hw-summary-label">Style</span><span className="hw-summary-value">{draftProfile.tone} · {draftProfile.style}</span></div>
+              <div className="hw-summary-item"><span className="hw-summary-label">Azure</span><span className="hw-summary-value">{azureConfig.connected ? "Microsoft login connected" : "Not connected"}</span></div>
+              <div className="hw-summary-item"><span className="hw-summary-label">Key Vault</span><span className="hw-summary-value hw-mono">{azureConfig.keyVaultUrl || "Not selected"}</span></div>
               <div className="hw-summary-item"><span className="hw-summary-label">Workspace</span><span className="hw-summary-value hw-mono">{draftProfile.workspace_root}</span></div>
               <div className="hw-summary-item" style={{ gridColumn: "1 / -1" }}><span className="hw-summary-label">Memory database</span><span className="hw-summary-value hw-mono">{previewMemoryDbPath(draftProfile.workspace_root) || "(set workspace folder)"}</span></div>
               <div className="hw-summary-item" style={{ gridColumn: "1 / -1" }}><span className="hw-summary-label">Capabilities</span><span className="hw-summary-value">{draftProfile.skills.length > 0 ? draftProfile.skills.join(", ") : "None for now"}</span></div>
@@ -664,6 +1573,27 @@ export function HatchingShell({
           <button type="button" className="hw-btn-primary" onClick={handleNext} disabled={Boolean(activeSkill)}>{nextButtonLabel}</button>
         )}
       </footer>
+
+      {showAzureSkipWarning && (
+        <div className="hw-modal-backdrop" onClick={() => setShowAzureSkipWarning(false)}>
+          <div className="hw-modal-card hw-skip-card" onClick={(event) => event.stopPropagation()}>
+            <div className="hw-skip-icon" aria-hidden="true">!</div>
+            <div className="hw-modal-head">
+              <div>
+                <p className="hw-field-label">Azure is required</p>
+                <h3 className="hw-modal-title">AzulClaw will not work without Azure</h3>
+              </div>
+            </div>
+            <p className="hw-inline-note">
+              If you skip this step, the assistant cannot call Azure OpenAI or use your Azure resources. You can continue only to finish the profile and connect Azure later from settings.
+            </p>
+            <div className="hw-modal-actions">
+              <button type="button" className="hw-btn-ghost" onClick={() => setShowAzureSkipWarning(false)}>Go back and connect</button>
+              <button type="button" className="hw-btn-primary" onClick={confirmAzureSkip}>Skip anyway</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {activeSkill && (
         <div className="hw-modal-backdrop" onClick={closeSkillConfig}>

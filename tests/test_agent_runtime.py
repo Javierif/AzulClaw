@@ -87,6 +87,25 @@ class RuntimeSerializationTests(unittest.TestCase):
     def test_empty_task_instructions_keep_base_prompt(self) -> None:
         self.assertEqual(_compose_instructions(""), AZULCLAW_SYSTEM_PROMPT)
 
+    def test_serialize_runtime_text_strips_complete_thinking_blocks(self) -> None:
+        result = ResultLike("<think>internal notes</think>Visible answer")
+
+        self.assertEqual(_serialize_runtime_text(result), "Visible answer")
+
+    def test_serialize_runtime_text_strips_dangling_closing_think_tag(self) -> None:
+        result = ResultLike("internal greeting?</think>Hola. ¿En qué puedo ayudarte?")
+
+        self.assertEqual(_serialize_runtime_text(result), "Hola. ¿En qué puedo ayudarte?")
+
+
+    def test_serialize_runtime_text_preserves_literal_closing_think_tag_context(self) -> None:
+        result = ResultLike("Use </think> in documentation when describing the tag.")
+
+        self.assertEqual(
+            _serialize_runtime_text(result),
+            "Use </think> in documentation when describing the tag.",
+        )
+
 
 class RuntimeStreamingTests(unittest.IsolatedAsyncioTestCase):
     async def test_streaming_result_initializes_value(self) -> None:

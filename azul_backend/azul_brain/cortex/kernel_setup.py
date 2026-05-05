@@ -12,6 +12,11 @@ from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.openai import OpenAIChatClient
 from pydantic import BaseModel
 
+from ..azure_auth import (
+    get_azure_openai_token_provider,
+    get_default_azure_credential,
+    resolve_azure_openai_auth_mode,
+)
 from ..foundry_url import (
     is_foundry_endpoint,
     normalize_azure_openai_endpoint,
@@ -154,14 +159,31 @@ class _StreamChunk:
 class FoundryAgent:
     """Direct aiohttp agent for AI Foundry /v1/ endpoints."""
 
-    def __init__(self, url: str, api_key: str, model: str, instructions: str = ""):
+    def __init__(
+        self,
+        url: str,
+        api_key: str | None,
+        model: str,
+        instructions: str = "",
+        token_provider=None,
+    ):
         self._url = url
-        self._headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
+        self._api_key = (api_key or "").strip()
+        self._token_provider = token_provider
         self._model = model
         self._instructions = instructions.strip()
+
+    def _headers(self) -> dict[str, str]:
+        if self._token_provider is not None:
+            token = self._token_provider()
+            return {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            }
+        return {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
 
     def _messages_payload(self, messages: list[Message]) -> list[dict]:
         result = []
@@ -188,7 +210,7 @@ class FoundryAgent:
             async with session.post(
                 self._url,
                 json=payload,
-                headers=self._headers,
+                headers=self._headers(),
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
                 if resp.status != 200:
@@ -219,7 +241,7 @@ class FoundryAgent:
         resp = await session.post(
             self._url,
             json=payload,
-            headers=self._headers,
+            headers=self._headers(),
             timeout=aiohttp.ClientTimeout(total=60),
         )
         if resp.status != 200:
@@ -327,8 +349,12 @@ async def create_agent(
         )
         api_key = (
             os.environ.get("AZURE_OPENAI_FAST_API_KEY", "").strip()
-            or _require_env("AZURE_OPENAI_API_KEY")
+            or os.environ.get("AZURE_OPENAI_API_KEY", "").strip()
         )
+        auth_mode = resolve_azure_openai_auth_mode(api_key)
+        token_provider = get_azure_openai_token_provider() if auth_mode == "entra" else None
+        if auth_mode != "entra" and not api_key:
+            api_key = _require_env("AZURE_OPENAI_API_KEY")
         url = _foundry_chat_url(endpoint)
         LOGGER.debug("[Kernel] Fast lane using FoundryAgent: %s (%s)", url, deployment_name)
         return FoundryAgent(
@@ -336,6 +362,7 @@ async def create_agent(
             api_key=api_key,
             model=deployment_name,
             instructions=effective_instructions,
+            token_provider=token_provider,
         )
 
     endpoint = (
@@ -344,26 +371,35 @@ async def create_agent(
     )
     api_key = (
         os.environ.get("AZURE_OPENAI_SLOW_API_KEY", "").strip()
-        or _require_env("AZURE_OPENAI_API_KEY")
+        or os.environ.get("AZURE_OPENAI_API_KEY", "").strip()
     )
+    auth_mode = resolve_azure_openai_auth_mode(api_key)
     api_version = (
         os.environ.get("AZURE_OPENAI_SLOW_API_VERSION", "").strip()
         or os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21").strip()
     )
 
     if is_foundry_endpoint(endpoint):
-        chat_client = OpenAIChatClient(
-            model_id=deployment_name,
-            api_key=api_key,
-            base_url=normalize_foundry_base_url(endpoint),
-        )
+        kwargs = {
+            "model_id": deployment_name,
+            "base_url": normalize_foundry_base_url(endpoint),
+        }
+        if auth_mode == "entra":
+            kwargs["api_key"] = get_azure_openai_token_provider()
+        else:
+            kwargs["api_key"] = api_key or _require_env("AZURE_OPENAI_API_KEY")
+        chat_client = OpenAIChatClient(**kwargs)
     else:
-        chat_client = AzureOpenAIChatClient(
-            deployment_name=deployment_name,
-            api_key=api_key,
-            endpoint=normalize_azure_openai_endpoint(endpoint),
-            api_version=api_version,
-        )
+        kwargs = {
+            "deployment_name": deployment_name,
+            "endpoint": normalize_azure_openai_endpoint(endpoint),
+            "api_version": api_version,
+        }
+        if auth_mode == "entra":
+            kwargs["credential"] = get_default_azure_credential()
+        else:
+            kwargs["api_key"] = api_key or _require_env("AZURE_OPENAI_API_KEY")
+        chat_client = AzureOpenAIChatClient(**kwargs)
 
     agent = Agent(
         client=chat_client,
