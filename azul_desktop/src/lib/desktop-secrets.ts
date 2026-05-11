@@ -20,3 +20,8 @@ export async function clearAzureOpenAiApiKey(): Promise<void> {
   if (!isTauri()) return;
   await invoke("clear_azure_openai_api_key");
 }
+
+export async function isAzureOpenAiApiKeyStorageAvailable(): Promise<boolean> {
+  if (!isTauri()) return false;
+  return await invoke<boolean>("is_azure_openai_api_key_storage_available");
+}

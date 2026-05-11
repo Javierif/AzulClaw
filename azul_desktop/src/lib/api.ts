@@ -33,6 +33,7 @@ import {
 import {
   clearAzureOpenAiApiKey,
   hasAzureOpenAiApiKey,
+  isAzureOpenAiApiKeyStorageAvailable,
   storeAzureOpenAiApiKey,
 } from "./desktop-secrets";
 import { isTauri } from "@tauri-apps/api/core";
@@ -80,18 +81,30 @@ async function prepareProfileForPersistence(profile: HatchingProfile): Promise<H
   const apiKey = (azure.apiKey ?? "").trim();
   const apiKeyStored = (azure.apiKeyStored ?? "").trim() === "true";
   const nextAzure: Record<string, string> = { ...azure };
+  const desktop = isTauri();
+  const secureStorageAvailable = desktop && (await isAzureOpenAiApiKeyStorageAvailable());
 
   if (authMethod === "api_key") {
+    if (!secureStorageAvailable) {
+      delete nextAzure.apiKeyStored;
+      return {
+        ...profile,
+        skill_configs: {
+          ...profile.skill_configs,
+          Azure: nextAzure,
+        },
+      };
+    }
     if (apiKey) {
       await storeAzureOpenAiApiKey(apiKey);
       nextAzure.apiKeyStored = "true";
     } else if (apiKeyStored) {
       nextAzure.apiKeyStored = "true";
-    } else if (isTauri()) {
+    } else {
       await clearAzureOpenAiApiKey();
       delete nextAzure.apiKeyStored;
     }
-  } else if (isTauri()) {
+  } else if (secureStorageAvailable) {
     await clearAzureOpenAiApiKey();
     delete nextAzure.apiKeyStored;
   } else {
@@ -347,20 +360,31 @@ export async function loadHatching(): Promise<HatchingProfile> {
   try {
     const profile = await fetchJson<HatchingProfile>("/api/desktop/hatching");
     const azure = profile.skill_configs?.Azure;
-    if (azure && isTauri()) {
+    if (azure && isTauri() && (await isAzureOpenAiApiKeyStorageAvailable())) {
       const legacyApiKey = (azure.apiKey ?? "").trim();
       if (legacyApiKey) {
-        await storeAzureOpenAiApiKey(legacyApiKey);
         const migrated = cloneProfileWithSafeAzureConfig({
           ...profile,
           skill_configs: {
             ...profile.skill_configs,
             Azure: {
               ...azure,
+              authMethod: "api_key",
               apiKeyStored: "true",
+              keyVaultUrl: "",
+              keyVaultName: "",
+              keyVaultResourceGroup: "",
+              microsoftAppIdSecretName: "",
+              microsoftAppPasswordSecretName: "",
+              microsoftAppTenantIdSecretName: "",
             },
           },
         });
+        try {
+          await storeAzureOpenAiApiKey(legacyApiKey);
+        } catch {
+          return cloneProfileWithSafeAzureConfig(profile);
+        }
         try {
           await fetchJson<HatchingProfile>("/api/desktop/hatching", {
             method: "PUT",
@@ -402,14 +426,15 @@ export async function loadHatching(): Promise<HatchingProfile> {
 }
 
 export async function saveHatching(profile: HatchingProfile): Promise<HatchingProfile> {
-  const safeProfile = await prepareProfileForPersistence(profile);
   try {
+    const safeProfile = await prepareProfileForPersistence(profile);
     return await fetchJson<HatchingProfile>("/api/desktop/hatching", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(safeProfile),
     });
   } catch {
+    const safeProfile = cloneProfileWithSafeAzureConfig(profile);
     localStorage.setItem("azul_mock_profile", JSON.stringify(safeProfile));
     return safeProfile;
   }

@@ -225,12 +225,14 @@ fn dpapi_unprotect_bytes(ciphertext: &[u8]) -> Result<Vec<u8>, String> {
 
 #[cfg(not(target_os = "windows"))]
 fn dpapi_protect_bytes(plaintext: &[u8]) -> Result<Vec<u8>, String> {
-    Ok(plaintext.to_vec())
+    let _ = plaintext;
+    Err("secure Azure OpenAI API key persistence is only implemented on Windows desktop builds".to_string())
 }
 
 #[cfg(not(target_os = "windows"))]
 fn dpapi_unprotect_bytes(ciphertext: &[u8]) -> Result<Vec<u8>, String> {
-    Ok(ciphertext.to_vec())
+    let _ = ciphertext;
+    Err("secure Azure OpenAI API key persistence is only implemented on Windows desktop builds".to_string())
 }
 
 fn store_azure_openai_api_key_secret(app: &AppHandle, secret: &str) -> Result<(), String> {
@@ -289,6 +291,11 @@ fn has_azure_openai_api_key(app: AppHandle) -> Result<bool, String> {
 #[tauri::command]
 fn clear_azure_openai_api_key(app: AppHandle) -> Result<(), String> {
     clear_azure_openai_api_key_secret(&app)
+}
+
+#[tauri::command]
+fn is_azure_openai_api_key_storage_available() -> bool {
+    cfg!(target_os = "windows")
 }
 
 fn append_text_log(path: &Path, message: &str) {
@@ -476,7 +483,8 @@ fn main() {
             store_azure_openai_api_key,
             load_azure_openai_api_key,
             has_azure_openai_api_key,
-            clear_azure_openai_api_key
+            clear_azure_openai_api_key,
+            is_azure_openai_api_key_storage_available
         ])
         .run(tauri::generate_context!())
         .expect("error while running AzulClaw desktop");

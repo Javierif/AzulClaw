@@ -17,7 +17,11 @@ import {
   saveHatching,
 } from "../../lib/api";
 import { AZURE_ARM_SCOPE, loginWithMicrosoft, loginWithMicrosoftForAzure, loginWithMicrosoftForKeyVault } from "../../lib/azure-auth";
-import { clearAzureOpenAiApiKey, loadAzureOpenAiApiKey } from "../../lib/desktop-secrets";
+import {
+  clearAzureOpenAiApiKey,
+  isAzureOpenAiApiKeyStorageAvailable,
+  loadAzureOpenAiApiKey,
+} from "../../lib/desktop-secrets";
 import type {
   AzureDeploymentOption,
   AzureKeyVaultOption,
@@ -356,6 +360,7 @@ export function HatchingShell({
   const [showApiKeyModeWarning, setShowApiKeyModeWarning] = useState(false);
   const [showApiKeyConnectWarning, setShowApiKeyConnectWarning] = useState(false);
   const [editingStoredApiKey, setEditingStoredApiKey] = useState(false);
+  const [apiKeyStorageAvailable, setApiKeyStorageAvailable] = useState(false);
 
   async function ensureAzureKeyVaultToken(): Promise<string> {
     if (azureKeyVaultToken) {
@@ -372,6 +377,19 @@ export function HatchingShell({
   useEffect(() => {
     setCurrentStep(Math.min(Math.max(initialStep, 0), wizardQuestions.length));
   }, [initialStep]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const available = await isAzureOpenAiApiKeyStorageAvailable();
+      if (!cancelled) {
+        setApiKeyStorageAvailable(available);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!incomingProfile) return;
@@ -1233,12 +1251,17 @@ export function HatchingShell({
                                 type="button"
                                 className={`hw-azure-choice${azureConfig.authMethod === "api_key" ? " hw-azure-choice-active" : ""}`}
                                 onClick={handleSelectApiKeyMode}
+                                disabled={!apiKeyStorageAvailable}
                               >
                                 <span className="hw-azure-choice-title">
                                   <span>API key</span>
                                   <span className="hw-choice-badge hw-choice-badge-fallback">Fallback</span>
                                 </span>
-                                <small>Connect directly to Azure OpenAI with your endpoint, deployment names, and API key.</small>
+                                <small>
+                                  {apiKeyStorageAvailable
+                                    ? "Connect directly to Azure OpenAI with your endpoint, deployment names, and API key."
+                                    : "Available only where AzulClaw can store the key securely on the desktop."}
+                                </small>
                               </button>
                             </div>
                             <div className="hw-azure-grid">

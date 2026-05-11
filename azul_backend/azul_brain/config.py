@@ -217,7 +217,7 @@ def normalize_azure_openai_endpoint(raw_url: str) -> str:
     normalized_path = (parsed.path or "").rstrip("/").lower()
     if normalized_path not in ("", "/openai", "/openai/v1") or parsed.params or parsed.query or parsed.fragment:
         raise ValueError(
-            "Azure OpenAI endpoint must be the resource base URL or end with /openai/v1."
+            "Azure OpenAI endpoint must be the resource base URL or end with /openai or /openai/v1."
         )
     if parsed.port not in (None, 443):
         raise ValueError("Azure OpenAI endpoint must not include a custom port.")
