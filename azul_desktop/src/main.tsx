@@ -1,16 +1,13 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { isTauri } from "@tauri-apps/api/core";
 
 import { DesktopApp } from "./app/DesktopApp";
 import "./styles/global.css";
 
-function isTauriRuntime(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
-
 function AzureAuthCallbackBridge() {
   React.useEffect(() => {
-    if (!isTauriRuntime()) {
+    if (!isTauri()) {
       return;
     }
 

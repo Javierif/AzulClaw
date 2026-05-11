@@ -383,7 +383,7 @@ export async function loadHatching(): Promise<HatchingProfile> {
         try {
           await storeAzureOpenAiApiKey(legacyApiKey);
         } catch {
-          return cloneProfileWithSafeAzureConfig(profile);
+          return profile;
         }
         try {
           await fetchJson<HatchingProfile>("/api/desktop/hatching", {
@@ -426,8 +426,8 @@ export async function loadHatching(): Promise<HatchingProfile> {
 }
 
 export async function saveHatching(profile: HatchingProfile): Promise<HatchingProfile> {
+  const safeProfile = await prepareProfileForPersistence(profile);
   try {
-    const safeProfile = await prepareProfileForPersistence(profile);
     return await fetchJson<HatchingProfile>("/api/desktop/hatching", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },

@@ -447,8 +447,18 @@ fn start_backend(app: &tauri::App) -> Result<Option<Child>, String> {
     if let Some(hands_command) = &launch.hands_command {
         command.env("AZUL_HANDS_MCP_COMMAND", hands_command);
     }
-    if let Some(api_key) = load_azure_openai_api_key_secret(&app.handle())? {
-        command.env("AZURE_OPENAI_API_KEY", api_key);
+    match load_azure_openai_api_key_secret(&app.handle()) {
+        Ok(Some(api_key)) => {
+            command.env("AZURE_OPENAI_API_KEY", api_key);
+        }
+        Ok(None) => {}
+        Err(error) => {
+            append_text_log(
+                &launch.log_dir.join("desktop-backend.err.log"),
+                &format!("Azure OpenAI secure secret could not be loaded: {error}"),
+            );
+            let _ = clear_azure_openai_api_key_secret(&app.handle());
+        }
     }
 
     #[cfg(target_os = "windows")]

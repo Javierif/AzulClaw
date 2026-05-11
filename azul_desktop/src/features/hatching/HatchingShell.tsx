@@ -21,6 +21,7 @@ import {
   clearAzureOpenAiApiKey,
   isAzureOpenAiApiKeyStorageAvailable,
   loadAzureOpenAiApiKey,
+  storeAzureOpenAiApiKey,
 } from "../../lib/desktop-secrets";
 import type {
   AzureDeploymentOption,
@@ -356,6 +357,7 @@ export function HatchingShell({
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null);
   const [skillDraft, setSkillDraft] = useState<Record<string, string>>({});
   const [skillModalError, setSkillModalError] = useState("");
+  const [saveError, setSaveError] = useState("");
   const [showAzureSkipWarning, setShowAzureSkipWarning] = useState(false);
   const [showApiKeyModeWarning, setShowApiKeyModeWarning] = useState(false);
   const [showApiKeyConnectWarning, setShowApiKeyConnectWarning] = useState(false);
@@ -824,6 +826,7 @@ export function HatchingShell({
         }));
       } else {
         let apiKey = azureConfig.apiKey.trim();
+        const usedStoredApiKey = !apiKey && azureConfig.apiKeyStored && !editingStoredApiKey;
         if (!apiKey && azureConfig.apiKeyStored && !editingStoredApiKey) {
           apiKey = (await loadAzureOpenAiApiKey()) ?? "";
         }
@@ -842,6 +845,9 @@ export function HatchingShell({
           embedding_deployment: azureConfig.embeddingDeployment.trim(),
           api_key: apiKey,
         });
+        if (!usedStoredApiKey) {
+          await storeAzureOpenAiApiKey(apiKey);
+        }
         setAzureConfig((current) => ({
           ...current,
           apiKey: "",
@@ -931,6 +937,7 @@ export function HatchingShell({
 
   async function handleSave(markAsHatched: boolean) {
     setIsSaving(true);
+    setSaveError("");
     try {
       const saved = await saveHatching({ ...draftProfile, is_hatched: markAsHatched || profile.is_hatched });
       const nextState = buildWizardState(saved, false);
@@ -954,6 +961,8 @@ export function HatchingShell({
       }
 
       onProfileSaved?.(saved);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsSaving(false);
     }
@@ -1742,6 +1751,7 @@ export function HatchingShell({
       <footer className="hw-footer">
         <button type="button" className="hw-btn-ghost" onClick={handleBack} disabled={currentStep === 0 || Boolean(activeSkill)}>Back</button>
         <span className="hw-step-label">{isFinalStep ? "Summary" : `${stepNumber} / ${wizardQuestions.length}`}</span>
+        {saveError && <span className="hw-inline-note hw-inline-note-warning">{saveError}</span>}
 
         {isFinalStep ? (
           <div style={{ display: "flex", gap: "10px" }}>
