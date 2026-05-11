@@ -194,8 +194,10 @@ async def desktop_azure_connect_handler(req: web.Request) -> web.Response:
     """Receives a Microsoft token from the desktop UI and applies Azure settings."""
     payload = await req.json()
 
+    auth_mode = str(payload.get("auth_mode", "entra")).strip().lower() or "entra"
     access_token = str(payload.get("access_token", "")).strip()
     expires_on = int(payload.get("expires_on", 0) or 0)
+    api_key = str(payload.get("api_key", "")).strip()
     tenant_id = str(payload.get("tenant_id", "")).strip()
     client_id = str(payload.get("client_id", "")).strip()
     endpoint = str(payload.get("endpoint", "")).strip().rstrip("/")
@@ -205,10 +207,15 @@ async def desktop_azure_connect_handler(req: web.Request) -> web.Response:
     key_vault_url = str(payload.get("key_vault_url", "")).strip().rstrip("/")
     scope = str(payload.get("scope", AZURE_OPENAI_SCOPE)).strip() or AZURE_OPENAI_SCOPE
 
-    if not access_token:
-        return web.json_response({"error": "access_token is required"}, status=400)
-    if expires_on <= int(time.time()) + 60:
-        return web.json_response({"error": "access_token is expired"}, status=400)
+    if auth_mode not in {"entra", "api_key"}:
+        return web.json_response({"error": "auth_mode must be 'entra' or 'api_key'"}, status=400)
+    if auth_mode == "entra":
+        if not access_token:
+            return web.json_response({"error": "access_token is required"}, status=400)
+        if expires_on <= int(time.time()) + 60:
+            return web.json_response({"error": "access_token is expired"}, status=400)
+    elif not api_key:
+        return web.json_response({"error": "api_key is required"}, status=400)
     if not endpoint:
         return web.json_response({"error": "endpoint is required"}, status=400)
     try:
@@ -223,21 +230,28 @@ async def desktop_azure_connect_handler(req: web.Request) -> web.Response:
         except ValueError as error:
             return web.json_response({"error": str(error)}, status=400)
 
-    try:
-        set_frontend_azure_token(
-            access_token=access_token,
-            expires_on=expires_on,
-            scope=scope,
-            tenant_id=tenant_id,
-            client_id=client_id,
-        )
-    except ValueError as error:
-        return web.json_response({"error": str(error)}, status=400)
+    if auth_mode == "entra":
+        try:
+            set_frontend_azure_token(
+                access_token=access_token,
+                expires_on=expires_on,
+                scope=scope,
+                tenant_id=tenant_id,
+                client_id=client_id,
+            )
+        except ValueError as error:
+            return web.json_response({"error": str(error)}, status=400)
 
     os.environ["AZURE_OPENAI_ENDPOINT"] = endpoint
     os.environ["AZURE_OPENAI_DEPLOYMENT"] = deployment
     os.environ["AZURE_OPENAI_SLOW_DEPLOYMENT"] = deployment
-    if key_vault_url:
+    if auth_mode == "api_key":
+        os.environ["AZURE_OPENAI_API_KEY"] = api_key
+        os.environ["AZUL_AZURE_OPENAI_AUTH_MODE"] = "api_key"
+    else:
+        os.environ.pop("AZURE_OPENAI_API_KEY", None)
+        os.environ["AZUL_AZURE_OPENAI_AUTH_MODE"] = "entra"
+    if key_vault_url and auth_mode == "entra":
         os.environ["AZUL_KEY_VAULT_URL"] = key_vault_url
     else:
         os.environ.pop("AZUL_KEY_VAULT_URL", None)

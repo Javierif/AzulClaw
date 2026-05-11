@@ -207,15 +207,18 @@ def _sync_optional_profile_env(env_key: str, value: str) -> bool:
 
 
 def normalize_azure_openai_endpoint(raw_url: str) -> str:
-    """Accepts only HTTPS Azure OpenAI or Azure AI Services endpoints."""
+    """Accepts Azure OpenAI resource URLs, with or without ``/openai[/v1]``."""
     parsed = urlparse(raw_url.strip().rstrip("/"))
     host = (parsed.hostname or "").lower()
     if parsed.scheme != "https" or not host:
         raise ValueError("Azure OpenAI endpoint must be an HTTPS Azure endpoint.")
     if parsed.username or parsed.password:
         raise ValueError("Azure OpenAI endpoint must not contain credentials.")
-    if parsed.path not in ("", "/") or parsed.params or parsed.query or parsed.fragment:
-        raise ValueError("Azure OpenAI endpoint must be the resource base URL.")
+    normalized_path = (parsed.path or "").rstrip("/").lower()
+    if normalized_path not in ("", "/openai", "/openai/v1") or parsed.params or parsed.query or parsed.fragment:
+        raise ValueError(
+            "Azure OpenAI endpoint must be the resource base URL or end with /openai/v1."
+        )
     if parsed.port not in (None, 443):
         raise ValueError("Azure OpenAI endpoint must not include a custom port.")
     if not any(host.endswith(f".{suffix}") for suffix in AZURE_OPENAI_ENDPOINT_HOST_SUFFIXES):
@@ -262,7 +265,14 @@ def apply_hatching_azure_runtime_settings() -> None:
     ):
         loaded += 1
 
+    legacy_api_key = azure_config.get("apiKey", "").strip()
+    if legacy_api_key and _sync_required_profile_env("AZURE_OPENAI_API_KEY", legacy_api_key):
+        loaded += 1
+
     key_vault_url = azure_config.get("keyVaultUrl", "").strip().rstrip("/")
+    auth_method = azure_config.get("authMethod", "").strip().lower()
+    if auth_method == "api_key":
+        key_vault_url = ""
     if _sync_optional_profile_env(KEY_VAULT_URL_ENV, key_vault_url):
         loaded += 1
 
@@ -274,7 +284,10 @@ def apply_hatching_azure_runtime_settings() -> None:
     ):
         loaded += 1
 
-    if azure_config.get("connected", "").strip().lower() == "true":
+    api_key_stored = azure_config.get("apiKeyStored", "").strip().lower() == "true"
+    if auth_method == "api_key" and (api_key_stored or legacy_api_key or os.environ.get("AZURE_OPENAI_API_KEY", "").strip()):
+        auth_mode = "api_key"
+    elif azure_config.get("connected", "").strip().lower() == "true":
         auth_mode = "entra"
     else:
         auth_mode = ""

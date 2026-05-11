@@ -352,7 +352,7 @@ def _sanitize_skill_configs(raw_configs: object, fallback: dict[str, dict[str, s
         entries = {
             str(key).strip(): str(value).strip()
             for key, value in config.items()
-            if str(key).strip() and str(value).strip()
+            if str(key).strip() and str(value).strip() and str(key).strip() != "apiKey"
         }
         cleaned[skill_name] = entries
 

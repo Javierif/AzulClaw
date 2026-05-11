@@ -12,6 +12,7 @@ function azureConfigFromProfile(profile: HatchingProfile): Record<string, string
 export function profileCanRenewAzureLogin(profile: HatchingProfile): boolean {
   const config = azureConfigFromProfile(profile);
   return (
+    (config.authMethod?.trim() || "entra") === "entra" &&
     config.connected === "true" &&
     Boolean(config.clientId?.trim()) &&
     Boolean(config.endpoint?.trim()) &&

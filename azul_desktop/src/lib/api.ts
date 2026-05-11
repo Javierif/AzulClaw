@@ -30,6 +30,12 @@ import {
   scheduledJobs,
   workspaceEntries,
 } from "./mock-data";
+import {
+  clearAzureOpenAiApiKey,
+  hasAzureOpenAiApiKey,
+  storeAzureOpenAiApiKey,
+} from "./desktop-secrets";
+import { isTauri } from "@tauri-apps/api/core";
 
 const DEFAULT_API_BASE = import.meta.env.DEV ? "" : "http://localhost:3978";
 
@@ -43,6 +49,63 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`HTTP ${response.status}`);
   }
   return response.json() as Promise<T>;
+}
+
+function cloneProfileWithSafeAzureConfig(profile: HatchingProfile): HatchingProfile {
+  const azure = profile.skill_configs?.Azure;
+  if (!azure) return profile;
+
+  const safeAzure: Record<string, string> = { ...azure };
+  delete safeAzure.apiKey;
+  if (safeAzure.authMethod === "api_key") {
+    safeAzure.apiKeyStored = safeAzure.apiKeyStored === "true" ? "true" : "false";
+  } else {
+    delete safeAzure.apiKeyStored;
+  }
+
+  return {
+    ...profile,
+    skill_configs: {
+      ...profile.skill_configs,
+      Azure: safeAzure,
+    },
+  };
+}
+
+async function prepareProfileForPersistence(profile: HatchingProfile): Promise<HatchingProfile> {
+  const azure = profile.skill_configs?.Azure;
+  if (!azure) return profile;
+
+  const authMethod = (azure.authMethod ?? "").trim();
+  const apiKey = (azure.apiKey ?? "").trim();
+  const apiKeyStored = (azure.apiKeyStored ?? "").trim() === "true";
+  const nextAzure: Record<string, string> = { ...azure };
+
+  if (authMethod === "api_key") {
+    if (apiKey) {
+      await storeAzureOpenAiApiKey(apiKey);
+      nextAzure.apiKeyStored = "true";
+    } else if (apiKeyStored) {
+      nextAzure.apiKeyStored = "true";
+    } else if (isTauri()) {
+      await clearAzureOpenAiApiKey();
+      delete nextAzure.apiKeyStored;
+    }
+  } else if (isTauri()) {
+    await clearAzureOpenAiApiKey();
+    delete nextAzure.apiKeyStored;
+  } else {
+    delete nextAzure.apiKeyStored;
+  }
+
+  delete nextAzure.apiKey;
+  return {
+    ...profile,
+    skill_configs: {
+      ...profile.skill_configs,
+      Azure: nextAzure,
+    },
+  };
 }
 
 export async function sendDesktopMessage(
@@ -282,12 +345,54 @@ export async function loadWorkspace(path = "."): Promise<{
 
 export async function loadHatching(): Promise<HatchingProfile> {
   try {
-    return await fetchJson<HatchingProfile>("/api/desktop/hatching");
+    const profile = await fetchJson<HatchingProfile>("/api/desktop/hatching");
+    const azure = profile.skill_configs?.Azure;
+    if (azure && isTauri()) {
+      const legacyApiKey = (azure.apiKey ?? "").trim();
+      if (legacyApiKey) {
+        await storeAzureOpenAiApiKey(legacyApiKey);
+        const migrated = cloneProfileWithSafeAzureConfig({
+          ...profile,
+          skill_configs: {
+            ...profile.skill_configs,
+            Azure: {
+              ...azure,
+              apiKeyStored: "true",
+            },
+          },
+        });
+        try {
+          await fetchJson<HatchingProfile>("/api/desktop/hatching", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(migrated),
+          });
+        } catch {
+          /* best effort migration */
+        }
+        return migrated;
+      }
+
+      if ((azure.authMethod ?? "").trim() === "api_key") {
+        const stored = await hasAzureOpenAiApiKey();
+        return cloneProfileWithSafeAzureConfig({
+          ...profile,
+          skill_configs: {
+            ...profile.skill_configs,
+            Azure: {
+              ...azure,
+              apiKeyStored: stored ? "true" : "false",
+            },
+          },
+        });
+      }
+    }
+    return cloneProfileWithSafeAzureConfig(profile);
   } catch {
     const local = localStorage.getItem("azul_mock_profile");
     if (local) {
       try {
-        return JSON.parse(local) as HatchingProfile;
+        return cloneProfileWithSafeAzureConfig(JSON.parse(local) as HatchingProfile);
       } catch (e) {
         /* ignore */
       }
@@ -297,15 +402,16 @@ export async function loadHatching(): Promise<HatchingProfile> {
 }
 
 export async function saveHatching(profile: HatchingProfile): Promise<HatchingProfile> {
+  const safeProfile = await prepareProfileForPersistence(profile);
   try {
     return await fetchJson<HatchingProfile>("/api/desktop/hatching", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(profile),
+      body: JSON.stringify(safeProfile),
     });
   } catch {
-    localStorage.setItem("azul_mock_profile", JSON.stringify(profile));
-    return profile;
+    localStorage.setItem("azul_mock_profile", JSON.stringify(safeProfile));
+    return safeProfile;
   }
 }
 
@@ -328,10 +434,16 @@ export async function wipeLocalUserData(confirm: string): Promise<HatchingProfil
     if (!response.ok) {
       throw new Error(data.error || `Request failed (${response.status})`);
     }
+    if (isTauri()) {
+      await clearAzureOpenAiApiKey();
+    }
     return data as HatchingProfile;
   } catch (error) {
     if (error instanceof Error && error.message && !error.message.includes("Failed to fetch")) {
       throw error;
+    }
+    if (isTauri()) {
+      await clearAzureOpenAiApiKey();
     }
     localStorage.removeItem("azul_mock_profile");
     return {
@@ -384,6 +496,7 @@ export async function ensureBackendAuth(): Promise<BackendAuthStatus> {
 }
 
 export async function connectAzure(payload: {
+  auth_mode?: "entra" | "api_key";
   tenant_id: string;
   client_id: string;
   endpoint: string;
@@ -391,9 +504,10 @@ export async function connectAzure(payload: {
   fast_deployment?: string;
   embedding_deployment?: string;
   key_vault_url?: string;
-  access_token: string;
-  expires_on: number;
-  scope: string;
+  access_token?: string;
+  expires_on?: number;
+  scope?: string;
+  api_key?: string;
 }): Promise<BackendAuthStatus> {
   return fetchJson<BackendAuthStatus>("/api/desktop/azure/connect", {
     method: "POST",
