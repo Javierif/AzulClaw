@@ -17,6 +17,12 @@ import {
   saveHatching,
 } from "../../lib/api";
 import { AZURE_ARM_SCOPE, loginWithMicrosoft, loginWithMicrosoftForAzure, loginWithMicrosoftForKeyVault } from "../../lib/azure-auth";
+import {
+  clearAzureOpenAiApiKey,
+  isAzureOpenAiApiKeyStorageAvailable,
+  loadAzureOpenAiApiKey,
+  storeAzureOpenAiApiKey,
+} from "../../lib/desktop-secrets";
 import type {
   AzureDeploymentOption,
   AzureKeyVaultOption,
@@ -77,6 +83,9 @@ interface AzureConfig {
   clientId: string;
   accountKind: "work" | "personal";
   mode: "guided" | "manual";
+  authMethod: "entra" | "api_key";
+  apiKey: string;
+  apiKeyStored: boolean;
   endpoint: string;
   deployment: string;
   fastDeployment: string;
@@ -167,6 +176,9 @@ function buildAzureConfig(profile: HatchingProfile): AzureConfig {
     clientId: saved.clientId ?? "",
     accountKind: saved.accountKind === "personal" ? "personal" : "work",
     mode: saved.mode === "manual" ? "manual" : "guided",
+    authMethod: saved.authMethod === "api_key" ? "api_key" : "entra",
+    apiKey: saved.apiKey ?? "",
+    apiKeyStored: saved.apiKeyStored === "true" || Boolean(saved.apiKey),
     endpoint: saved.endpoint ?? "",
     deployment: saved.deployment ?? "gpt-4o",
     fastDeployment: saved.fastDeployment ?? "gpt-4o-mini",
@@ -191,6 +203,9 @@ function serializeAzureConfig(config: AzureConfig): Record<string, string> {
     clientId: config.clientId.trim(),
     accountKind: config.accountKind,
     mode: config.mode,
+    authMethod: config.authMethod,
+    apiKey: config.apiKey.trim(),
+    apiKeyStored: config.apiKeyStored ? "true" : "false",
     endpoint: config.endpoint.trim(),
     deployment: config.deployment.trim(),
     fastDeployment: config.fastDeployment.trim(),
@@ -342,7 +357,12 @@ export function HatchingShell({
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null);
   const [skillDraft, setSkillDraft] = useState<Record<string, string>>({});
   const [skillModalError, setSkillModalError] = useState("");
+  const [saveError, setSaveError] = useState("");
   const [showAzureSkipWarning, setShowAzureSkipWarning] = useState(false);
+  const [showApiKeyModeWarning, setShowApiKeyModeWarning] = useState(false);
+  const [showApiKeyConnectWarning, setShowApiKeyConnectWarning] = useState(false);
+  const [editingStoredApiKey, setEditingStoredApiKey] = useState(false);
+  const [apiKeyStorageAvailable, setApiKeyStorageAvailable] = useState(false);
 
   async function ensureAzureKeyVaultToken(): Promise<string> {
     if (azureKeyVaultToken) {
@@ -359,6 +379,19 @@ export function HatchingShell({
   useEffect(() => {
     setCurrentStep(Math.min(Math.max(initialStep, 0), wizardQuestions.length));
   }, [initialStep]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const available = await isAzureOpenAiApiKeyStorageAvailable();
+      if (!cancelled) {
+        setApiKeyStorageAvailable(available);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!incomingProfile) return;
@@ -378,6 +411,7 @@ export function HatchingShell({
     setSkillConfigs(nextState.skillConfigs);
     setWorkspaceRoot(nextState.workspaceRoot);
     setConfirmSensitiveActions(nextState.confirmSensitiveActions);
+    setEditingStoredApiKey(false);
   }, [incomingProfile, onboardingRequired]);
 
   useEffect(() => {
@@ -497,6 +531,35 @@ export function HatchingShell({
     if (field === "accountName" || field === "resourceGroup") {
       setAzureDeployments([]);
     }
+    setAzureError("");
+  }
+
+  function enableApiKeyMode() {
+    setAzureConfig((current) => ({
+      ...current,
+      authMethod: "api_key",
+      connected: false,
+      lastConnectedAt: "",
+    }));
+    setShowApiKeyModeWarning(false);
+    setAzureError("");
+  }
+
+  function handleSelectApiKeyMode() {
+    if (azureConfig.authMethod === "api_key") return;
+    setShowApiKeyModeWarning(true);
+  }
+
+  async function handleClearStoredApiKey() {
+    await clearAzureOpenAiApiKey();
+    setAzureConfig((current) => ({
+      ...current,
+      apiKey: "",
+      apiKeyStored: false,
+      connected: false,
+      lastConnectedAt: "",
+    }));
+    setEditingStoredApiKey(false);
     setAzureError("");
   }
 
@@ -699,10 +762,15 @@ export function HatchingShell({
     }
   }
 
-  async function handleConnectAzure() {
+  async function handleConnectAzure(skipApiKeyWarning = false) {
     setAzureError("");
     const endpoint = azureConfig.endpoint.trim().replace(/\/$/, "");
-    if (!azureConfig.clientId.trim()) {
+    const authMethod = azureConfig.mode === "manual" ? azureConfig.authMethod : "entra";
+    if (authMethod === "api_key" && !skipApiKeyWarning) {
+      setShowApiKeyConnectWarning(true);
+      return;
+    }
+    if (authMethod === "entra" && !azureConfig.clientId.trim()) {
       setAzureError("Enter the Azure app registration client ID.");
       return;
     }
@@ -717,43 +785,85 @@ export function HatchingShell({
 
     setAzureBusy(true);
     try {
-      const login = await loginWithMicrosoftForAzure({
-        tenantId: azureConfig.tenantId,
-        clientId: azureConfig.clientId,
-      });
-      if (azureConfig.keyVaultUrl.trim()) {
-        const keyVaultLogin = await loginWithMicrosoftForKeyVault({
+      if (authMethod === "entra") {
+        const login = await loginWithMicrosoftForAzure({
           tenantId: azureConfig.tenantId,
           clientId: azureConfig.clientId,
         });
-        await hydrateAzureKeyVaultSecrets({
+        if (azureConfig.keyVaultUrl.trim()) {
+          const keyVaultLogin = await loginWithMicrosoftForKeyVault({
+            tenantId: azureConfig.tenantId,
+            clientId: azureConfig.clientId,
+          });
+          await hydrateAzureKeyVaultSecrets({
+            key_vault_url: azureConfig.keyVaultUrl.trim().replace(/\/$/, ""),
+            access_token: keyVaultLogin.accessToken,
+            expires_on: keyVaultLogin.expiresOn,
+            microsoft_app_id_secret_name: azureConfig.microsoftAppIdSecretName.trim(),
+            microsoft_app_password_secret_name: azureConfig.microsoftAppPasswordSecretName.trim(),
+            microsoft_app_tenant_id_secret_name: azureConfig.microsoftAppTenantIdSecretName.trim(),
+          });
+        }
+        const connectedAt = new Date().toISOString();
+        await connectAzure({
+          auth_mode: "entra",
+          tenant_id: azureConfig.tenantId.trim(),
+          client_id: azureConfig.clientId.trim(),
+          endpoint,
+          deployment: azureConfig.deployment.trim(),
+          fast_deployment: azureConfig.fastDeployment.trim(),
+          embedding_deployment: azureConfig.embeddingDeployment.trim(),
           key_vault_url: azureConfig.keyVaultUrl.trim().replace(/\/$/, ""),
-          access_token: keyVaultLogin.accessToken,
-          expires_on: keyVaultLogin.expiresOn,
-          microsoft_app_id_secret_name: azureConfig.microsoftAppIdSecretName.trim(),
-          microsoft_app_password_secret_name: azureConfig.microsoftAppPasswordSecretName.trim(),
-          microsoft_app_tenant_id_secret_name: azureConfig.microsoftAppTenantIdSecretName.trim(),
+          access_token: login.accessToken,
+          expires_on: login.expiresOn,
+          scope: login.scope,
         });
+        setAzureConfig((current) => ({
+          ...current,
+          endpoint,
+          connected: true,
+          lastConnectedAt: connectedAt,
+        }));
+      } else {
+        let apiKey = azureConfig.apiKey.trim();
+        const usedStoredApiKey = !apiKey && azureConfig.apiKeyStored && !editingStoredApiKey;
+        if (!apiKey && azureConfig.apiKeyStored && !editingStoredApiKey) {
+          apiKey = (await loadAzureOpenAiApiKey()) ?? "";
+        }
+        if (!apiKey) {
+          setAzureError("Enter the Azure OpenAI API key.");
+          return;
+        }
+        const connectedAt = new Date().toISOString();
+        await connectAzure({
+          auth_mode: "api_key",
+          tenant_id: "",
+          client_id: "",
+          endpoint,
+          deployment: azureConfig.deployment.trim(),
+          fast_deployment: azureConfig.fastDeployment.trim(),
+          embedding_deployment: azureConfig.embeddingDeployment.trim(),
+          api_key: apiKey,
+        });
+        if (!usedStoredApiKey) {
+          await storeAzureOpenAiApiKey(apiKey);
+        }
+        setAzureConfig((current) => ({
+          ...current,
+          apiKey: "",
+          apiKeyStored: true,
+          endpoint,
+          keyVaultUrl: "",
+          keyVaultName: "",
+          keyVaultResourceGroup: "",
+          microsoftAppIdSecretName: "",
+          microsoftAppPasswordSecretName: "",
+          microsoftAppTenantIdSecretName: "",
+          connected: true,
+          lastConnectedAt: connectedAt,
+        }));
+        setEditingStoredApiKey(false);
       }
-      const connectedAt = new Date().toISOString();
-      await connectAzure({
-        tenant_id: azureConfig.tenantId.trim(),
-        client_id: azureConfig.clientId.trim(),
-        endpoint,
-        deployment: azureConfig.deployment.trim(),
-        fast_deployment: azureConfig.fastDeployment.trim(),
-        embedding_deployment: azureConfig.embeddingDeployment.trim(),
-        key_vault_url: azureConfig.keyVaultUrl.trim().replace(/\/$/, ""),
-        access_token: login.accessToken,
-        expires_on: login.expiresOn,
-        scope: login.scope,
-      });
-      setAzureConfig((current) => ({
-        ...current,
-        endpoint,
-        connected: true,
-        lastConnectedAt: connectedAt,
-      }));
     } catch (error) {
       setAzureError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -827,6 +937,7 @@ export function HatchingShell({
 
   async function handleSave(markAsHatched: boolean) {
     setIsSaving(true);
+    setSaveError("");
     try {
       const saved = await saveHatching({ ...draftProfile, is_hatched: markAsHatched || profile.is_hatched });
       const nextState = buildWizardState(saved, false);
@@ -850,6 +961,8 @@ export function HatchingShell({
       }
 
       onProfileSaved?.(saved);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsSaving(false);
     }
@@ -1036,7 +1149,11 @@ export function HatchingShell({
                             <span className="hw-inline-note">Last login {new Date(azureConfig.lastConnectedAt).toLocaleString()}</span>
                           )}
                         </div>
-                        <p className="hw-azure-lead">Start with Microsoft sign-in using the account that owns your Azure subscription. Work, school and personal Microsoft accounts are supported.</p>
+                        <p className="hw-azure-lead">
+                          {azureConfig.mode === "manual" && azureConfig.authMethod === "api_key"
+                            ? "Use your Azure OpenAI endpoint, deployment names, and API key to connect directly. Choose this only when Microsoft login is not available for your tenant."
+                            : "Start with Microsoft sign-in using the account that owns your Azure subscription. Work, school and personal Microsoft accounts are supported."}
+                        </p>
                       </div>
                     </div>
 
@@ -1123,16 +1240,72 @@ export function HatchingShell({
                             </div>
                           </>
                         ) : (
-                          <div className="hw-azure-grid">
-                            <label className="hw-modal-field">
-                              <span className="hw-field-label">Application client ID</span>
-                              <input className="hw-modal-input" type="text" value={azureConfig.clientId} placeholder="00000000-0000-0000-0000-000000000000" onChange={(event) => handleAzureConfigChange("clientId", event.target.value)} />
-                            </label>
-                            <label className="hw-modal-field">
-                              <span className="hw-field-label">Tenant scope</span>
-                              <input className="hw-modal-input" type="text" value={azureConfig.tenantId} placeholder="common" onChange={(event) => handleAzureConfigChange("tenantId", event.target.value)} />
-                            </label>
-                          </div>
+                          <>
+                            <div className="hw-azure-choice-row">
+                              <button
+                                type="button"
+                                className={`hw-azure-choice${azureConfig.authMethod === "entra" ? " hw-azure-choice-active" : ""}`}
+                                onClick={() => {
+                                  setEditingStoredApiKey(false);
+                                  setAzureConfig((current) => ({ ...current, authMethod: "entra", connected: false, lastConnectedAt: "" }));
+                                }}
+                              >
+                                <span className="hw-azure-choice-title">
+                                  <span>Microsoft login</span>
+                                  <span className="hw-choice-badge hw-choice-badge-recommended">Recommended</span>
+                                </span>
+                                <small>Sign in with Microsoft to discover your Azure resources and keep the standard authorization flow.</small>
+                              </button>
+                              <button
+                                type="button"
+                                className={`hw-azure-choice${azureConfig.authMethod === "api_key" ? " hw-azure-choice-active" : ""}`}
+                                onClick={handleSelectApiKeyMode}
+                                disabled={!apiKeyStorageAvailable}
+                              >
+                                <span className="hw-azure-choice-title">
+                                  <span>API key</span>
+                                  <span className="hw-choice-badge hw-choice-badge-fallback">Fallback</span>
+                                </span>
+                                <small>
+                                  {apiKeyStorageAvailable
+                                    ? "Connect directly to Azure OpenAI with your endpoint, deployment names, and API key."
+                                    : "Available only where AzulClaw can store the key securely on the desktop."}
+                                </small>
+                              </button>
+                            </div>
+                            <div className="hw-azure-grid">
+                              {azureConfig.authMethod === "entra" ? (
+                                <>
+                                  <label className="hw-modal-field">
+                                    <span className="hw-field-label">Application client ID</span>
+                                    <input className="hw-modal-input" type="text" value={azureConfig.clientId} placeholder="00000000-0000-0000-0000-000000000000" onChange={(event) => handleAzureConfigChange("clientId", event.target.value)} />
+                                  </label>
+                                  <label className="hw-modal-field">
+                                    <span className="hw-field-label">Tenant scope</span>
+                                    <input className="hw-modal-input" type="text" value={azureConfig.tenantId} placeholder="common" onChange={(event) => handleAzureConfigChange("tenantId", event.target.value)} />
+                                  </label>
+                                </>
+                              ) : (
+                                <label className="hw-modal-field hw-azure-wide">
+                                  <span className="hw-field-label">Azure OpenAI API key</span>
+                                  {azureConfig.apiKeyStored && !editingStoredApiKey && !azureConfig.apiKey.trim() ? (
+                                    <>
+                                      <div className="hw-azure-secret-state">
+                                        <span className="hw-inline-note">Stored locally on this machine.</span>
+                                        <div className="hw-azure-secret-actions">
+                                          <button type="button" className="hw-btn-ghost" onClick={() => setEditingStoredApiKey(true)}>Replace key</button>
+                                          <button type="button" className="hw-btn-ghost" onClick={() => void handleClearStoredApiKey()}>Clear key</button>
+                                        </div>
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <input className="hw-modal-input" type="password" value={azureConfig.apiKey} placeholder="Paste the Azure OpenAI key" onChange={(event) => handleAzureConfigChange("apiKey", event.target.value)} />
+                                  )}
+                                  <span className="hw-inline-note hw-inline-note-warning">This key is stored locally on this machine. Use this mode only as a fallback when Microsoft login is not available.</span>
+                                </label>
+                              )}
+                            </div>
+                          </>
                         )}
                       </div>
                     </div>
@@ -1349,27 +1522,37 @@ export function HatchingShell({
                         )}
                       </div>
                     ) : (
+                      <>
+                        {azureConfig.authMethod === "api_key" && (
+                          <p className="hw-inline-note">
+                            This mode sets up direct Azure OpenAI access with one endpoint, one API key, and the deployment names below.
+                          </p>
+                        )}
                       <div className="hw-azure-grid">
                         <label className="hw-modal-field hw-azure-wide">
                           <span className="hw-field-label">Azure OpenAI endpoint</span>
                           <input className="hw-modal-input" type="url" value={azureConfig.endpoint} placeholder="https://your-resource.openai.azure.com" onChange={(event) => handleAzureConfigChange("endpoint", event.target.value)} />
                         </label>
-                        <label className="hw-modal-field hw-azure-wide">
-                          <span className="hw-field-label">Key Vault URL</span>
-                          <input className="hw-modal-input" type="url" value={azureConfig.keyVaultUrl} placeholder="https://your-vault.vault.azure.net" onChange={(event) => handleAzureConfigChange("keyVaultUrl", event.target.value)} />
-                        </label>
-                        <label className="hw-modal-field">
-                          <span className="hw-field-label">MicrosoftAppId secret</span>
-                          <input className="hw-modal-input" type="text" value={azureConfig.microsoftAppIdSecretName} placeholder="MicrosoftAppId" onChange={(event) => handleAzureConfigChange("microsoftAppIdSecretName", event.target.value)} />
-                        </label>
-                        <label className="hw-modal-field">
-                          <span className="hw-field-label">MicrosoftAppPassword secret</span>
-                          <input className="hw-modal-input" type="text" value={azureConfig.microsoftAppPasswordSecretName} placeholder="MicrosoftAppPassword" onChange={(event) => handleAzureConfigChange("microsoftAppPasswordSecretName", event.target.value)} />
-                        </label>
-                        <label className="hw-modal-field">
-                          <span className="hw-field-label">MicrosoftAppTenantId secret</span>
-                          <input className="hw-modal-input" type="text" value={azureConfig.microsoftAppTenantIdSecretName} placeholder="MicrosoftAppTenantId" onChange={(event) => handleAzureConfigChange("microsoftAppTenantIdSecretName", event.target.value)} />
-                        </label>
+                        {azureConfig.authMethod === "entra" && (
+                          <>
+                            <label className="hw-modal-field hw-azure-wide">
+                              <span className="hw-field-label">Key Vault URL</span>
+                              <input className="hw-modal-input" type="url" value={azureConfig.keyVaultUrl} placeholder="https://your-vault.vault.azure.net" onChange={(event) => handleAzureConfigChange("keyVaultUrl", event.target.value)} />
+                            </label>
+                            <label className="hw-modal-field">
+                              <span className="hw-field-label">MicrosoftAppId secret</span>
+                              <input className="hw-modal-input" type="text" value={azureConfig.microsoftAppIdSecretName} placeholder="MicrosoftAppId" onChange={(event) => handleAzureConfigChange("microsoftAppIdSecretName", event.target.value)} />
+                            </label>
+                            <label className="hw-modal-field">
+                              <span className="hw-field-label">MicrosoftAppPassword secret</span>
+                              <input className="hw-modal-input" type="text" value={azureConfig.microsoftAppPasswordSecretName} placeholder="MicrosoftAppPassword" onChange={(event) => handleAzureConfigChange("microsoftAppPasswordSecretName", event.target.value)} />
+                            </label>
+                            <label className="hw-modal-field">
+                              <span className="hw-field-label">MicrosoftAppTenantId secret</span>
+                              <input className="hw-modal-input" type="text" value={azureConfig.microsoftAppTenantIdSecretName} placeholder="MicrosoftAppTenantId" onChange={(event) => handleAzureConfigChange("microsoftAppTenantIdSecretName", event.target.value)} />
+                            </label>
+                          </>
+                        )}
                         <label className="hw-modal-field">
                           <span className="hw-field-label">Main deployment</span>
                           <input className="hw-modal-input" type="text" value={azureConfig.deployment} placeholder="gpt-4o" onChange={(event) => handleAzureConfigChange("deployment", event.target.value)} />
@@ -1383,6 +1566,7 @@ export function HatchingShell({
                           <input className="hw-modal-input" type="text" value={azureConfig.embeddingDeployment} placeholder="text-embedding-3-large" onChange={(event) => handleAzureConfigChange("embeddingDeployment", event.target.value)} />
                         </label>
                       </div>
+                      </>
                     )}
 
                     {azureError && <p className="hw-inline-note hw-inline-note-warning">{azureError}</p>}
@@ -1399,21 +1583,27 @@ export function HatchingShell({
                             <div>
                               <p className="hw-field-label">Azure connected</p>
                               <p className="hw-inline-note">
-                                Azure OpenAI access is authorized. {azureConfig.keyVaultName ? `Key Vault: ${azureConfig.keyVaultName}. ` : ""}{azureConfig.lastConnectedAt ? `Last authorized ${new Date(azureConfig.lastConnectedAt).toLocaleString()}.` : ""}
+                                {azureConfig.authMethod === "api_key"
+                                  ? `Azure OpenAI is configured with a local API key. ${azureConfig.lastConnectedAt ? `Last connected ${new Date(azureConfig.lastConnectedAt).toLocaleString()}.` : ""}`
+                                  : `Azure OpenAI access is authorized. ${azureConfig.keyVaultName ? `Key Vault: ${azureConfig.keyVaultName}. ` : ""}${azureConfig.lastConnectedAt ? `Last authorized ${new Date(azureConfig.lastConnectedAt).toLocaleString()}.` : ""}`}
                               </p>
                             </div>
                             <button type="button" className="hw-btn-ghost" onClick={() => void handleConnectAzure()} disabled={azureBusy}>
-                              {azureBusy ? "Authorizing..." : "Reauthorize"}
+                              {azureBusy ? (azureConfig.authMethod === "api_key" ? "Connecting..." : "Authorizing...") : (azureConfig.authMethod === "api_key" ? "Reconnect with API key" : "Reauthorize")}
                             </button>
                           </>
                         ) : (
                           <>
                             <div>
                               <p className="hw-field-label">Finish</p>
-                              <p className="hw-inline-note">AzulClaw will request an Azure OpenAI token, apply the selected Key Vault URL locally, and keep the token in memory.</p>
+                              <p className="hw-inline-note">
+                                {azureConfig.authMethod === "api_key"
+                                  ? "Advanced mode. AzulClaw will use the endpoint, deployment names and API key directly, without Microsoft login."
+                                  : "AzulClaw will request an Azure OpenAI token, apply the selected Key Vault URL locally, and keep the token in memory."}
+                              </p>
                             </div>
                             <button type="button" className="hw-btn-primary" onClick={() => void handleConnectAzure()} disabled={azureBusy}>
-                              {azureBusy ? "Authorizing..." : "Authorize Azure OpenAI access"}
+                              {azureBusy ? (azureConfig.authMethod === "api_key" ? "Connecting..." : "Authorizing...") : (azureConfig.authMethod === "api_key" ? "Connect with API key" : "Authorize Azure OpenAI access")}
                             </button>
                           </>
                         )}
@@ -1548,7 +1738,7 @@ export function HatchingShell({
               <div className="hw-summary-item"><span className="hw-summary-label">Name</span><span className="hw-summary-value">{draftProfile.name}</span></div>
 
               <div className="hw-summary-item"><span className="hw-summary-label">Style</span><span className="hw-summary-value">{draftProfile.tone} · {draftProfile.style}</span></div>
-              <div className="hw-summary-item"><span className="hw-summary-label">Azure</span><span className="hw-summary-value">{azureConfig.connected ? "Microsoft login connected" : "Not connected"}</span></div>
+              <div className="hw-summary-item"><span className="hw-summary-label">Azure</span><span className="hw-summary-value">{azureConfig.connected ? (azureConfig.authMethod === "api_key" ? "API key connected" : "Microsoft login connected") : "Not connected"}</span></div>
               <div className="hw-summary-item"><span className="hw-summary-label">Key Vault</span><span className="hw-summary-value hw-mono">{azureConfig.keyVaultUrl || "Not selected"}</span></div>
               <div className="hw-summary-item"><span className="hw-summary-label">Workspace</span><span className="hw-summary-value hw-mono">{draftProfile.workspace_root}</span></div>
               <div className="hw-summary-item" style={{ gridColumn: "1 / -1" }}><span className="hw-summary-label">Memory database</span><span className="hw-summary-value hw-mono">{previewMemoryDbPath(draftProfile.workspace_root) || "(set workspace folder)"}</span></div>
@@ -1561,6 +1751,7 @@ export function HatchingShell({
       <footer className="hw-footer">
         <button type="button" className="hw-btn-ghost" onClick={handleBack} disabled={currentStep === 0 || Boolean(activeSkill)}>Back</button>
         <span className="hw-step-label">{isFinalStep ? "Summary" : `${stepNumber} / ${wizardQuestions.length}`}</span>
+        {saveError && <span className="hw-inline-note hw-inline-note-warning">{saveError}</span>}
 
         {isFinalStep ? (
           <div style={{ display: "flex", gap: "10px" }}>
@@ -1590,6 +1781,63 @@ export function HatchingShell({
             <div className="hw-modal-actions">
               <button type="button" className="hw-btn-ghost" onClick={() => setShowAzureSkipWarning(false)}>Go back and connect</button>
               <button type="button" className="hw-btn-primary" onClick={confirmAzureSkip}>Skip anyway</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showApiKeyModeWarning && (
+        <div className="hw-modal-backdrop" onClick={() => setShowApiKeyModeWarning(false)}>
+          <div className="hw-modal-card hw-skip-card" onClick={(event) => event.stopPropagation()}>
+            <div className="hw-skip-icon" aria-hidden="true">!</div>
+            <div className="hw-modal-head">
+              <div>
+                <p className="hw-field-label">Advanced mode</p>
+                <h3 className="hw-modal-title">Use API key mode only as a fallback</h3>
+              </div>
+            </div>
+            <p className="hw-inline-note">
+              Microsoft login is the recommended path. Use API key mode only when your tenant blocks Microsoft sign-in or when you need a manual Azure OpenAI connection.
+            </p>
+            <p className="hw-inline-note hw-inline-note-warning">
+              This mode stores an Azure OpenAI API key locally on this machine.
+            </p>
+            <div className="hw-modal-actions">
+              <button type="button" className="hw-btn-ghost" onClick={() => setShowApiKeyModeWarning(false)}>Keep recommended login</button>
+              <button type="button" className="hw-btn-primary" onClick={enableApiKeyMode}>Use API key anyway</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showApiKeyConnectWarning && (
+        <div className="hw-modal-backdrop" onClick={() => setShowApiKeyConnectWarning(false)}>
+          <div className="hw-modal-card hw-skip-card" onClick={(event) => event.stopPropagation()}>
+            <div className="hw-skip-icon" aria-hidden="true">!</div>
+            <div className="hw-modal-head">
+              <div>
+                <p className="hw-field-label">Before you connect</p>
+                <h3 className="hw-modal-title">This stores a local Azure OpenAI key</h3>
+              </div>
+            </div>
+            <p className="hw-inline-note">
+              AzulClaw will connect directly to Azure OpenAI with the endpoint, deployment names, and API key you entered.
+            </p>
+            <p className="hw-inline-note hw-inline-note-warning">
+              This is a fallback path. If Microsoft login is available in your tenant, that remains the recommended configuration.
+            </p>
+            <div className="hw-modal-actions">
+              <button type="button" className="hw-btn-ghost" onClick={() => setShowApiKeyConnectWarning(false)}>Go back</button>
+              <button
+                type="button"
+                className="hw-btn-primary"
+                onClick={() => {
+                  setShowApiKeyConnectWarning(false);
+                  void handleConnectAzure(true);
+                }}
+              >
+                Connect with API key
+              </button>
             </div>
           </div>
         </div>

@@ -1,19 +1,22 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::{
+    ffi::c_void,
     fs::{self, OpenOptions},
     io::{Read, Write},
     net::TcpStream,
     path::{Path, PathBuf},
+    ptr::{null, null_mut},
     process::{Child, Command, Stdio},
     sync::Mutex,
     time::Duration,
 };
 
-use tauri::Manager;
+use tauri::{AppHandle, Manager};
 
 const BACKEND_HOST: &str = "localhost";
 const BACKEND_PORT: u16 = 3978;
+const AZURE_OPENAI_API_KEY_SECRET_FILE: &str = "azure-openai-api-key.bin";
 
 struct BackendProcess(Mutex<Option<Child>>);
 
@@ -24,6 +27,42 @@ struct BackendLaunch {
     hands_command: Option<PathBuf>,
     runtime_dir: PathBuf,
     log_dir: PathBuf,
+}
+
+#[repr(C)]
+struct DataBlob {
+    cb_data: u32,
+    pb_data: *mut u8,
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "Crypt32")]
+unsafe extern "system" {
+    fn CryptProtectData(
+        p_data_in: *const DataBlob,
+        sz_data_descr: *const u16,
+        p_optional_entropy: *const DataBlob,
+        pv_reserved: *mut c_void,
+        p_prompt_struct: *mut c_void,
+        dw_flags: u32,
+        p_data_out: *mut DataBlob,
+    ) -> i32;
+    fn CryptUnprotectData(
+        p_data_in: *const DataBlob,
+        ppsz_data_descr: *mut *mut u16,
+        p_optional_entropy: *const DataBlob,
+        pv_reserved: *mut c_void,
+        p_prompt_struct: *mut c_void,
+        dw_flags: u32,
+        p_data_out: *mut DataBlob,
+    ) -> i32;
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "Kernel32")]
+unsafe extern "system" {
+    fn LocalFree(h_mem: *mut c_void) -> *mut c_void;
+    fn GetLastError() -> u32;
 }
 
 impl Drop for BackendProcess {
@@ -98,6 +137,165 @@ fn append_log(path: &Path) -> Option<Stdio> {
         .open(path)
         .ok()
         .map(Stdio::from)
+}
+
+fn secure_storage_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("could not resolve AzulClaw app data directory: {error}"))?;
+    Ok(app_data_dir.join("secure"))
+}
+
+fn azure_openai_api_key_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(secure_storage_dir(app)?.join(AZURE_OPENAI_API_KEY_SECRET_FILE))
+}
+
+#[cfg(target_os = "windows")]
+fn dpapi_protect_bytes(plaintext: &[u8]) -> Result<Vec<u8>, String> {
+    let input = DataBlob {
+        cb_data: plaintext.len() as u32,
+        pb_data: plaintext.as_ptr() as *mut u8,
+    };
+    let mut output = DataBlob {
+        cb_data: 0,
+        pb_data: null_mut(),
+    };
+
+    let ok = unsafe {
+        CryptProtectData(
+            &input,
+            null(),
+            null(),
+            null_mut(),
+            null_mut(),
+            0,
+            &mut output,
+        )
+    };
+    if ok == 0 {
+        let code = unsafe { GetLastError() };
+        return Err(format!("DPAPI encryption failed with Windows error {code}"));
+    }
+
+    let bytes = unsafe { std::slice::from_raw_parts(output.pb_data, output.cb_data as usize) }.to_vec();
+    unsafe {
+        let _ = LocalFree(output.pb_data as *mut c_void);
+    }
+    Ok(bytes)
+}
+
+#[cfg(target_os = "windows")]
+fn dpapi_unprotect_bytes(ciphertext: &[u8]) -> Result<Vec<u8>, String> {
+    let input = DataBlob {
+        cb_data: ciphertext.len() as u32,
+        pb_data: ciphertext.as_ptr() as *mut u8,
+    };
+    let mut output = DataBlob {
+        cb_data: 0,
+        pb_data: null_mut(),
+    };
+    let mut description: *mut u16 = null_mut();
+
+    let ok = unsafe {
+        CryptUnprotectData(
+            &input,
+            &mut description,
+            null(),
+            null_mut(),
+            null_mut(),
+            0,
+            &mut output,
+        )
+    };
+    if ok == 0 {
+        let code = unsafe { GetLastError() };
+        return Err(format!("DPAPI decryption failed with Windows error {code}"));
+    }
+
+    let bytes = unsafe { std::slice::from_raw_parts(output.pb_data, output.cb_data as usize) }.to_vec();
+    unsafe {
+        if !description.is_null() {
+            let _ = LocalFree(description as *mut c_void);
+        }
+        let _ = LocalFree(output.pb_data as *mut c_void);
+    }
+    Ok(bytes)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn dpapi_protect_bytes(plaintext: &[u8]) -> Result<Vec<u8>, String> {
+    let _ = plaintext;
+    Err("secure Azure OpenAI API key persistence is only implemented on Windows desktop builds".to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn dpapi_unprotect_bytes(ciphertext: &[u8]) -> Result<Vec<u8>, String> {
+    let _ = ciphertext;
+    Err("secure Azure OpenAI API key persistence is only implemented on Windows desktop builds".to_string())
+}
+
+fn store_azure_openai_api_key_secret(app: &AppHandle, secret: &str) -> Result<(), String> {
+    let path = azure_openai_api_key_path(app)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("could not create secure storage directory: {error}"))?;
+    }
+    let encrypted = dpapi_protect_bytes(secret.as_bytes())?;
+    fs::write(&path, encrypted).map_err(|error| format!("could not store secure secret: {error}"))
+}
+
+fn load_azure_openai_api_key_secret(app: &AppHandle) -> Result<Option<String>, String> {
+    let path = azure_openai_api_key_path(app)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let encrypted = fs::read(&path).map_err(|error| format!("could not read secure secret: {error}"))?;
+    let decrypted = dpapi_unprotect_bytes(&encrypted)?;
+    let secret = String::from_utf8(decrypted)
+        .map_err(|error| format!("secure secret payload is not valid UTF-8: {error}"))?;
+    let trimmed = secret.trim().to_string();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(trimmed))
+}
+
+fn clear_azure_openai_api_key_secret(app: &AppHandle) -> Result<(), String> {
+    let path = azure_openai_api_key_path(app)?;
+    if path.exists() {
+        fs::remove_file(path).map_err(|error| format!("could not remove secure secret: {error}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn store_azure_openai_api_key(app: AppHandle, secret: String) -> Result<(), String> {
+    let trimmed = secret.trim();
+    if trimmed.is_empty() {
+        return Err("secret must not be empty".to_string());
+    }
+    store_azure_openai_api_key_secret(&app, trimmed)
+}
+
+#[tauri::command]
+fn load_azure_openai_api_key(app: AppHandle) -> Result<Option<String>, String> {
+    load_azure_openai_api_key_secret(&app)
+}
+
+#[tauri::command]
+fn has_azure_openai_api_key(app: AppHandle) -> Result<bool, String> {
+    Ok(load_azure_openai_api_key_secret(&app)?.is_some())
+}
+
+#[tauri::command]
+fn clear_azure_openai_api_key(app: AppHandle) -> Result<(), String> {
+    clear_azure_openai_api_key_secret(&app)
+}
+
+#[tauri::command]
+fn is_azure_openai_api_key_storage_available() -> bool {
+    cfg!(target_os = "windows")
 }
 
 fn append_text_log(path: &Path, message: &str) {
@@ -249,6 +447,19 @@ fn start_backend(app: &tauri::App) -> Result<Option<Child>, String> {
     if let Some(hands_command) = &launch.hands_command {
         command.env("AZUL_HANDS_MCP_COMMAND", hands_command);
     }
+    match load_azure_openai_api_key_secret(&app.handle()) {
+        Ok(Some(api_key)) => {
+            command.env("AZURE_OPENAI_API_KEY", api_key);
+        }
+        Ok(None) => {}
+        Err(error) => {
+            append_text_log(
+                &launch.log_dir.join("desktop-backend.err.log"),
+                &format!("Azure OpenAI secure secret could not be loaded: {error}"),
+            );
+            let _ = clear_azure_openai_api_key_secret(&app.handle());
+        }
+    }
 
     #[cfg(target_os = "windows")]
     {
@@ -278,6 +489,13 @@ fn main() {
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            store_azure_openai_api_key,
+            load_azure_openai_api_key,
+            has_azure_openai_api_key,
+            clear_azure_openai_api_key,
+            is_azure_openai_api_key_storage_available
+        ])
         .run(tauri::generate_context!())
         .expect("error while running AzulClaw desktop");
 }

@@ -60,6 +60,7 @@ export function SettingsShell({ onLocalDataWiped }: SettingsShellProps) {
   const [azureWizardOpen, setAzureWizardOpen] = useState(false);
   const [settingsWizardStep, setSettingsWizardStep] = useState<number | null>(null);
   const azureConfig = profile.skill_configs?.Azure ?? {};
+  const azureAuthMethod = azureConfig.authMethod === "api_key" ? "api_key" : "entra";
   const fastModel = runtime.models.find((model) => model.lane === "fast");
   const slowModel = runtime.models.find((model) => model.lane === "slow");
   const providerLabel = runtime.models.length > 0
@@ -442,10 +443,24 @@ export function SettingsShell({ onLocalDataWiped }: SettingsShellProps) {
           </p>
 
           <div className="runtime-kv-list">
+            <p className="runtime-kv-section-title">Azure OpenAI access</p>
             <div className="runtime-kv-row">
               <span className="runtime-kv-key">Status</span>
               <span className={`status-tag ${profile.skill_configs?.Azure?.connected === "true" ? "status-done" : "status-waiting"}`}>
-                {profile.skill_configs?.Azure?.connected === "true" ? "Connected" : "Not connected"}
+                {profile.skill_configs?.Azure?.connected === "true"
+                  ? azureAuthMethod === "api_key"
+                    ? "Connected with API key"
+                    : "Connected"
+                  : "Not connected"}
+              </span>
+            </div>
+            <div className="runtime-kv-row">
+              <span className="runtime-kv-key">Connection mode</span>
+              <span className="runtime-kv-val" style={{ display: "inline-flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                <span>{azureAuthMethod === "api_key" ? "API key" : "Microsoft Entra"}</span>
+                <span className={`hw-choice-badge ${azureAuthMethod === "api_key" ? "hw-choice-badge-fallback" : "hw-choice-badge-recommended"}`}>
+                  {azureAuthMethod === "api_key" ? "Fallback" : "Recommended"}
+                </span>
               </span>
             </div>
             {profile.skill_configs?.Azure?.endpoint && (
@@ -454,39 +469,59 @@ export function SettingsShell({ onLocalDataWiped }: SettingsShellProps) {
                 <code className="runtime-kv-code">{profile.skill_configs.Azure.endpoint}</code>
               </div>
             )}
-            {profile.skill_configs?.Azure?.keyVaultUrl && (
-              <div className="runtime-kv-row">
-                <span className="runtime-kv-key">Key Vault</span>
-                <code className="runtime-kv-code">{profile.skill_configs.Azure.keyVaultUrl}</code>
-              </div>
-            )}
-            {(profile.skill_configs?.Azure?.microsoftAppIdSecretName ||
-              profile.skill_configs?.Azure?.microsoftAppPasswordSecretName ||
-              profile.skill_configs?.Azure?.microsoftAppTenantIdSecretName) && (
-              <div className="runtime-kv-row">
-                <span className="runtime-kv-key">Bot secrets</span>
-                <code className="runtime-kv-code">
-                  {[
-                    profile.skill_configs.Azure.microsoftAppIdSecretName || "MicrosoftAppId",
-                    profile.skill_configs.Azure.microsoftAppPasswordSecretName || "MicrosoftAppPassword",
-                    profile.skill_configs.Azure.microsoftAppTenantIdSecretName || "MicrosoftAppTenantId",
-                  ].join(", ")}
-                </code>
-              </div>
-            )}
             {profile.skill_configs?.Azure?.deployment && (
               <div className="runtime-kv-row">
                 <span className="runtime-kv-key">Main deployment</span>
                 <code className="runtime-kv-code">{profile.skill_configs.Azure.deployment}</code>
               </div>
             )}
+            {profile.skill_configs?.Azure?.fastDeployment && (
+              <div className="runtime-kv-row">
+                <span className="runtime-kv-key">Fast deployment</span>
+                <code className="runtime-kv-code">{profile.skill_configs.Azure.fastDeployment}</code>
+              </div>
+            )}
+            {profile.skill_configs?.Azure?.embeddingDeployment && (
+              <div className="runtime-kv-row">
+                <span className="runtime-kv-key">Embedding deployment</span>
+                <code className="runtime-kv-code">{profile.skill_configs.Azure.embeddingDeployment}</code>
+              </div>
+            )}
             {profile.skill_configs?.Azure?.lastConnectedAt && (
               <div className="runtime-kv-row">
-                <span className="runtime-kv-key">Last authorized</span>
+                <span className="runtime-kv-key">
+                  {profile.skill_configs?.Azure?.authMethod === "api_key" ? "Last connected" : "Last authorized"}
+                </span>
                 <code className="runtime-kv-code">{new Date(profile.skill_configs.Azure.lastConnectedAt).toLocaleString()}</code>
               </div>
             )}
           </div>
+
+          {profile.skill_configs?.Azure?.authMethod !== "api_key" && (
+            <div className="runtime-kv-list">
+              <p className="runtime-kv-section-title">Microsoft runtime and channels</p>
+              {profile.skill_configs?.Azure?.keyVaultUrl && (
+                <div className="runtime-kv-row">
+                  <span className="runtime-kv-key">Key Vault</span>
+                  <code className="runtime-kv-code">{profile.skill_configs.Azure.keyVaultUrl}</code>
+                </div>
+              )}
+              {(profile.skill_configs?.Azure?.microsoftAppIdSecretName ||
+                profile.skill_configs?.Azure?.microsoftAppPasswordSecretName ||
+                profile.skill_configs?.Azure?.microsoftAppTenantIdSecretName) && (
+                <div className="runtime-kv-row">
+                  <span className="runtime-kv-key">Bot secrets</span>
+                  <code className="runtime-kv-code">
+                    {[
+                      profile.skill_configs.Azure.microsoftAppIdSecretName || "MicrosoftAppId",
+                      profile.skill_configs.Azure.microsoftAppPasswordSecretName || "MicrosoftAppPassword",
+                      profile.skill_configs.Azure.microsoftAppTenantIdSecretName || "MicrosoftAppTenantId",
+                    ].join(", ")}
+                  </code>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="settings-card-footer" style={{ justifyContent: "flex-start" }}>
             <button

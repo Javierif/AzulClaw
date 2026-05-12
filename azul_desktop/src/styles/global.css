@@ -1842,6 +1842,15 @@ textarea {
   border-top: 1px solid var(--line);
 }
 
+.runtime-kv-section-title {
+  margin: 0 0 4px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #cbd5e1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .runtime-kv-row {
   display: flex;
   justify-content: space-between;
@@ -3013,6 +3022,38 @@ textarea {
   font-weight: 800;
 }
 
+.hw-azure-choice-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.hw-choice-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.hw-choice-badge-recommended {
+  border-color: rgba(34, 197, 94, 0.32);
+  background: rgba(34, 197, 94, 0.14);
+  color: #bbf7d0;
+}
+
+.hw-choice-badge-fallback {
+  border-color: rgba(245, 158, 11, 0.32);
+  background: rgba(245, 158, 11, 0.14);
+  color: #fde68a;
+}
+
 .hw-azure-choice small {
   color: #94a3b8;
   font-size: 0.78rem;
@@ -3025,6 +3066,18 @@ textarea {
     linear-gradient(135deg, rgba(37, 99, 235, 0.22), rgba(14, 165, 233, 0.12)),
     rgba(15, 23, 42, 0.62);
   box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.18);
+}
+
+.hw-azure-secret-state,
+.hw-azure-secret-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.hw-azure-secret-state {
+  justify-content: space-between;
 }
 
 .hw-azure-grid {

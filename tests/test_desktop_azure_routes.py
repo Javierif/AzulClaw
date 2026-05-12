@@ -111,6 +111,84 @@ class _FakeSession:
 
 
 class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
+    async def test_connect_api_key_mode_sets_auth_mode_and_clears_entra_state(self) -> None:
+        payload = {
+            "auth_mode": "api_key",
+            "api_key": "secret-key",
+            "endpoint": "https://example.openai.azure.com/openai/v1",
+            "deployment": "gpt-main",
+            "fast_deployment": "gpt-fast",
+            "embedding_deployment": "text-embedding",
+            "key_vault_url": "https://stale.vault.azure.net",
+        }
+        runtime_manager = _FakeRuntimeManager()
+        app = web.Application()
+        app["azure_auth_state"] = _FakeAuthState()
+        app["runtime_manager"] = runtime_manager
+        request = make_mocked_request("POST", "/api/desktop/azure/connect", app=app)
+        request._read_bytes = json.dumps(payload).encode("utf-8")
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "AZUL_KEY_VAULT_URL": "https://old.vault.azure.net",
+                    "AZURE_OPENAI_API_KEY": "old-key",
+                    "AZUL_AZURE_OPENAI_AUTH_MODE": "entra",
+                },
+                clear=True,
+            ),
+            patch("azul_backend.azul_brain.api.routes.set_frontend_azure_token") as token_mock,
+        ):
+            response = await routes.desktop_azure_connect_handler(request)
+
+        self.assertEqual(response.status, 200)
+        self.assertFalse(token_mock.called)
+        self.assertEqual(os.environ["AZURE_OPENAI_ENDPOINT"], "https://example.openai.azure.com")
+        self.assertEqual(os.environ["AZURE_OPENAI_DEPLOYMENT"], "gpt-main")
+        self.assertEqual(os.environ["AZURE_OPENAI_SLOW_DEPLOYMENT"], "gpt-main")
+        self.assertEqual(os.environ["AZURE_OPENAI_FAST_DEPLOYMENT"], "gpt-fast")
+        self.assertEqual(os.environ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"], "text-embedding")
+        self.assertEqual(os.environ["AZURE_OPENAI_API_KEY"], "secret-key")
+        self.assertEqual(os.environ["AZUL_AZURE_OPENAI_AUTH_MODE"], "api_key")
+        self.assertNotIn("AZUL_KEY_VAULT_URL", os.environ)
+
+    async def test_connect_api_key_mode_requires_api_key(self) -> None:
+        payload = {
+            "auth_mode": "api_key",
+            "endpoint": "https://example.openai.azure.com",
+            "deployment": "gpt-main",
+        }
+        app = web.Application()
+        app["azure_auth_state"] = _FakeAuthState()
+        app["runtime_manager"] = _FakeRuntimeManager()
+        request = make_mocked_request("POST", "/api/desktop/azure/connect", app=app)
+        request._read_bytes = json.dumps(payload).encode("utf-8")
+
+        response = await routes.desktop_azure_connect_handler(request)
+        body = json.loads(response.text)
+
+        self.assertEqual(response.status, 400)
+        self.assertEqual(body["error"], "api_key is required")
+
+    async def test_connect_rejects_invalid_auth_mode(self) -> None:
+        payload = {
+            "auth_mode": "certificate",
+            "endpoint": "https://example.openai.azure.com",
+            "deployment": "gpt-main",
+        }
+        app = web.Application()
+        app["azure_auth_state"] = _FakeAuthState()
+        app["runtime_manager"] = _FakeRuntimeManager()
+        request = make_mocked_request("POST", "/api/desktop/azure/connect", app=app)
+        request._read_bytes = json.dumps(payload).encode("utf-8")
+
+        response = await routes.desktop_azure_connect_handler(request)
+        body = json.loads(response.text)
+
+        self.assertEqual(response.status, 400)
+        self.assertEqual(body["error"], "auth_mode must be 'entra' or 'api_key'")
+
     async def test_connect_clears_optional_environment_values(self) -> None:
         payload = {
             "access_token": "token",

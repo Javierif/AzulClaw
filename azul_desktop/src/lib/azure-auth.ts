@@ -1,6 +1,16 @@
+import { isTauri } from "@tauri-apps/api/core";
+
 const AZURE_OPENAI_SCOPE = "https://cognitiveservices.azure.com/.default";
 export const AZURE_ARM_SCOPE = "https://management.azure.com/.default";
 const AZURE_KEY_VAULT_SCOPE = "https://vault.azure.net/.default";
+const TAURI_AUTH_EVENT = "azure-auth-callback";
+
+interface AzureAuthCallbackPayload {
+  code?: string;
+  error?: string;
+  error_description?: string;
+  state?: string;
+}
 
 export interface AzureLoginRequest {
   tenantId: string;
@@ -126,25 +136,17 @@ async function exchangeCodeForToken(
   };
 }
 
-export async function loginWithMicrosoft(
+async function loginWithMicrosoftInBrowser(
   request: AzureLoginRequest,
-  {
-    scope,
-    prompt = "select_account",
-  }: {
-  scope: string;
-  prompt?: "select_account" | "none" | "consent" | "login";
-}): Promise<AzureLoginResult> {
-  const clientId = request.clientId.trim();
-  if (!clientId) {
-    throw new Error("Azure application client ID is required.");
-  }
-  const verifier = randomVerifier();
+  verifier: string,
+  scope: string,
+  prompt: "select_account" | "none" | "consent" | "login",
+): Promise<AzureLoginResult> {
   const challenge = base64UrlEncode(await sha256(verifier));
   const state = randomVerifier();
   const redirectUri = `${window.location.origin}/azure-auth-callback`;
   const params = new URLSearchParams({
-    client_id: clientId,
+    client_id: request.clientId.trim(),
     response_type: "code",
     redirect_uri: redirectUri,
     response_mode: "query",
@@ -154,17 +156,162 @@ export async function loginWithMicrosoft(
     code_challenge_method: "S256",
     prompt,
   });
-  const popup = window.open(
-    `${authBaseUrl(request.tenantId)}/authorize?${params.toString()}`,
-    "azulclaw-azure-login",
-    "popup=yes,width=520,height=720",
-  );
+  const popup = window.open("", "azulclaw-azure-login", "popup=yes,width=520,height=720");
   if (!popup) {
     throw new Error("The browser blocked the Microsoft login popup.");
   }
   popup.focus();
-  const code = await waitForAuthCode(popup, state);
+  try {
+    popup.location.href = `${authBaseUrl(request.tenantId)}/authorize?${params.toString()}`;
+    const code = await waitForAuthCode(popup, state);
+    return exchangeCodeForToken(request, code, verifier, redirectUri, scope);
+  } catch (error) {
+    popup.close();
+    throw error;
+  }
+}
+
+async function loginWithMicrosoftInTauri(
+  request: AzureLoginRequest,
+  verifier: string,
+  scope: string,
+  prompt: "select_account" | "none" | "consent" | "login",
+): Promise<AzureLoginResult> {
+  const [{ WebviewWindow }, { getCurrentWindow }] = await Promise.all([
+    import("@tauri-apps/api/webviewWindow"),
+    import("@tauri-apps/api/window"),
+  ]);
+
+  const challenge = base64UrlEncode(await sha256(verifier));
+  const state = randomVerifier();
+  const redirectUri = `${window.location.origin}/azure-auth-callback`;
+  const params = new URLSearchParams({
+    client_id: request.clientId.trim(),
+    response_type: "code",
+    redirect_uri: redirectUri,
+    response_mode: "query",
+    scope: `openid profile ${scope}`,
+    state,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    prompt,
+  });
+
+  const loginWindow = new WebviewWindow(`azure-login-${crypto.randomUUID()}`, {
+    url: `${authBaseUrl(request.tenantId)}/authorize?${params.toString()}`,
+    title: "Microsoft sign-in",
+    width: 520,
+    height: 720,
+    center: true,
+    focus: true,
+    resizable: true,
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    void loginWindow.once("tauri://created", () => {
+      if (!settled) {
+        settled = true;
+        resolve();
+      }
+    });
+    void loginWindow.once("tauri://error", (event) => {
+      if (!settled) {
+        settled = true;
+        reject(new Error(String(event.payload || "Microsoft login window could not be created.")));
+      }
+    });
+  });
+
+  const currentWindow = getCurrentWindow();
+  let settled = false;
+  let timeoutId = 0;
+  let unlistenEvent: (() => void) | undefined;
+  let unlistenClose: (() => void) | undefined;
+  let resolveCode: ((value: string) => void) | undefined;
+  let rejectCode: ((reason?: Error) => void) | undefined;
+
+  const cleanup = () => {
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+    }
+    unlistenEvent?.();
+    unlistenEvent = undefined;
+    unlistenClose?.();
+    unlistenClose = undefined;
+    void loginWindow.close().catch(() => {});
+  };
+
+  const finishResolve = (value: string) => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    resolveCode?.(value);
+  };
+
+  const finishReject = (error: Error) => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    rejectCode?.(error);
+  };
+
+  const codePromise = new Promise<string>((resolve, reject) => {
+    resolveCode = resolve;
+    rejectCode = reject;
+  });
+
+  try {
+    unlistenEvent = await currentWindow.listen<AzureAuthCallbackPayload>(TAURI_AUTH_EVENT, (event) => {
+      const payload = event.payload || {};
+      if (payload.state !== state) {
+        return;
+      }
+      if (payload.error) {
+        finishReject(new Error(payload.error_description || payload.error));
+        return;
+      }
+      if (!payload.code) {
+        finishReject(new Error("Microsoft login did not return an authorization code."));
+        return;
+      }
+      finishResolve(payload.code);
+    });
+    unlistenClose = await loginWindow.onCloseRequested(() => {
+      finishReject(new Error("Microsoft login was closed before it completed."));
+    });
+  } catch (error) {
+    finishReject(error instanceof Error ? error : new Error(String(error)));
+  }
+
+  timeoutId = window.setTimeout(() => {
+    finishReject(new Error("Microsoft login timed out."));
+  }, 120_000);
+
+  const code = await codePromise;
+
   return exchangeCodeForToken(request, code, verifier, redirectUri, scope);
+}
+
+export async function loginWithMicrosoft(
+  request: AzureLoginRequest,
+  {
+    scope,
+    prompt = "select_account",
+  }: {
+    scope: string;
+    prompt?: "select_account" | "none" | "consent" | "login";
+}): Promise<AzureLoginResult> {
+  const clientId = request.clientId.trim();
+  if (!clientId) {
+    throw new Error("Azure application client ID is required.");
+  }
+  const verifier = randomVerifier();
+
+  if (isTauri()) {
+    return loginWithMicrosoftInTauri(request, verifier, scope, prompt);
+  }
+  return loginWithMicrosoftInBrowser(request, verifier, scope, prompt);
 }
 
 export async function loginWithMicrosoftForAzure(request: AzureLoginRequest): Promise<AzureLoginResult> {
