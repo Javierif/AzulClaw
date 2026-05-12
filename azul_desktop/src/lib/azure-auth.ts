@@ -1,3 +1,5 @@
+import { isTauri } from "@tauri-apps/api/core";
+
 const AZURE_OPENAI_SCOPE = "https://cognitiveservices.azure.com/.default";
 export const AZURE_ARM_SCOPE = "https://management.azure.com/.default";
 const AZURE_KEY_VAULT_SCOPE = "https://vault.azure.net/.default";
@@ -134,10 +136,6 @@ async function exchangeCodeForToken(
   };
 }
 
-function isTauriRuntime(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
-
 async function loginWithMicrosoftInBrowser(
   request: AzureLoginRequest,
   verifier: string,
@@ -226,40 +224,45 @@ async function loginWithMicrosoftInTauri(
   });
 
   const currentWindow = getCurrentWindow();
-  const code = await new Promise<string>((resolve, reject) => {
-    let settled = false;
-    let timeoutId = 0;
-    let unlistenEvent: (() => void) | undefined;
-    let unlistenClose: (() => void) | undefined;
+  let settled = false;
+  let timeoutId = 0;
+  let unlistenEvent: (() => void) | undefined;
+  let unlistenClose: (() => void) | undefined;
+  let resolveCode: ((value: string) => void) | undefined;
+  let rejectCode: ((reason?: Error) => void) | undefined;
 
-    const cleanup = () => {
-      if (timeoutId) {
-        window.clearTimeout(timeoutId);
-      }
-      unlistenEvent?.();
-      unlistenClose?.();
-      void loginWindow.close().catch(() => {});
-    };
+  const cleanup = () => {
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+    }
+    unlistenEvent?.();
+    unlistenEvent = undefined;
+    unlistenClose?.();
+    unlistenClose = undefined;
+    void loginWindow.close().catch(() => {});
+  };
 
-    const finishResolve = (value: string) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(value);
-    };
+  const finishResolve = (value: string) => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    resolveCode?.(value);
+  };
 
-    const finishReject = (error: Error) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(error);
-    };
+  const finishReject = (error: Error) => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    rejectCode?.(error);
+  };
 
-    timeoutId = window.setTimeout(() => {
-      finishReject(new Error("Microsoft login timed out."));
-    }, 120_000);
+  const codePromise = new Promise<string>((resolve, reject) => {
+    resolveCode = resolve;
+    rejectCode = reject;
+  });
 
-    void currentWindow.listen<AzureAuthCallbackPayload>(TAURI_AUTH_EVENT, (event) => {
+  try {
+    unlistenEvent = await currentWindow.listen<AzureAuthCallbackPayload>(TAURI_AUTH_EVENT, (event) => {
       const payload = event.payload || {};
       if (payload.state !== state) {
         return;
@@ -273,20 +276,19 @@ async function loginWithMicrosoftInTauri(
         return;
       }
       finishResolve(payload.code);
-    }).then((unlisten) => {
-      unlistenEvent = unlisten;
-    }).catch((error) => {
-      finishReject(error instanceof Error ? error : new Error(String(error)));
     });
-
-    void loginWindow.onCloseRequested(() => {
+    unlistenClose = await loginWindow.onCloseRequested(() => {
       finishReject(new Error("Microsoft login was closed before it completed."));
-    }).then((unlisten) => {
-      unlistenClose = unlisten;
-    }).catch((error) => {
-      finishReject(error instanceof Error ? error : new Error(String(error)));
     });
-  });
+  } catch (error) {
+    finishReject(error instanceof Error ? error : new Error(String(error)));
+  }
+
+  timeoutId = window.setTimeout(() => {
+    finishReject(new Error("Microsoft login timed out."));
+  }, 120_000);
+
+  const code = await codePromise;
 
   return exchangeCodeForToken(request, code, verifier, redirectUri, scope);
 }
@@ -306,7 +308,7 @@ export async function loginWithMicrosoft(
   }
   const verifier = randomVerifier();
 
-  if (isTauriRuntime()) {
+  if (isTauri()) {
     return loginWithMicrosoftInTauri(request, verifier, scope, prompt);
   }
   return loginWithMicrosoftInBrowser(request, verifier, scope, prompt);

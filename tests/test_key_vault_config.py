@@ -238,6 +238,14 @@ class KeyVaultConfigTests(unittest.TestCase):
             "https://profile.openai.azure.com",
         )
         self.assertEqual(
+            config.normalize_azure_openai_endpoint("https://profile.openai.azure.com/openai"),
+            "https://profile.openai.azure.com",
+        )
+        self.assertEqual(
+            config.normalize_azure_openai_endpoint("https://profile.openai.azure.com/openai/v1"),
+            "https://profile.openai.azure.com",
+        )
+        self.assertEqual(
             config.normalize_azure_openai_endpoint("https://profile.services.ai.azure.com/"),
             "https://profile.services.ai.azure.com",
         )

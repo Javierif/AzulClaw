@@ -426,15 +426,15 @@ export async function loadHatching(): Promise<HatchingProfile> {
 }
 
 export async function saveHatching(profile: HatchingProfile): Promise<HatchingProfile> {
-  const safeProfile = await prepareProfileForPersistence(profile);
+  let safeProfile = cloneProfileWithSafeAzureConfig(profile);
   try {
+    safeProfile = await prepareProfileForPersistence(profile);
     return await fetchJson<HatchingProfile>("/api/desktop/hatching", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(safeProfile),
     });
   } catch {
-    const safeProfile = cloneProfileWithSafeAzureConfig(profile);
     localStorage.setItem("azul_mock_profile", JSON.stringify(safeProfile));
     return safeProfile;
   }
