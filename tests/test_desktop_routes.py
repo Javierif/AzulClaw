@@ -73,6 +73,7 @@ class FakeOrchestrator:
         message: str,
         lane: str = "auto",
         conversation_id: str | None = None,
+        attachment_ids: list[str] | None = None,
     ) -> FakeReply:
         self.calls.append(
             {
@@ -80,6 +81,7 @@ class FakeOrchestrator:
                 "message": message,
                 "lane": lane,
                 "conversation_id": conversation_id,
+                "attachment_ids": attachment_ids or [],
             }
         )
         return FakeReply()
@@ -118,6 +120,18 @@ class DesktopChatRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(orchestrator.memory.created_for, ["desktop-user"])
         self.assertEqual(orchestrator.memory.active, [("desktop-user", "conv-created")])
         self.assertEqual(orchestrator.calls[0]["conversation_id"], "conv-created")
+        self.assertEqual(payload["conversation_id"], "conv-created")
+
+    async def test_non_stream_chat_accepts_attachment_only_turns(self) -> None:
+        orchestrator = FakeOrchestrator()
+        request = FakeRequest({"attachment_ids": ["att-1"]}, orchestrator)
+
+        response = await desktop_chat_handler(request)
+        payload = json.loads(response.text)
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(orchestrator.calls[0]["message"], "Please analyze the attached files.")
+        self.assertEqual(orchestrator.calls[0]["attachment_ids"], ["att-1"])
         self.assertEqual(payload["conversation_id"], "conv-created")
 
     async def test_non_stream_chat_ignores_non_owned_conversation(self) -> None:

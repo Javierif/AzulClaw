@@ -5,18 +5,16 @@ import babyMascot from "../../../img/hatching_azulclaw.png";
 
 import { Sidebar } from "../components/Sidebar";
 import { ChatShell } from "../features/chat/ChatShell";
+import { ContextShell } from "../features/context/ContextShell";
 import { HeartbeatsShell } from "../features/heartbeats/HeartbeatsShell";
-import { HatchingShell } from "../features/hatching/HatchingShell";
-import { MemoryShell } from "../features/memory/MemoryShell";
-import { ProcessesShell } from "../features/processes/ProcessesShell";
+import { SetupWizardShell } from "../features/hatching/HatchingShell";
 import { SettingsShell } from "../features/settings/SettingsShell";
 import { SkillsShell } from "../features/skills/SkillsShell";
-import { WorkspaceShell } from "../features/workspace/WorkspaceShell";
-import { ensureBackendAuth, loadBackendStatus, loadHatching } from "../lib/api";
+import { ensureBackendAuth, loadBackendStatus, loadSetupProfile } from "../lib/api";
 import { profileCanRenewAzureLogin, renewAzureLoginFromProfile } from "../lib/azure-session";
 import { DEFAULT_CONVERSATION_TITLE, normalizeConversationTitle } from "../lib/conversation-copy";
-import type { AppView, HatchingProfile } from "../lib/contracts";
-import { defaultHatchingProfile } from "../lib/mock-data";
+import type { AppView, SetupProfile } from "../lib/contracts";
+import { defaultSetupProfile } from "../lib/mock-data";
 
 const THINKING_SENTENCES = [
   "Connecting the dots...",
@@ -51,30 +49,25 @@ const TYPING_SENTENCES = [
 
 function renderView(
   view: AppView,
-  profile: HatchingProfile,
-  setProfile: (p: HatchingProfile) => void,
+  profile: SetupProfile,
+  setProfile: (p: SetupProfile) => void,
   onThinkingChange: (thinking: boolean) => void,
   onTypingChange: (typing: boolean) => void,
   onAnswerStart: () => void,
-  onLocalDataWiped: (p: HatchingProfile) => void,
+  onLocalDataWiped: (p: SetupProfile) => void,
   onTitleChange: (title: string) => void,
   onRegisterNewChat: (fn: () => void) => void,
+  headerPortalTarget: HTMLElement | null,
 ) {
   switch (view) {
-    case "hatching":
-      return <HatchingShell profile={profile} onProfileSaved={setProfile} />;
     case "skills":
-      return <SkillsShell />;
-    case "processes":
-      return <ProcessesShell />;
+      return <SkillsShell headerPortalTarget={headerPortalTarget} />;
+    case "context":
+      return <ContextShell headerPortalTarget={headerPortalTarget} />;
     case "heartbeats":
-      return <HeartbeatsShell />;
-    case "memory":
-      return <MemoryShell />;
-    case "workspace":
-      return <WorkspaceShell />;
+      return <HeartbeatsShell headerPortalTarget={headerPortalTarget} />;
     case "settings":
-      return <SettingsShell onLocalDataWiped={onLocalDataWiped} />;
+      return <SettingsShell headerPortalTarget={headerPortalTarget} onLocalDataWiped={onLocalDataWiped} />;
     case "chat":
     default:
       return (
@@ -91,7 +84,7 @@ function renderView(
 
 export function DesktopApp() {
   const [activeView, setActiveView] = useState<AppView>("chat");
-  const [profile, setProfile] = useState<HatchingProfile>(defaultHatchingProfile);
+  const [profile, setProfile] = useState<SetupProfile>(defaultSetupProfile);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [authPromptVisible, setAuthPromptVisible] = useState(false);
   const [authPromptBusy, setAuthPromptBusy] = useState(false);
@@ -99,6 +92,7 @@ export function DesktopApp() {
   const [authPromptDismissWarning, setAuthPromptDismissWarning] = useState(false);
   const [topbarLabel, setTopbarLabel] = useState<{ text: string; mode: "thinking" | "typing" } | null>(null);
   const [conversationTitle, setConversationTitle] = useState(DEFAULT_CONVERSATION_TITLE);
+  const [sectionHeaderHost, setSectionHeaderHost] = useState<HTMLDivElement | null>(null);
   const newChatFnRef = useRef<() => void>(() => {});
   const thinkingIntervalRef = useRef<number | null>(null);
   const typingClearRef = useRef<number | null>(null);
@@ -108,13 +102,10 @@ export function DesktopApp() {
   useEffect(() => {
     let isMounted = true;
 
-    loadHatching().then(async (data) => {
+    loadSetupProfile().then(async (data) => {
       if (isMounted) {
         setProfile(data);
         setIsBootstrapping(false);
-        if (!data.is_hatched) {
-          setActiveView("hatching");
-        }
       }
       try {
         const auth = await ensureBackendAuth();
@@ -240,7 +231,7 @@ export function DesktopApp() {
 
   if (!profile.is_hatched) {
     return (
-      <HatchingShell
+      <SetupWizardShell
         profile={profile}
         onboardingRequired
         onProfileSaved={(saved) => {
@@ -257,7 +248,7 @@ export function DesktopApp() {
     <div className="desktop-frame">
       <Sidebar activeView={activeView} onNavigate={setActiveView} profile={profile} />
       <main className="desktop-main">
-        <header className="desktop-topbar">
+        <header className={`desktop-topbar${activeView === "chat" ? "" : " desktop-topbar-section-mode"}`}>
           <div className="topbar-identity">
             <img className="topbar-mascot" src={adultMascot} alt={profile.name} />
             {topbarLabel && (
@@ -279,7 +270,8 @@ export function DesktopApp() {
               </div>
             </div>
           )}
-          <div className="topbar-right">
+          {activeView === "chat" ? (
+            <div className="topbar-right">
             <div className="topbar-status-row">
               <span className="topbar-live-dot" />
               <span className="topbar-status-label">Slow Brain</span>
@@ -289,7 +281,10 @@ export function DesktopApp() {
             <span className="topbar-workspace-chip" title={profile.workspace_root}>
               {profile.workspace_root}
             </span>
-          </div>
+            </div>
+          ) : (
+            <div className="topbar-section-host" ref={setSectionHeaderHost} />
+          )}
         </header>
         {renderView(
           activeView,
@@ -304,6 +299,7 @@ export function DesktopApp() {
           },
           setConversationTitle,
           (fn) => { newChatFnRef.current = fn; },
+          sectionHeaderHost,
         )}
         {authPromptVisible && (
           <div className="hw-modal-backdrop">

@@ -288,26 +288,22 @@ class RuntimeScheduler:
         """Runs a user-created heartbeat without workspace tools or chat history."""
         prompt = self._build_user_job_prompt(job, reason=reason)
         runtime_manager = getattr(self.orchestrator, "runtime_manager", None)
-        if runtime_manager is not None and hasattr(runtime_manager, "execute_messages"):
-            result = await runtime_manager.execute_messages(
-                messages=[Message(role="user", contents=prompt)],
-                lane=job.lane,
-                title=f"Scheduled job: {job.name}",
-                source="cron",
-                kind="scheduled-heartbeat",
-                tools_enabled=False,
-                instructions=USER_HEARTBEAT_INSTRUCTIONS,
+        if runtime_manager is None or not hasattr(runtime_manager, "execute_messages"):
+            raise RuntimeError(
+                "Isolated runtime manager is required for user heartbeats; "
+                "refusing to run with chat history or workspace tools."
             )
-            return result.text
 
-        return await self.orchestrator.process_message(
-            user_id=f"cron:{job.id}",
-            user_message=prompt,
+        result = await runtime_manager.execute_messages(
+            messages=[Message(role="user", contents=prompt)],
             lane=job.lane,
-            source="cron",
-            store_memory=False,
             title=f"Scheduled job: {job.name}",
+            source="cron",
+            kind="scheduled-heartbeat",
+            tools_enabled=False,
+            instructions=USER_HEARTBEAT_INSTRUCTIONS,
         )
+        return result.text
 
     def _build_user_job_prompt(self, job: ScheduledJob, *, reason: str) -> str:
         """Builds an isolated execution prompt for user-created scheduled jobs."""

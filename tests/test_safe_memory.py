@@ -110,6 +110,93 @@ class SafeMemoryTests(unittest.TestCase):
             )
             memory.close()
 
+    def test_attachment_draft_binds_to_persisted_message_and_surfaces_in_history(self) -> None:
+        with temp_memory_dir() as tmp:
+            memory = SafeMemory(
+                db_path=str(tmp / "memory.sqlite"),
+                attachments_root=str(tmp / "attachments"),
+            )
+            try:
+                conversation_id = memory.create_conversation("desktop-user")
+
+                draft = memory.create_attachment_draft(
+                    user_id="desktop-user",
+                    filename="notes.txt",
+                    data=b"hello attachment",
+                    conversation_id=conversation_id,
+                )
+                message_id = memory.add_message(
+                    "desktop-user",
+                    "user",
+                    "please read this",
+                    conversation_id=conversation_id,
+                )
+                bound = memory.bind_draft_attachments_to_message(
+                    attachment_ids=[draft["id"]],
+                    user_id="desktop-user",
+                    conversation_id=conversation_id,
+                    message_id=message_id,
+                )
+
+                self.assertEqual(len(bound), 1)
+                records = memory.get_conversation_message_records(conversation_id)
+                self.assertEqual(records[0]["message_id"], message_id)
+                self.assertEqual(records[0]["attachments"][0]["filename"], "notes.txt")
+            finally:
+                memory.close()
+
+    def test_delete_draft_attachment_removes_unsent_file(self) -> None:
+        with temp_memory_dir() as tmp:
+            memory = SafeMemory(
+                db_path=str(tmp / "memory.sqlite"),
+                attachments_root=str(tmp / "attachments"),
+            )
+            try:
+                draft = memory.create_attachment_draft(
+                    user_id="desktop-user",
+                    filename="notes.txt",
+                    data=b"hello attachment",
+                )
+
+                stored = memory.get_attachment(draft["id"], "desktop-user")
+                self.assertIsNotNone(stored)
+                stored_path = Path(str(stored["storage_path"]))
+                self.assertTrue(stored_path.exists())
+                self.assertTrue(memory.delete_draft_attachment(draft["id"], "desktop-user"))
+                self.assertFalse(stored_path.exists())
+                self.assertIsNone(memory.get_attachment(draft["id"], "desktop-user"))
+            finally:
+                memory.close()
+
+    def test_cleanup_expired_draft_attachments_removes_old_rows(self) -> None:
+        with temp_memory_dir() as tmp:
+            memory = SafeMemory(
+                db_path=str(tmp / "memory.sqlite"),
+                attachments_root=str(tmp / "attachments"),
+            )
+            try:
+                draft = memory.create_attachment_draft(
+                    user_id="desktop-user",
+                    filename="notes.txt",
+                    data=b"hello attachment",
+                )
+
+                stored = memory.get_attachment(draft["id"], "desktop-user")
+                self.assertIsNotNone(stored)
+                stored_path = Path(str(stored["storage_path"]))
+                memory._conn.execute(
+                    "UPDATE conversation_attachments SET created_at = datetime('now', '-48 hours') WHERE id = ?",
+                    (draft["id"],),
+                )
+                memory._conn.commit()
+
+                memory.cleanup_expired_draft_attachments(max_age_hours=24)
+
+                self.assertFalse(stored_path.exists())
+                self.assertIsNone(memory.get_attachment(draft["id"], "desktop-user"))
+            finally:
+                memory.close()
+
     def test_conversation_message_merge_preserves_legitimate_repeated_messages(self) -> None:
         with temp_memory_dir() as tmp:
             memory = SafeMemory(db_path=str(tmp / "memory.sqlite"))

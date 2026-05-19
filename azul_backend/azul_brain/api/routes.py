@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pathlib import Path
 import time
 from dataclasses import replace
@@ -24,6 +25,7 @@ from .services import (
     invalidate_runtime_model_caches,
     save_hatching_profile,
     save_memory_runtime_settings,
+    summarize_job,
     summarize_jobs,
     summarize_memory,
     summarize_processes,
@@ -45,6 +47,7 @@ KEY_VAULT_HOST_SUFFIXES = (
     "vault.usgovcloudapi.net",
     "vault.microsoftazure.de",
 )
+MAX_ATTACHMENTS_PER_TURN = 10
 
 
 def _desktop_user_id(value: object = "desktop-user") -> str:
@@ -58,6 +61,27 @@ def _conversation_belongs_to_user(memory, conversation_id: str | None, user_id: 
     if callable(checker):
         return bool(checker(conversation_id, user_id))
     return bool(memory.conversation_exists(conversation_id))
+
+
+def _attachment_ids_from_payload(payload: dict) -> list[str]:
+    raw_ids = payload.get("attachment_ids", [])
+    if raw_ids is None:
+        return []
+    if not isinstance(raw_ids, list):
+        raise ValueError("attachment_ids must be an array.")
+    attachment_ids = [str(item).strip() for item in raw_ids if str(item).strip()]
+    if len(attachment_ids) > MAX_ATTACHMENTS_PER_TURN:
+        raise ValueError(f"At most {MAX_ATTACHMENTS_PER_TURN} attachments are allowed per turn.")
+    return attachment_ids
+
+
+def _effective_desktop_message(message: str, attachment_ids: list[str]) -> str:
+    normalized = (message or "").strip()
+    if normalized:
+        return normalized
+    if attachment_ids:
+        return "Please analyze the attached files."
+    return ""
 
 
 async def health_handler(_: web.Request) -> web.Response:
@@ -515,18 +539,59 @@ def _is_supported_model_resource(item: dict, endpoint: str) -> bool:
     )
 
 
+def _normalize_deployment_capability(value: object) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", str(value).strip().lower()).strip("-")
+
+
+def _extend_unique_capabilities(target: list[str], values: list[str]) -> None:
+    seen = set(target)
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        target.append(value)
+
+
+def _extract_arm_deployment_capabilities(item: dict) -> list[str]:
+    properties = item.get("properties", {}) if isinstance(item, dict) else {}
+    raw_capabilities = properties.get("capabilities") if isinstance(properties, dict) else None
+    extracted: list[str] = []
+    falsey = {"", "0", "false", "no", "none", "null", "disabled"}
+
+    if isinstance(raw_capabilities, dict):
+        for key, value in raw_capabilities.items():
+            if isinstance(value, bool):
+                if not value:
+                    continue
+            elif str(value).strip().lower() in falsey:
+                continue
+            token = _normalize_deployment_capability(key)
+            if token:
+                extracted.append(token)
+    elif isinstance(raw_capabilities, list):
+        for value in raw_capabilities:
+            token = _normalize_deployment_capability(value)
+            if token:
+                extracted.append(token)
+
+    return extracted
+
+
 def _suggest_deployment_capabilities(item: dict) -> list[str]:
     model = item.get("properties", {}).get("model", {}) if isinstance(item, dict) else {}
     model_name = str(model.get("name", "")).lower()
     capabilities: list[str] = []
+    _extend_unique_capabilities(capabilities, _extract_arm_deployment_capabilities(item))
     if "embedding" in model_name:
-        capabilities.append("embedding")
+        _extend_unique_capabilities(capabilities, ["embedding"])
     else:
-        capabilities.append("chat")
+        _extend_unique_capabilities(capabilities, ["chat"])
         if "mini" in model_name or "nano" in model_name:
-            capabilities.append("fast")
+            _extend_unique_capabilities(capabilities, ["fast"])
         else:
-            capabilities.append("main")
+            _extend_unique_capabilities(capabilities, ["main"])
+    if "vision" in model_name:
+        _extend_unique_capabilities(capabilities, ["vision", "image-input", "multimodal"])
     return capabilities
 
 
@@ -726,6 +791,49 @@ async def desktop_azure_discovery_deployments_handler(req: web.Request) -> web.R
     return web.json_response({"items": items})
 
 
+async def desktop_attachments_post_handler(req: web.Request) -> web.Response:
+    """Stores draft attachments uploaded from the desktop composer."""
+    orchestrator = req.app["orchestrator"]
+    user_id = _desktop_user_id(req.query.get("user_id") or req.headers.get("X-Azul-User-Id"))
+    conversation_id = str(req.query.get("conversation_id", "")).strip() or None
+    reader = await req.multipart()
+    created: list[dict] = []
+
+    async for part in reader:
+        if getattr(part, "filename", None) is None:
+            continue
+        filename = str(part.filename or "").strip() or "attachment"
+        data = await part.read()
+        try:
+            created.append(
+                orchestrator.memory.create_attachment_draft(
+                    user_id=user_id,
+                    filename=filename,
+                    data=data,
+                    conversation_id=conversation_id,
+                )
+            )
+        except ValueError as error:
+            return web.json_response({"error": str(error)}, status=400)
+
+    if not created:
+        return web.json_response({"error": "No files were uploaded."}, status=400)
+    return web.json_response({"items": created})
+
+
+async def desktop_attachment_delete_handler(req: web.Request) -> web.Response:
+    """Deletes a draft attachment before it is sent."""
+    orchestrator = req.app["orchestrator"]
+    user_id = _desktop_user_id(req.query.get("user_id"))
+    attachment_id = req.match_info.get("attachment_id", "").strip()
+    if not attachment_id:
+        return web.json_response({"error": "attachment_id required"}, status=400)
+    deleted = orchestrator.memory.delete_draft_attachment(attachment_id, user_id)
+    if not deleted:
+        return web.json_response({"error": "Attachment not found"}, status=404)
+    return web.json_response({"deleted": True, "id": attachment_id})
+
+
 async def desktop_chat_handler(req: web.Request) -> web.Response:
     """Processes a message from the desktop app."""
     orchestrator = req.app["orchestrator"]
@@ -734,6 +842,11 @@ async def desktop_chat_handler(req: web.Request) -> web.Response:
     user_id = _desktop_user_id(payload.get("user_id"))
     message = str(payload.get("message", "")).strip()
     conversation_id = str(payload.get("conversation_id", "")).strip() or None
+    try:
+        attachment_ids = _attachment_ids_from_payload(payload)
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    message = _effective_desktop_message(message, attachment_ids)
 
     if not message:
         return web.json_response({"error": "message is required"}, status=400)
@@ -747,8 +860,13 @@ async def desktop_chat_handler(req: web.Request) -> web.Response:
         message,
         lane="auto",
         conversation_id=conversation_id,
+        attachment_ids=attachment_ids,
     )
-    history = orchestrator.memory.get_conversation_messages(conversation_id, limit=12)
+    history_loader = getattr(orchestrator.memory, "get_conversation_message_records", None)
+    if callable(history_loader):
+        history = history_loader(conversation_id, limit=12)
+    else:
+        history = orchestrator.memory.get_conversation_messages(conversation_id, limit=12)
     conversation_title = orchestrator.memory.get_conversation_title(conversation_id)
     return web.json_response(
         {
@@ -776,6 +894,11 @@ async def desktop_chat_stream_handler(req: web.Request) -> web.StreamResponse:
     user_id = _desktop_user_id(payload.get("user_id"))
     message = str(payload.get("message", "")).strip()
     conversation_id = str(payload.get("conversation_id", "")).strip() or None
+    try:
+        attachment_ids = _attachment_ids_from_payload(payload)
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    message = _effective_desktop_message(message, attachment_ids)
 
     # If no conversation supplied, get or create an empty one so messages are always scoped.
     if not _conversation_belongs_to_user(orchestrator.memory, conversation_id, user_id):
@@ -820,11 +943,16 @@ async def desktop_chat_stream_handler(req: web.Request) -> web.StreamResponse:
             message,
             lane="auto",
             conversation_id=conversation_id,
+            attachment_ids=attachment_ids,
             on_delta=lambda text: write_event({"type": "delta", "text": text}),
             on_commentary=lambda text: write_event({"type": "commentary", "text": text}),
             on_progress=lambda progress: write_event({"type": "progress", "progress": progress}),
         )
-        history = orchestrator.memory.get_conversation_messages(conversation_id, limit=12)
+        history_loader = getattr(orchestrator.memory, "get_conversation_message_records", None)
+        if callable(history_loader):
+            history = history_loader(conversation_id, limit=12)
+        else:
+            history = orchestrator.memory.get_conversation_messages(conversation_id, limit=12)
         conv_title = reply.conversation_title or orchestrator.memory.get_conversation_title(
             conversation_id
         )
@@ -861,7 +989,8 @@ async def desktop_conversations_handler(req: web.Request) -> web.Response:
     """Lists conversations for the desktop user."""
     orchestrator = req.app["orchestrator"]
     user_id = _desktop_user_id(req.query.get("user_id"))
-    convs = orchestrator.memory.list_conversations(user_id)
+    query = str(req.query.get("q", "")).strip()
+    convs = orchestrator.memory.list_conversations(user_id, query=query)
     return web.json_response({"items": convs})
 
 
@@ -885,7 +1014,11 @@ async def desktop_conversation_messages_handler(req: web.Request) -> web.Respons
     if not _conversation_belongs_to_user(orchestrator.memory, conv_id, user_id):
         return web.json_response({"error": "Conversation not found"}, status=404)
     orchestrator.memory.set_active_conversation(user_id, conv_id)
-    msgs = orchestrator.memory.get_conversation_messages(conv_id)
+    loader = getattr(orchestrator.memory, "get_conversation_message_records", None)
+    if callable(loader):
+        msgs = loader(conv_id)
+    else:
+        msgs = orchestrator.memory.get_conversation_messages(conv_id)
     return web.json_response({"messages": msgs})
 
 
@@ -1075,7 +1208,7 @@ async def desktop_jobs_post_handler(req: web.Request) -> web.Response:
         job = req.app["runtime_store"].upsert_job(payload)
     except ValueError as error:
         return web.json_response({"error": str(error)}, status=400)
-    return web.json_response(job.__dict__)
+    return web.json_response(summarize_job(job))
 
 
 async def desktop_job_run_handler(req: web.Request) -> web.Response:
@@ -1110,6 +1243,8 @@ def register_desktop_routes(app: web.Application) -> None:
     app.router.add_post("/api/desktop/azure/discovery/key-vaults", desktop_azure_discovery_key_vaults_handler)
     app.router.add_post("/api/desktop/azure/discovery/key-vault-secrets", desktop_azure_discovery_key_vault_secrets_handler)
     app.router.add_post("/api/desktop/azure/discovery/deployments", desktop_azure_discovery_deployments_handler)
+    app.router.add_post("/api/desktop/attachments", desktop_attachments_post_handler)
+    app.router.add_delete("/api/desktop/attachments/{attachment_id}", desktop_attachment_delete_handler)
     app.router.add_post("/api/desktop/chat", desktop_chat_handler)
     app.router.add_post("/api/desktop/chat/stream", desktop_chat_stream_handler)
     app.router.add_get("/api/desktop/conversations", desktop_conversations_handler)

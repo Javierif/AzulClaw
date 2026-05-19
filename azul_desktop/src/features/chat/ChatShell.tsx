@@ -1,22 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  deleteDraftAttachment,
   deleteConversation,
   getConversationMessages,
   listConversations,
   sendDesktopMessageStream,
+  uploadDraftAttachments,
 } from "../../lib/api";
-import { Tooltip } from "../../components/Tooltip";
+import { readClipboardFilePaths, readLocalFilesFromPaths } from "../../lib/desktop-attachments";
 import {
   DEFAULT_CONVERSATION_TITLE,
   normalizeConversationTitle,
   withNormalizedConversationTitles,
 } from "../../lib/conversation-copy";
-import type { ChatExchange, ConversationSummary, ThinkingProgress } from "../../lib/contracts";
+import type { AttachmentSummary, ChatExchange, ConversationSummary, ThinkingProgress } from "../../lib/contracts";
+import { isTauri } from "@tauri-apps/api/core";
+import { listen, TauriEvent } from "@tauri-apps/api/event";
 
 type ChatMessageItem = ChatExchange & {
   kind: "text" | "thinking" | "pending";
   progress?: ThinkingProgress;
+};
+
+type DragDropPayload = {
+  paths?: string[];
 };
 
 type HeartbeatConfirmationDetails = {
@@ -46,6 +54,25 @@ function toUiMessages(items: ChatExchange[]): ChatMessageItem[] {
   return items.map((item) => ({ ...item, kind: "text" }));
 }
 
+function sameAttachments(a: AttachmentSummary[] = [], b: AttachmentSummary[] = []): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  return a.every((item, index) => {
+    const other = b[index];
+    return (
+      item.id === other.id &&
+      item.filename === other.filename &&
+      item.mime_type === other.mime_type &&
+      item.size_bytes === other.size_bytes &&
+      item.kind === other.kind &&
+      item.extraction_status === other.extraction_status &&
+      item.page_count === other.page_count &&
+      JSON.stringify(item.preview || {}) === JSON.stringify(other.preview || {})
+    );
+  });
+}
+
 function sameMessages(a: ChatMessageItem[], b: ChatMessageItem[]): boolean {
   if (a.length !== b.length) {
     return false;
@@ -56,9 +83,37 @@ function sameMessages(a: ChatMessageItem[], b: ChatMessageItem[]): boolean {
       item.id === other.id &&
       item.role === other.role &&
       item.kind === other.kind &&
-      item.content === other.content
+      item.content === other.content &&
+      sameAttachments(item.attachments, other.attachments)
     );
   });
+}
+
+function formatAttachmentSize(sizeBytes: number): string {
+  if (sizeBytes >= 1024 * 1024) {
+    return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  if (sizeBytes >= 1024) {
+    return `${Math.round(sizeBytes / 1024)} KB`;
+  }
+  return `${sizeBytes} B`;
+}
+
+function attachmentPreviewUrl(attachment: AttachmentSummary): string {
+  return attachment.preview?.thumbnail_data_uri?.trim() || "";
+}
+
+function attachmentStatusLabel(attachment: AttachmentSummary): string {
+  if (attachment.extraction_status === "low_text_quality") {
+    return "Visual analysis";
+  }
+  if (attachment.kind === "image") {
+    return "Image";
+  }
+  if (attachment.page_count > 1) {
+    return `${attachment.page_count} pages`;
+  }
+  return attachment.kind === "text" ? "Text" : "Document";
 }
 
 function phaseStatusLabel(status: "pending" | "active" | "done") {
@@ -257,6 +312,55 @@ function ThinkingCard({ message }: { message: ChatMessageItem }) {
   );
 }
 
+function AttachmentList({
+  attachments,
+  compact = false,
+  onRemove,
+}: {
+  attachments: AttachmentSummary[];
+  compact?: boolean;
+  onRemove?: (attachmentId: string) => void;
+}) {
+  if (attachments.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className={`attachment-list${compact ? " attachment-list-compact" : ""}`}>
+      {attachments.map((attachment) => {
+        const previewUrl = attachmentPreviewUrl(attachment);
+        return (
+          <article key={attachment.id} className="attachment-chip">
+            {previewUrl ? (
+              <img src={previewUrl} alt={attachment.filename} className="attachment-chip-thumb" />
+            ) : (
+              <div className="attachment-chip-icon" aria-hidden="true">
+                {attachment.kind === "image" ? "IMG" : attachment.mime_type === "application/pdf" ? "PDF" : "DOC"}
+              </div>
+            )}
+            <div className="attachment-chip-body">
+              <strong title={attachment.filename}>{attachment.filename}</strong>
+              <span>
+                {attachmentStatusLabel(attachment)} · {formatAttachmentSize(attachment.size_bytes)}
+              </span>
+            </div>
+            {onRemove ? (
+              <button
+                type="button"
+                className="attachment-chip-remove"
+                onClick={() => onRemove(attachment.id)}
+                aria-label={`Remove ${attachment.filename}`}
+              >
+                ×
+              </button>
+            ) : null}
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
 
 function formatRelativeDate(isoString: string): string {
   try {
@@ -288,17 +392,25 @@ export function ChatShell({
 }) {
   const [messages, setMessages] = useState<ChatMessageItem[]>([]);
   const [draft, setDraft] = useState("");
+  const [draftAttachments, setDraftAttachments] = useState<AttachmentSummary[]>([]);
+  const [attachmentError, setAttachmentError] = useState("");
+  const [isUploadingAttachments, setIsUploadingAttachments] = useState(false);
+  const [isDragActive, setIsDragActive] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isFetchingSearch, setIsFetchingSearch] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [recentChats, setRecentChats] = useState<ConversationSummary[]>([]);
+  const [conversationSearch, setConversationSearch] = useState("");
   const [sessionListTitle, setSessionListTitle] = useState(DEFAULT_CONVERSATION_TITLE);
   const streamMessageIdRef = useRef("");
   const streamBufferRef = useRef("");
   const answerStartedRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const shouldAutoScrollRef = useRef(true);
   const streamPumpRef = useRef<number | null>(null);
+  const hasLoadedConversationsRef = useRef(false);
 
   function isMessageListNearBottom(): boolean {
     const list = messageListRef.current;
@@ -316,6 +428,53 @@ export function ChatShell({
       shouldAutoScrollRef.current = shouldAutoScroll;
       return nextMessages;
     });
+  }
+
+  async function removeDraftAttachmentFromServer(attachmentId: string) {
+    try {
+      await deleteDraftAttachment(attachmentId);
+    } catch {
+      /* best effort */
+    }
+  }
+
+  async function clearDraftAttachments() {
+    const ids = draftAttachments.map((attachment) => attachment.id);
+    setDraftAttachments([]);
+    if (ids.length === 0) {
+      return;
+    }
+    await Promise.all(ids.map((id) => removeDraftAttachmentFromServer(id)));
+  }
+
+  async function addFilesToDraft(files: File[]) {
+    const nextFiles = files.filter((file) => file.size > 0);
+    if (nextFiles.length === 0) {
+      return;
+    }
+    setAttachmentError("");
+    setIsUploadingAttachments(true);
+    try {
+      const uploaded = await uploadDraftAttachments(nextFiles, "desktop-user", conversationId ?? undefined);
+      setDraftAttachments((current) => {
+        const existingIds = new Set(current.map((item) => item.id));
+        return [...current, ...uploaded.filter((item) => !existingIds.has(item.id))];
+      });
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : "Could not attach the selected files.");
+    } finally {
+      setIsUploadingAttachments(false);
+    }
+  }
+
+  async function addLocalPathsToDraft(paths: string[]) {
+    const files = await readLocalFilesFromPaths(paths);
+    await addFilesToDraft(files);
+  }
+
+  async function handleRemoveDraftAttachment(attachmentId: string) {
+    setDraftAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
+    await removeDraftAttachmentFromServer(attachmentId);
   }
 
   function ensureStreamPump() {
@@ -366,12 +525,46 @@ export function ChatShell({
     }
   }
 
+  async function handleClipboardPaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const clipboardFiles: File[] = [];
+    for (const item of Array.from(event.clipboardData.items || [])) {
+      if (item.kind === "file") {
+        const file = item.getAsFile();
+        if (file) {
+          clipboardFiles.push(file);
+        }
+      }
+    }
+
+    if (clipboardFiles.length > 0) {
+      event.preventDefault();
+      await addFilesToDraft(clipboardFiles);
+      return;
+    }
+
+    if (isTauri()) {
+      const clipboardPaths = await readClipboardFilePaths();
+      if (clipboardPaths.length > 0) {
+        event.preventDefault();
+        await addLocalPathsToDraft(clipboardPaths);
+      }
+    }
+  }
+
+  async function handleDomFileDrop(fileList: FileList | null) {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) {
+      return;
+    }
+    await addFilesToDraft(files);
+  }
+
   // On mount: load existing conversations; never create one here (lazy creation on first send)
   useEffect(() => {
     let cancelled = false;
     async function initConversation() {
       try {
-        const chatsRaw = await listConversations();
+        const chatsRaw = await listConversations("desktop-user", conversationSearch);
         if (cancelled) return;
         const chats = withNormalizedConversationTitles(chatsRaw);
         setRecentChats(chats);
@@ -396,12 +589,40 @@ export function ChatShell({
         replaceMessagesIfChanged([createWelcomeMessage()], true);
         setSessionListTitle(DEFAULT_CONVERSATION_TITLE);
         onTitleChange?.(DEFAULT_CONVERSATION_TITLE);
+      } finally {
+        hasLoadedConversationsRef.current = true;
       }
     }
     void initConversation();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!hasLoadedConversationsRef.current) {
+      return;
+    }
+    let cancelled = false;
+    setIsFetchingSearch(true);
+    const debounceId = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const chatsRaw = await listConversations("desktop-user", conversationSearch);
+          if (cancelled) return;
+          setRecentChats(withNormalizedConversationTitles(chatsRaw));
+        } catch {
+          /* ignore search refresh failures */
+        } finally {
+          if (!cancelled) setIsFetchingSearch(false);
+        }
+      })();
+    }, 180);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(debounceId);
+    };
+  }, [conversationSearch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -419,7 +640,7 @@ export function ChatShell({
       }
 
       try {
-        const chatsRaw = await listConversations();
+        const chatsRaw = await listConversations("desktop-user", conversationSearch);
         if (cancelled) return;
         const chats = withNormalizedConversationTitles(chatsRaw);
         setRecentChats(chats);
@@ -456,7 +677,7 @@ export function ChatShell({
         window.clearTimeout(pollId);
       }
     };
-  }, [conversationId, isSending, onTitleChange]);
+  }, [conversationId, conversationSearch, isSending, onTitleChange]);
 
   // Register the new-chat handler with the parent (topbar button)
   const handleNewChatRef = useRef<() => void>(() => {});
@@ -467,10 +688,12 @@ export function ChatShell({
     const msgs = currentMessagesRef.current;
     const onlyWelcome = msgs.length === 1 && msgs[0]?.id === WELCOME_MESSAGE_ID;
     if (msgs.length === 0 || onlyWelcome) return;
+    void clearDraftAttachments();
     setConversationId(null);
     replaceMessagesIfChanged([createWelcomeMessage()], true);
     setSessionListTitle(DEFAULT_CONVERSATION_TITLE);
     onTitleChange?.(DEFAULT_CONVERSATION_TITLE);
+    setAttachmentError("");
   };
 
   useEffect(() => {
@@ -480,12 +703,14 @@ export function ChatShell({
 
   async function handleLoadConversation(id: string, title: string) {
     try {
+      await clearDraftAttachments();
       const msgs = await getConversationMessages(id);
       const t = normalizeConversationTitle(title);
       replaceMessagesIfChanged(toUiMessages(msgs), true);
       setConversationId(id);
       setSessionListTitle(t);
       onTitleChange?.(t);
+      setAttachmentError("");
     } catch { /* ignore */ }
   }
 
@@ -503,6 +728,7 @@ export function ChatShell({
         replaceMessagesIfChanged([createWelcomeMessage()], true);
         setSessionListTitle(DEFAULT_CONVERSATION_TITLE);
         onTitleChange?.(DEFAULT_CONVERSATION_TITLE);
+        void clearDraftAttachments();
       }
     }
 
@@ -526,12 +752,55 @@ export function ChatShell({
     };
   }, []);
 
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+    let cancelled = false;
+    let unlistenDrop: (() => void) | null = null;
+    let unlistenEnter: (() => void) | null = null;
+    let unlistenLeave: (() => void) | null = null;
+
+    void (async () => {
+      unlistenEnter = await listen<DragDropPayload>(TauriEvent.DRAG_ENTER, () => {
+        if (!cancelled) {
+          setIsDragActive(true);
+        }
+      });
+      unlistenLeave = await listen<DragDropPayload>(TauriEvent.DRAG_LEAVE, () => {
+        if (!cancelled) {
+          setIsDragActive(false);
+        }
+      });
+      unlistenDrop = await listen<DragDropPayload>(TauriEvent.DRAG_DROP, async (event) => {
+        if (cancelled) {
+          return;
+        }
+        setIsDragActive(false);
+        const paths = Array.isArray(event.payload?.paths) ? event.payload.paths : [];
+        if (paths.length > 0) {
+          await addLocalPathsToDraft(paths);
+        }
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+      void unlistenDrop?.();
+      void unlistenEnter?.();
+      void unlistenLeave?.();
+    };
+  }, [conversationId]);
+
   async function handleSend(messageOverride?: string) {
     const trimmed = (messageOverride ?? draft).trim();
-    if (!trimmed || isSending) {
+    if ((!trimmed && draftAttachments.length === 0) || isSending || isUploadingAttachments) {
       return;
     }
     shouldAutoScrollRef.current = true;
+    const sendingAttachments = draftAttachments;
+    const sendingAttachmentIds = sendingAttachments.map((attachment) => attachment.id);
+    const titleSeed = trimmed || sendingAttachments[0]?.filename || "Attachment chat";
 
     setIsSending(true);
     answerStartedRef.current = false;
@@ -541,7 +810,8 @@ export function ChatShell({
     const nextUserMessage: ChatMessageItem = {
       id: `user-${now}`,
       role: "user",
-      content: trimmed,
+      content: trimmed || "Analyze the attached files.",
+      attachments: sendingAttachments,
       kind: "text",
     };
     const commentaryMessageId = `assistant-commentary-${now + 1}`;
@@ -564,6 +834,8 @@ export function ChatShell({
     if (!messageOverride) {
       setDraft("");
     }
+    setDraftAttachments([]);
+    setAttachmentError("");
 
     /** Only the first reply that attaches a conversation should set the sidebar title (not every turn). */
     const isFirstBoundSend = conversationId === null;
@@ -633,7 +905,7 @@ export function ChatShell({
             !titleFromStream ||
             titleFromStream === DEFAULT_CONVERSATION_TITLE ||
             titleFromStream.toLowerCase() === "new chat";
-          const effectiveTitle = (looksPlaceholder ? trimmed.slice(0, 88) : titleFromStream).trim();
+          const effectiveTitle = (looksPlaceholder ? titleSeed.slice(0, 88) : titleFromStream).trim();
           if (cid && effectiveTitle && isFirstBoundSend) {
             const t = normalizeConversationTitle(effectiveTitle);
             setRecentChats((prev) => {
@@ -695,7 +967,7 @@ export function ChatShell({
             ];
           });
         }
-      }, "desktop-user", conversationId ?? undefined);
+      }, "desktop-user", conversationId ?? undefined, sendingAttachmentIds);
 
       // Refresh recent chats — use stream response id (first send had conversationId null in closure)
       const applyList = (chatsRaw: Awaited<ReturnType<typeof listConversations>>) => {
@@ -716,7 +988,7 @@ export function ChatShell({
           !rawTitle ||
           rawTitle === DEFAULT_CONVERSATION_TITLE ||
           rawTitle.toLowerCase() === "new chat";
-        const streamTitle = looksPlaceholder ? trimmed.slice(0, 88).trim() : rawTitle;
+        const streamTitle = looksPlaceholder ? titleSeed.slice(0, 88).trim() : rawTitle;
         let merged = chats;
         if (effectiveId && streamTitle) {
           const t = normalizeConversationTitle(streamTitle);
@@ -734,7 +1006,7 @@ export function ChatShell({
           onTitleChange?.(t);
         }
       };
-      listConversations().then(applyList).catch(() => {});
+      listConversations("desktop-user", conversationSearch).then(applyList).catch(() => {});
       if (response.reply) {
         flushStreamBuffer();
         setMessages((current) => {
@@ -757,6 +1029,30 @@ export function ChatShell({
           ];
         });
       }
+      setAttachmentError("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not complete the response.";
+      setDraftAttachments(sendingAttachments);
+      setAttachmentError(message);
+      setMessages((current) => {
+        const existing = current.find((item) => item.id === assistantMessageId);
+        if (existing) {
+          return current.map((item) =>
+            item.id === assistantMessageId
+              ? { ...item, content: message }
+              : item,
+          );
+        }
+        return [
+          ...current,
+          {
+            id: assistantMessageId,
+            role: "assistant",
+            content: message,
+            kind: "text",
+          },
+        ];
+      });
     } finally {
       flushStreamBuffer();
       // Remove the pending bubble if it never received a commentary/progress event
@@ -779,21 +1075,42 @@ export function ChatShell({
       title: normalizeConversationTitle(sessionListTitle),
       updated_at: new Date().toISOString(),
     };
-    if (conversationId === null) {
+    if (!conversationSearch.trim() && conversationId === null) {
       return [draft, ...recentChats];
     }
     return recentChats;
-  }, [conversationId, recentChats, sessionListTitle]);
+  }, [conversationId, conversationSearch, recentChats, sessionListTitle]);
 
   const onlyWelcomeGreeting =
     messages.length === 1 && messages[0]?.id === WELCOME_MESSAGE_ID;
 
   /** Draft session before the first user message (new conversation, nothing sent yet). */
   const hasUserMessage = messages.some((m) => m.role === "user");
+  const isSearchingConversations = conversationSearch.trim().length > 0;
+  const searchSummary = isSearchingConversations
+    ? `${conversationRows.length} result${conversationRows.length === 1 ? "" : "s"}`
+    : `${recentChats.length} saved`;
 
   return (
     <section className="chat-layout">
-      <div className="chat-panel card">
+      <div
+        className={`chat-panel card${isDragActive ? " chat-panel-dragging" : ""}`}
+        onDragOver={(event) => {
+          event.preventDefault();
+          setIsDragActive(true);
+        }}
+        onDragLeave={(event) => {
+          if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            return;
+          }
+          setIsDragActive(false);
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setIsDragActive(false);
+          void handleDomFileDrop(event.dataTransfer.files);
+        }}
+      >
         <div className="message-list" ref={messageListRef}>
           {messages.map((message) => {
             const heartbeatDetails =
@@ -839,6 +1156,7 @@ export function ChatShell({
                   {message.role === "user" ? "You" : "AzulClaw"}
                 </span>
                 <p>{message.content}</p>
+                <AttachmentList attachments={message.attachments || []} compact />
               </article>
             );
           })}
@@ -847,6 +1165,21 @@ export function ChatShell({
 
         <div className="composer">
           <div className="composer-wrapper">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.docx,.txt,.md,.csv"
+              onChange={(event) => {
+                const files = Array.from(event.target.files || []);
+                if (files.length > 0) {
+                  void addFilesToDraft(files);
+                }
+                event.currentTarget.value = "";
+              }}
+            />
+            <AttachmentList attachments={draftAttachments} onRemove={(attachmentId) => void handleRemoveDraftAttachment(attachmentId)} />
             <label className="composer-field">
               <span className="sr-only">Message AzulClaw</span>
               <textarea
@@ -859,25 +1192,30 @@ export function ChatShell({
                   onTypingChange?.(val.trim().length > 0);
                 }}
                 onKeyDown={handleKeyDown}
+                onPaste={(event) => { void handleClipboardPaste(event); }}
               />
             </label>
+            {attachmentError ? (
+              <p className="composer-attachment-error">{attachmentError}</p>
+            ) : null}
             <div className="composer-bottom">
               <div className="composer-actions">
-                <button type="button" className="ghost-button-mini" title="Attach a local file" aria-label="Attach file">
-                  File
-                </button>
-                <button type="button" className="ghost-button-mini" title="Search agent preferences" aria-label="Add Memory">
-                  Memory
-                </button>
-                <button type="button" className="ghost-button-mini" title="Search a Workspace document" aria-label="Add from Workspace">
-                  Workspace
+                <button
+                  type="button"
+                  className="ghost-button-mini"
+                  title="Attach a local file"
+                  aria-label="Attach file"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isSending || isUploadingAttachments}
+                >
+                  {isUploadingAttachments ? "Adding..." : "File"}
                 </button>
               </div>
               <button
                 type="button"
                 className={`composer-send-btn ${isSending ? "composer-send-btn-loading" : ""}`}
                 onClick={() => void handleSend()}
-                disabled={isSending || !draft.trim()}
+                disabled={isSending || isUploadingAttachments || (!draft.trim() && draftAttachments.length === 0)}
                 aria-busy={isSending}
               >
                 Send
@@ -891,26 +1229,33 @@ export function ChatShell({
       </div>
 
       <aside className="context-panel card">
-        <div className="context-panel-head">
-          <button
-            type="button"
-            className="new-chat-btn new-chat-btn-full"
-            onClick={() => void handleNewChatRef.current()}
-            disabled={messages.length === 0 || onlyWelcomeGreeting}
-            title={onlyWelcomeGreeting || messages.length === 0 ? "Send a message first" : "Start a new conversation"}
-          >
-            {DEFAULT_CONVERSATION_TITLE}
-          </button>
+        <div className="context-search-minimal">
+          <input
+            type="search"
+            className="search-conversations-input"
+            value={conversationSearch}
+            onChange={(event) => setConversationSearch(event.target.value)}
+            placeholder="Search conversations..."
+          />
         </div>
 
         {/* ── Recent conversations ─────────────────── */}
         <section className="context-section context-section-grow">
-          <p className="eyebrow">Recent conversations</p>
+          <div className="context-section-heading">
+            <p className="eyebrow context-section-eyebrow">
+              <span>{isSearchingConversations ? "Matching conversations" : "Recent conversations"}</span>
+              {isFetchingSearch && <span className="search-spinner" />}
+            </p>
+          </div>
           <div className="recent-chats-list">
-            {conversationRows.map((c) => {
+            {conversationRows.length === 0 && conversationSearch.trim() ? (
+              <p className="recent-chat-empty">No conversations match this search.</p>
+            ) : conversationRows.map((c) => {
               const isDraft = c.id === DRAFT_SESSION_ID;
               const isActive =
                 conversationId === null ? isDraft : c.id === conversationId;
+              const snippet = (c.snippet || "").trim();
+              const relativeDate = formatRelativeDate(c.updated_at);
               return (
                 <div
                   key={c.id}
@@ -922,12 +1267,15 @@ export function ChatShell({
                 >
                   <div className="recent-chat-info">
                     <span className="recent-chat-title">{normalizeConversationTitle(c.title)}</span>
+                    {snippet ? (
+                      <span className="recent-chat-snippet">{snippet}</span>
+                    ) : null}
                     {isDraft ? (
                       !hasUserMessage ? (
                         <span className="recent-chat-date">just now</span>
                       ) : null
-                    ) : formatRelativeDate(c.updated_at) ? (
-                      <span className="recent-chat-date">{formatRelativeDate(c.updated_at)}</span>
+                    ) : relativeDate ? (
+                      <span className="recent-chat-date">{relativeDate}</span>
                     ) : null}
                   </div>
                   {!isDraft && (
@@ -945,6 +1293,18 @@ export function ChatShell({
             })}
           </div>
         </section>
+
+        <div className="context-panel-actions">
+          <button
+            type="button"
+            className="new-chat-btn new-chat-btn-full"
+            onClick={() => void handleNewChatRef.current()}
+            disabled={messages.length === 0 || onlyWelcomeGreeting}
+            title={onlyWelcomeGreeting || messages.length === 0 ? "Send a message first" : "Start a new conversation"}
+          >
+            {DEFAULT_CONVERSATION_TITLE}
+          </button>
+        </div>
 
       </aside>
     </section>

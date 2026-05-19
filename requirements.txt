@@ -10,3 +10,6 @@ azure-servicebus
 azure-identity
 azure-keyvault-secrets
 croniter
+PyMuPDF
+docx2txt
+Pillow

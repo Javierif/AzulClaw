@@ -3,13 +3,13 @@ import {
   hydrateAzureKeyVaultSecrets,
 } from "./api";
 import { loginWithMicrosoftForAzure, loginWithMicrosoftForKeyVault } from "./azure-auth";
-import type { BackendAuthStatus, HatchingProfile } from "./contracts";
+import type { BackendAuthStatus, SetupProfile } from "./contracts";
 
-function azureConfigFromProfile(profile: HatchingProfile): Record<string, string> {
+function azureConfigFromProfile(profile: SetupProfile): Record<string, string> {
   return profile.skill_configs?.Azure ?? {};
 }
 
-export function profileCanRenewAzureLogin(profile: HatchingProfile): boolean {
+export function profileCanRenewAzureLogin(profile: SetupProfile): boolean {
   const config = azureConfigFromProfile(profile);
   return (
     (config.authMethod?.trim() || "entra") === "entra" &&
@@ -20,7 +20,7 @@ export function profileCanRenewAzureLogin(profile: HatchingProfile): boolean {
   );
 }
 
-export async function renewAzureLoginFromProfile(profile: HatchingProfile): Promise<BackendAuthStatus> {
+export async function renewAzureLoginFromProfile(profile: SetupProfile): Promise<BackendAuthStatus> {
   const config = azureConfigFromProfile(profile);
   if (!profileCanRenewAzureLogin(profile)) {
     throw new Error("Azure profile is incomplete. Open Settings > Azure to finish configuration.");

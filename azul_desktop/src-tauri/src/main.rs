@@ -12,13 +12,24 @@ use std::{
     time::Duration,
 };
 
+use serde::Serialize;
 use tauri::{AppHandle, Manager};
+
+#[cfg(target_os = "windows")]
+use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 
 const BACKEND_HOST: &str = "localhost";
 const BACKEND_PORT: u16 = 3978;
 const AZURE_OPENAI_API_KEY_SECRET_FILE: &str = "azure-openai-api-key.bin";
 
 struct BackendProcess(Mutex<Option<Child>>);
+
+#[derive(Serialize)]
+struct NativeFilePayload {
+    name: String,
+    mime_type: String,
+    data_base64: String,
+}
 
 struct BackendLaunch {
     command: PathBuf,
@@ -64,6 +75,23 @@ unsafe extern "system" {
     fn LocalFree(h_mem: *mut c_void) -> *mut c_void;
     fn GetLastError() -> u32;
 }
+
+#[cfg(target_os = "windows")]
+#[link(name = "User32")]
+unsafe extern "system" {
+    fn OpenClipboard(h_wnd_new_owner: *mut c_void) -> i32;
+    fn CloseClipboard() -> i32;
+    fn IsClipboardFormatAvailable(format: u32) -> i32;
+    fn GetClipboardData(u_format: u32) -> *mut c_void;
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "Shell32")]
+unsafe extern "system" {
+    fn DragQueryFileW(h_drop: *mut c_void, i_file: u32, lpsz_file: *mut u16, cch: u32) -> u32;
+}
+
+const CF_HDROP: u32 = 15;
 
 impl Drop for BackendProcess {
     fn drop(&mut self) {
@@ -298,6 +326,138 @@ fn is_azure_openai_api_key_storage_available() -> bool {
     cfg!(target_os = "windows")
 }
 
+fn infer_mime_type(path: &Path) -> String {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "pdf" => "application/pdf",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "txt" => "text/plain",
+        "md" => "text/markdown",
+        "csv" => "text/csv",
+        _ => "application/octet-stream",
+    }
+    .to_string()
+}
+
+fn encode_base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    let mut index = 0usize;
+
+    while index + 3 <= bytes.len() {
+        let block = ((bytes[index] as u32) << 16)
+            | ((bytes[index + 1] as u32) << 8)
+            | (bytes[index + 2] as u32);
+        encoded.push(TABLE[((block >> 18) & 0x3f) as usize] as char);
+        encoded.push(TABLE[((block >> 12) & 0x3f) as usize] as char);
+        encoded.push(TABLE[((block >> 6) & 0x3f) as usize] as char);
+        encoded.push(TABLE[(block & 0x3f) as usize] as char);
+        index += 3;
+    }
+
+    let remaining = bytes.len().saturating_sub(index);
+    if remaining == 1 {
+        let block = (bytes[index] as u32) << 16;
+        encoded.push(TABLE[((block >> 18) & 0x3f) as usize] as char);
+        encoded.push(TABLE[((block >> 12) & 0x3f) as usize] as char);
+        encoded.push('=');
+        encoded.push('=');
+    } else if remaining == 2 {
+        let block = ((bytes[index] as u32) << 16) | ((bytes[index + 1] as u32) << 8);
+        encoded.push(TABLE[((block >> 18) & 0x3f) as usize] as char);
+        encoded.push(TABLE[((block >> 12) & 0x3f) as usize] as char);
+        encoded.push(TABLE[((block >> 6) & 0x3f) as usize] as char);
+        encoded.push('=');
+    }
+
+    encoded
+}
+
+#[cfg(target_os = "windows")]
+fn clipboard_file_paths_windows() -> Result<Vec<String>, String> {
+    if unsafe { IsClipboardFormatAvailable(CF_HDROP) } == 0 {
+        return Ok(Vec::new());
+    }
+
+    if unsafe { OpenClipboard(null_mut()) } == 0 {
+        let code = unsafe { GetLastError() };
+        return Err(format!("could not open clipboard (Windows error {code})"));
+    }
+
+    let result = (|| {
+        let handle = unsafe { GetClipboardData(CF_HDROP) };
+        if handle.is_null() {
+            let code = unsafe { GetLastError() };
+            return Err(format!("clipboard does not contain file data (Windows error {code})"));
+        }
+
+        let count = unsafe { DragQueryFileW(handle, u32::MAX, null_mut(), 0) };
+        let mut paths = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            let length = unsafe { DragQueryFileW(handle, index, null_mut(), 0) };
+            if length == 0 {
+                continue;
+            }
+            let mut buffer = vec![0u16; length as usize + 1];
+            let copied = unsafe { DragQueryFileW(handle, index, buffer.as_mut_ptr(), length + 1) };
+            if copied == 0 {
+                continue;
+            }
+            let os_string = OsString::from_wide(&buffer[..copied as usize]);
+            paths.push(os_string.to_string_lossy().to_string());
+        }
+        Ok(paths)
+    })();
+
+    unsafe {
+        let _ = CloseClipboard();
+    }
+    result
+}
+
+#[cfg(not(target_os = "windows"))]
+fn clipboard_file_paths_windows() -> Result<Vec<String>, String> {
+    Ok(Vec::new())
+}
+
+#[tauri::command]
+fn read_clipboard_file_paths() -> Result<Vec<String>, String> {
+    clipboard_file_paths_windows()
+}
+
+#[tauri::command]
+fn read_local_files(paths: Vec<String>) -> Result<Vec<NativeFilePayload>, String> {
+    let mut files = Vec::new();
+    for raw_path in paths {
+        let path = PathBuf::from(raw_path);
+        if !path.is_file() {
+            continue;
+        }
+        let data =
+            fs::read(&path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("attachment")
+            .to_string();
+        files.push(NativeFilePayload {
+            name,
+            mime_type: infer_mime_type(&path),
+            data_base64: encode_base64(&data),
+        });
+    }
+    Ok(files)
+}
+
 fn append_text_log(path: &Path, message: &str) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
@@ -494,7 +654,9 @@ fn main() {
             load_azure_openai_api_key,
             has_azure_openai_api_key,
             clear_azure_openai_api_key,
-            is_azure_openai_api_key_storage_available
+            is_azure_openai_api_key_storage_available,
+            read_clipboard_file_paths,
+            read_local_files
         ])
         .run(tauri::generate_context!())
         .expect("error while running AzulClaw desktop");

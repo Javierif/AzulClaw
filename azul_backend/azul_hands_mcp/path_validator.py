@@ -48,8 +48,10 @@ class PathValidator:
             # 3. Resolve the final path (strips ../ and symlinks)
             resolved_target = target_path.resolve()
 
-            # 4. Critical Security Check: does the resolved path start with our allowed_base?
-            if not str(resolved_target).startswith(str(self.allowed_base)):
+            # 4. Critical Security Check: target must be inside allowed_base.
+            try:
+                resolved_target.relative_to(self.allowed_base)
+            except ValueError:
                 raise SecurityError(
                     f"Security Violation: requested path '{requested_path}' "
                     f"resolves outside the allowed Workspace ({self.allowed_base})"

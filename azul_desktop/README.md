@@ -13,10 +13,8 @@
 
 - Chat
 - Hatching
+- Context
 - Heartbeats
-- Memory
-- Workspace
-- Processes
 - Settings
 
 ## Commands
