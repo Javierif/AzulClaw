@@ -74,6 +74,7 @@ export interface ChatExchange {
   id: string;
   role: "user" | "assistant";
   content: string;
+  created_at?: string;
   attachments?: AttachmentSummary[];
 }
 

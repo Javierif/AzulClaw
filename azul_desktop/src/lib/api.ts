@@ -202,13 +202,14 @@ export async function getConversationMessages(
   conversationId: string,
   userId = "desktop-user",
 ): Promise<ChatExchange[]> {
-  const data = await fetchJson<{ messages: Array<{ message_id?: string; role: string; content: string; attachments?: AttachmentSummary[] }> }>(
+  const data = await fetchJson<{ messages: Array<{ message_id?: string; role: string; content: string; created_at?: string; attachments?: AttachmentSummary[] }> }>(
     `/api/desktop/conversations/${encodeURIComponent(conversationId)}/messages?user_id=${encodeURIComponent(userId)}`,
   );
   return data.messages.map((m, i) => ({
     id: m.message_id?.trim() || `loaded-${i}`,
     role: m.role as "user" | "assistant",
     content: m.content,
+    created_at: m.created_at || "",
     attachments: Array.isArray(m.attachments) ? m.attachments : [],
   }));
 }

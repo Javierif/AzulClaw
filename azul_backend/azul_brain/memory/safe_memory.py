@@ -422,6 +422,7 @@ class SafeMemory:
                     "message_id": item.get("message_id") or f"ram-{index}",
                     "role": item.get("role", "user"),
                     "content": item.get("content", ""),
+                    "created_at": item.get("created_at", ""),
                     "attachments": [],
                 }
                 for index, item in enumerate(messages)
@@ -430,7 +431,7 @@ class SafeMemory:
         try:
             rows = self._conn.execute(
                 """
-                SELECT message_id, role, content
+                SELECT message_id, role, content, created_at
                 FROM conversation_history
                 WHERE conversation_id = ?
                 ORDER BY created_at ASC, id ASC
@@ -445,6 +446,7 @@ class SafeMemory:
                     "message_id": row["message_id"] or "",
                     "role": row["role"],
                     "content": row["content"],
+                    "created_at": row["created_at"] or "",
                     "attachments": attachments_by_message.get(str(row["message_id"] or ""), []),
                 }
                 for row in rows

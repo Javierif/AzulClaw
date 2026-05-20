@@ -17,6 +17,7 @@ import {
 import type { AttachmentSummary, ChatExchange, ConversationSummary, ThinkingProgress } from "../../lib/contracts";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen, TauriEvent } from "@tauri-apps/api/event";
+import { MessageContent } from "./MessageContent";
 
 type ChatMessageItem = ChatExchange & {
   kind: "text" | "thinking" | "pending";
@@ -39,6 +40,7 @@ const WELCOME_MESSAGE_ID = "welcome-greeting";
 
 /** Synthetic row in “Recent conversations” for the unsaved draft session. */
 const DRAFT_SESSION_ID = "__draft_session__";
+const CHAT_SIDEBAR_STATE_KEY = "azul_chat_sidebar_collapsed";
 
 function createWelcomeMessage(): ChatMessageItem {
   return {
@@ -46,6 +48,7 @@ function createWelcomeMessage(): ChatMessageItem {
     role: "assistant",
     content:
       "Hey there! I'm glad you're here. Tell me what you're working on, or ask me anything — I'm all ears. How can I help today?",
+    created_at: new Date().toISOString(),
     kind: "text",
   };
 }
@@ -84,6 +87,7 @@ function sameMessages(a: ChatMessageItem[], b: ChatMessageItem[]): boolean {
       item.role === other.role &&
       item.kind === other.kind &&
       item.content === other.content &&
+      item.created_at === other.created_at &&
       sameAttachments(item.attachments, other.attachments)
     );
   });
@@ -377,6 +381,32 @@ function formatRelativeDate(isoString: string): string {
   }
 }
 
+function parseTimestamp(isoString: string | undefined): Date | null {
+  const value = (isoString || "").trim();
+  if (!value) {
+    return null;
+  }
+  const normalized = value.endsWith("Z") || value.includes("+")
+    ? value
+    : `${value.replace(" ", "T")}Z`;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatMessageTimestamp(isoString: string | undefined): string {
+  const date = parseTimestamp(isoString);
+  if (!date) {
+    return "";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 export function ChatShell({
   onThinkingChange,
   onTypingChange,
@@ -402,6 +432,13 @@ export function ChatShell({
   const [recentChats, setRecentChats] = useState<ConversationSummary[]>([]);
   const [conversationSearch, setConversationSearch] = useState("");
   const [sessionListTitle, setSessionListTitle] = useState(DEFAULT_CONVERSATION_TITLE);
+  const [isConversationPanelCollapsed, setIsConversationPanelCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(CHAT_SIDEBAR_STATE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
   const streamMessageIdRef = useRef("");
   const streamBufferRef = useRef("");
   const answerStartedRef = useRef(false);
@@ -418,6 +455,14 @@ export function ChatShell({
       return true;
     }
     return list.scrollHeight - list.scrollTop - list.clientHeight < 96;
+  }
+
+  function scrollMessageListToBottom() {
+    const list = messageListRef.current;
+    if (!list) {
+      return;
+    }
+    list.scrollTo({ top: list.scrollHeight, behavior: "auto" });
   }
 
   function replaceMessagesIfChanged(nextMessages: ChatMessageItem[], shouldAutoScroll: boolean) {
@@ -495,7 +540,7 @@ export function ChatShell({
             item.id === messageId ? { ...item, content: `${item.content}${slice}` } : item,
           );
         }
-        return [...current, { id: messageId, role: "assistant", content: slice, kind: "text" }];
+        return [...current, { id: messageId, role: "assistant", content: slice, created_at: new Date().toISOString(), kind: "text" }];
       });
       if (!streamBufferRef.current && streamPumpRef.current !== null) {
         window.clearInterval(streamPumpRef.current);
@@ -515,7 +560,7 @@ export function ChatShell({
             item.id === messageId ? { ...item, content: `${item.content}${pending}` } : item,
           );
         }
-        return [...current, { id: messageId, role: "assistant", content: pending, kind: "text" }];
+        return [...current, { id: messageId, role: "assistant", content: pending, created_at: new Date().toISOString(), kind: "text" }];
       });
     }
     streamBufferRef.current = "";
@@ -738,10 +783,10 @@ export function ChatShell({
   }
 
   useEffect(() => {
-    if (!shouldAutoScrollRef.current && !isMessageListNearBottom()) {
+    if (!shouldAutoScrollRef.current) {
       return;
     }
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    scrollMessageListToBottom();
   }, [messages]);
 
   useEffect(() => {
@@ -751,6 +796,14 @@ export function ChatShell({
       }
     };
   }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CHAT_SIDEBAR_STATE_KEY, isConversationPanelCollapsed ? "1" : "0");
+    } catch {
+      /* ignore persistence failures */
+    }
+  }, [isConversationPanelCollapsed]);
 
   useEffect(() => {
     if (!isTauri()) {
@@ -807,10 +860,12 @@ export function ChatShell({
     onTypingChange?.(false);
     onThinkingChange?.(true);
     const now = Date.now();
+    const sentAt = new Date(now).toISOString();
     const nextUserMessage: ChatMessageItem = {
       id: `user-${now}`,
       role: "user",
       content: trimmed || "Analyze the attached files.",
+      created_at: sentAt,
       attachments: sendingAttachments,
       kind: "text",
     };
@@ -827,6 +882,7 @@ export function ChatShell({
           id: commentaryMessageId,
           role: "assistant",
           content: "",
+          created_at: sentAt,
           kind: "pending",
         },
       ];
@@ -856,6 +912,7 @@ export function ChatShell({
                 id: commentaryMessageId,
                 role: "assistant",
                 content: event.text || "",
+                created_at: new Date().toISOString(),
                 kind: "text",
               },
             ];
@@ -884,6 +941,7 @@ export function ChatShell({
                 id: commentaryMessageId,
                 role: "assistant",
                 content: progress.summary,
+                created_at: new Date().toISOString(),
                 kind: "thinking",
                 progress,
               },
@@ -939,6 +997,7 @@ export function ChatShell({
                 id: assistantMessageId,
                 role: "assistant",
                 content: event.reply || "",
+                created_at: new Date().toISOString(),
                 kind: "text",
               },
             ];
@@ -962,6 +1021,7 @@ export function ChatShell({
                 id: assistantMessageId,
                 role: "assistant",
                 content: event.message || "Could not complete the response.",
+                created_at: new Date().toISOString(),
                 kind: "text",
               },
             ];
@@ -1024,6 +1084,7 @@ export function ChatShell({
               id: assistantMessageId,
               role: "assistant",
               content: response.reply,
+              created_at: new Date().toISOString(),
               kind: "text",
             },
           ];
@@ -1049,6 +1110,7 @@ export function ChatShell({
             id: assistantMessageId,
             role: "assistant",
             content: message,
+            created_at: new Date().toISOString(),
             kind: "text",
           },
         ];
@@ -1092,7 +1154,7 @@ export function ChatShell({
     : `${recentChats.length} saved`;
 
   return (
-    <section className="chat-layout">
+    <section className={`chat-layout${isConversationPanelCollapsed ? " chat-layout-sidebar-collapsed" : ""}`}>
       <div
         className={`chat-panel card${isDragActive ? " chat-panel-dragging" : ""}`}
         onDragOver={(event) => {
@@ -1111,7 +1173,13 @@ export function ChatShell({
           void handleDomFileDrop(event.dataTransfer.files);
         }}
       >
-        <div className="message-list" ref={messageListRef}>
+        <div
+          className="message-list"
+          ref={messageListRef}
+          onScroll={() => {
+            shouldAutoScrollRef.current = isMessageListNearBottom();
+          }}
+        >
           {messages.map((message) => {
             const heartbeatDetails =
               message.role === "assistant"
@@ -1152,10 +1220,17 @@ export function ChatShell({
                 key={message.id}
                 className={`message-bubble message-${message.role}`}
               >
-                <span className="message-role">
-                  {message.role === "user" ? "You" : "AzulClaw"}
-                </span>
-                <p>{message.content}</p>
+                <div className="message-meta">
+                  <span className="message-role">
+                    {message.role === "user" ? "You" : "AzulClaw"}
+                  </span>
+                  {formatMessageTimestamp(message.created_at) ? (
+                    <time className="message-timestamp" dateTime={message.created_at}>
+                      {formatMessageTimestamp(message.created_at)}
+                    </time>
+                  ) : null}
+                </div>
+                <MessageContent content={message.content} role={message.role} />
                 <AttachmentList attachments={message.attachments || []} compact />
               </article>
             );
@@ -1228,7 +1303,48 @@ export function ChatShell({
         </div>
       </div>
 
-      <aside className="context-panel card">
+      <aside className={`context-panel card${isConversationPanelCollapsed ? " context-panel-collapsed" : ""}`}>
+        <div className="context-panel-header">
+          <div className="context-panel-header-copy">
+            <p className="eyebrow context-panel-title-eyebrow">Conversations</p>
+            {!isConversationPanelCollapsed ? (
+              <span className="context-panel-title-meta">{searchSummary}</span>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className={`context-panel-toggle${isConversationPanelCollapsed ? " context-panel-toggle-collapsed" : ""}`}
+            aria-label={isConversationPanelCollapsed ? "Expand conversations panel" : "Collapse conversations panel"}
+            aria-expanded={!isConversationPanelCollapsed}
+            title={isConversationPanelCollapsed ? "Expand conversations" : "Collapse conversations"}
+            onClick={() => setIsConversationPanelCollapsed((current) => !current)}
+          >
+            <span
+              className={`context-panel-toggle-chevron${isConversationPanelCollapsed ? " context-panel-toggle-chevron-collapsed" : ""}`}
+              aria-hidden="true"
+            />
+          </button>
+        </div>
+
+        {isConversationPanelCollapsed ? (
+          <div className="context-panel-collapsed-body">
+            <div className="context-panel-collapsed-tally" aria-hidden="true">
+              <span className="context-panel-collapsed-count">{conversationRows.length}</span>
+              <span className="context-panel-collapsed-label">chats</span>
+            </div>
+            <button
+              type="button"
+              className="context-panel-collapsed-new"
+              title="New conversation"
+              aria-label="New conversation"
+              disabled={onlyWelcomeGreeting || messages.length === 0}
+              onClick={() => void handleNewChatRef.current()}
+            >
+              +
+            </button>
+          </div>
+        ) : (
+          <>
         <div className="context-search-minimal">
           <input
             type="search"
@@ -1305,6 +1421,8 @@ export function ChatShell({
             {DEFAULT_CONVERSATION_TITLE}
           </button>
         </div>
+          </>
+        )}
 
       </aside>
     </section>
