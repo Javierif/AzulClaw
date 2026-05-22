@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import sqlite3
 import unittest
 import uuid
 from contextlib import contextmanager
@@ -25,6 +26,24 @@ def temp_memory_dir() -> Iterator[Path]:
 
 
 class SafeMemoryTests(unittest.TestCase):
+    def test_create_attachment_draft_rejects_non_owned_conversation(self) -> None:
+        with temp_memory_dir() as tmp:
+            memory = SafeMemory(
+                db_path=str(tmp / "memory.sqlite"),
+                attachments_root=str(tmp / "attachments"),
+            )
+            try:
+                conversation_id = memory.create_conversation("desktop-user")
+                with self.assertRaisesRegex(ValueError, "Conversation not found"):
+                    memory.create_attachment_draft(
+                        user_id="other-user",
+                        filename="notes.txt",
+                        data=b"hello attachment",
+                        conversation_id=conversation_id,
+                    )
+            finally:
+                memory.close()
+
     def test_ram_only_conversation_message_is_visible_and_successful(self) -> None:
         memory = SafeMemory(db_path=None)
         conversation_id = memory.create_conversation("desktop-user")
@@ -142,6 +161,144 @@ class SafeMemoryTests(unittest.TestCase):
                 records = memory.get_conversation_message_records(conversation_id)
                 self.assertEqual(records[0]["message_id"], message_id)
                 self.assertEqual(records[0]["attachments"][0]["filename"], "notes.txt")
+            finally:
+                memory.close()
+
+    def test_attachment_draft_commit_failure_removes_orphaned_file(self) -> None:
+        with temp_memory_dir() as tmp:
+            memory = SafeMemory(
+                db_path=str(tmp / "memory.sqlite"),
+                attachments_root=str(tmp / "attachments"),
+            )
+
+            class CommitFailConn:
+                def __init__(self, inner: sqlite3.Connection) -> None:
+                    self._inner = inner
+
+                def execute(self, *args, **kwargs):
+                    return self._inner.execute(*args, **kwargs)
+
+                def commit(self) -> None:
+                    raise sqlite3.OperationalError("commit failed")
+
+                def rollback(self) -> None:
+                    self._inner.rollback()
+
+            try:
+                real_conn = memory._conn
+                self.assertIsNotNone(real_conn)
+                memory._conn = CommitFailConn(real_conn)
+
+                with self.assertRaises(sqlite3.OperationalError):
+                    memory.create_attachment_draft(
+                        user_id="desktop-user",
+                        filename="notes.txt",
+                        data=b"hello attachment",
+                    )
+
+                memory._conn = real_conn
+                attachment_files = list((tmp / "attachments").glob("*"))
+                self.assertEqual(attachment_files, [])
+                count = real_conn.execute("SELECT COUNT(*) FROM conversation_attachments").fetchone()[0]
+                self.assertEqual(count, 0)
+            finally:
+                memory._conn = real_conn
+                memory.close()
+
+    def test_bind_draft_attachments_validates_before_updating_any_rows(self) -> None:
+        with temp_memory_dir() as tmp:
+            memory = SafeMemory(
+                db_path=str(tmp / "memory.sqlite"),
+                attachments_root=str(tmp / "attachments"),
+            )
+            try:
+                conversation_id = memory.create_conversation("desktop-user")
+                draft = memory.create_attachment_draft(
+                    user_id="desktop-user",
+                    filename="notes.txt",
+                    data=b"hello attachment",
+                    conversation_id=conversation_id,
+                )
+
+                with self.assertRaisesRegex(ValueError, "Attachment not found"):
+                    memory.bind_draft_attachments_to_message(
+                        attachment_ids=[draft["id"], "missing"],
+                        user_id="desktop-user",
+                        conversation_id=conversation_id,
+                        message_id="msg-1",
+                    )
+
+                stored = memory.get_attachment(draft["id"], "desktop-user")
+                self.assertEqual(stored["message_id"], "")
+                self.assertEqual(stored["conversation_id"], conversation_id)
+            finally:
+                memory.close()
+
+    def test_conversation_attachment_queries_only_return_sent_rows_for_owner(self) -> None:
+        with temp_memory_dir() as tmp:
+            memory = SafeMemory(
+                db_path=str(tmp / "memory.sqlite"),
+                attachments_root=str(tmp / "attachments"),
+            )
+            try:
+                conversation_id = memory.create_conversation("desktop-user")
+                sent = memory.create_attachment_draft(
+                    user_id="desktop-user",
+                    filename="diagram.png",
+                    data=(
+                        b"\x89PNG\r\n\x1a\n"
+                        b"\x00\x00\x00\rIHDR"
+                        b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00"
+                        b"\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01"
+                        b"\x0b\x0e-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+                    ),
+                    conversation_id=conversation_id,
+                )
+                draft = memory.create_attachment_draft(
+                    user_id="desktop-user",
+                    filename="notes.txt",
+                    data=b"unsent draft",
+                    conversation_id=conversation_id,
+                )
+                memory.bind_draft_attachments_to_message(
+                    attachment_ids=[sent["id"]],
+                    user_id="desktop-user",
+                    conversation_id=conversation_id,
+                    message_id="msg-1",
+                )
+                memory._conn.execute(
+                    """
+                    INSERT INTO conversation_attachments (
+                        id, message_id, conversation_id, user_id, filename, mime_type, size_bytes,
+                        storage_path, sha256, kind, extraction_status, extracted_text, page_count, preview_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "foreign-row",
+                        "msg-foreign",
+                        conversation_id,
+                        "other-user",
+                        "other.txt",
+                        "text/plain",
+                        4,
+                        str(tmp / "attachments" / "foreign-row.txt"),
+                        "deadbeef",
+                        "text",
+                        "ready",
+                        "nope",
+                        1,
+                        "{}",
+                    ),
+                )
+                memory._conn.commit()
+
+                conversation_items = memory.list_conversation_attachments(conversation_id, "desktop-user")
+                visual_items = memory.list_recent_visual_attachments(conversation_id, "desktop-user", limit=5)
+
+                self.assertEqual([item["id"] for item in conversation_items], [sent["id"]])
+                self.assertEqual([item["id"] for item in visual_items], [sent["id"]])
+                self.assertNotIn(draft["id"], [item["id"] for item in conversation_items])
             finally:
                 memory.close()
 

@@ -64,14 +64,23 @@ export function ContextShell({
   useEffect(() => {
     let isMounted = true;
 
-    void Promise.all([loadProcesses(), loadMemory(), loadWorkspace()]).then(([nextProcesses, nextMemory, nextWorkspace]) => {
-      if (!isMounted) return;
-      setProcesses(nextProcesses);
-      setRecords(nextMemory);
-      setWorkspaceRoot(nextWorkspace.root);
-      setWorkspacePath(nextWorkspace.current_path);
-      setEntries(nextWorkspace.entries);
-    });
+    void (async () => {
+      try {
+        const [nextProcesses, nextMemory, nextWorkspace] = await Promise.all([
+          loadProcesses(),
+          loadMemory(),
+          loadWorkspace(),
+        ]);
+        if (!isMounted) return;
+        setProcesses(nextProcesses);
+        setRecords(nextMemory);
+        setWorkspaceRoot(nextWorkspace.root);
+        setWorkspacePath(nextWorkspace.current_path);
+        setEntries(nextWorkspace.entries);
+      } catch {
+        /* keep existing fallback data when the backend is temporarily unavailable */
+      }
+    })();
 
     return () => {
       isMounted = false;

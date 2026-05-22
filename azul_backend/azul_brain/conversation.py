@@ -638,7 +638,7 @@ class ConversationOrchestrator:
 
         conversation_attachments: list[dict] = []
         if conversation_id and hasattr(self.memory, "list_conversation_attachments"):
-            conversation_attachments = self.memory.list_conversation_attachments(conversation_id)
+            conversation_attachments = self.memory.list_conversation_attachments(conversation_id, user_id)
         all_attachments = [
             *conversation_attachments,
             *[
@@ -656,7 +656,7 @@ class ConversationOrchestrator:
             if item.get("kind") == "image" or item.get("extraction_status") == "low_text_quality"
         ]
         if not visual_candidates and conversation_id and hasattr(self.memory, "list_recent_visual_attachments"):
-            visual_candidates = self.memory.list_recent_visual_attachments(conversation_id, limit=2)
+            visual_candidates = self.memory.list_recent_visual_attachments(conversation_id, user_id, limit=2)
 
         if not visual_candidates:
             return document_context, [], False, lane

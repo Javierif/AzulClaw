@@ -71,7 +71,13 @@ function sameAttachments(a: AttachmentSummary[] = [], b: AttachmentSummary[] = [
       item.kind === other.kind &&
       item.extraction_status === other.extraction_status &&
       item.page_count === other.page_count &&
-      JSON.stringify(item.preview || {}) === JSON.stringify(other.preview || {})
+      (item.preview?.thumbnail_data_uri || "") === (other.preview?.thumbnail_data_uri || "") &&
+      (item.preview?.snippet || "") === (other.preview?.snippet || "") &&
+      (item.preview?.width || 0) === (other.preview?.width || 0) &&
+      (item.preview?.height || 0) === (other.preview?.height || 0) &&
+      (item.preview?.page_count || 0) === (other.preview?.page_count || 0) &&
+      (item.preview?.pages_with_text || 0) === (other.preview?.pages_with_text || 0) &&
+      (item.preview?.avg_chars_per_page || 0) === (other.preview?.avg_chars_per_page || 0)
     );
   });
 }

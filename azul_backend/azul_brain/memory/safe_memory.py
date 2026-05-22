@@ -687,6 +687,8 @@ class SafeMemory:
             raise ValueError("Attachment persistence requires SQLite memory.")
         if self._attachments_root is None:
             raise ValueError("Attachment storage root is not configured.")
+        if conversation_id and not self.conversation_belongs_to_user(conversation_id, user_id):
+            raise ValueError("Conversation not found.")
 
         attachment_id = str(uuid.uuid4())
         safe_filename = Path(filename or "attachment").name or "attachment"
@@ -694,32 +696,39 @@ class SafeMemory:
         extraction: AttachmentExtractionResult = extract_attachment(safe_filename, data)
         sha256 = hashlib.sha256(data).hexdigest()
         file_path.write_bytes(data)
-
-        self._conn.execute(
-            """
-            INSERT INTO conversation_attachments (
-                id, message_id, conversation_id, user_id, filename, mime_type, size_bytes,
-                storage_path, sha256, kind, extraction_status, extracted_text, page_count, preview_json
+        try:
+            self._conn.execute(
+                """
+                INSERT INTO conversation_attachments (
+                    id, message_id, conversation_id, user_id, filename, mime_type, size_bytes,
+                    storage_path, sha256, kind, extraction_status, extracted_text, page_count, preview_json
+                )
+                VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    attachment_id,
+                    conversation_id,
+                    user_id,
+                    safe_filename,
+                    extraction.mime_type,
+                    len(data),
+                    str(file_path),
+                    sha256,
+                    extraction.kind,
+                    extraction.extraction_status,
+                    extraction.extracted_text,
+                    extraction.page_count,
+                    extraction.preview_json,
+                ),
             )
-            VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                attachment_id,
-                conversation_id,
-                user_id,
-                safe_filename,
-                extraction.mime_type,
-                len(data),
-                str(file_path),
-                sha256,
-                extraction.kind,
-                extraction.extraction_status,
-                extraction.extracted_text,
-                extraction.page_count,
-                extraction.preview_json,
-            ),
-        )
-        self._conn.commit()
+            self._conn.commit()
+        except Exception:
+            try:
+                self._conn.rollback()
+            except Exception:
+                pass
+            file_path.unlink(missing_ok=True)
+            raise
         return self.get_attachment(attachment_id, user_id) or {}
 
     def get_attachment(self, attachment_id: str, user_id: str | None = None) -> dict | None:
@@ -745,7 +754,7 @@ class SafeMemory:
             LOGGER.warning("[SafeMemory] get_attachment failed: %s", error)
             return None
 
-    def list_recent_visual_attachments(self, conversation_id: str, limit: int = 2) -> list[dict]:
+    def list_recent_visual_attachments(self, conversation_id: str, user_id: str, limit: int = 2) -> list[dict]:
         """Returns recent visual attachments for follow-up questions in the same conversation."""
         if self._conn is None:
             return []
@@ -755,18 +764,20 @@ class SafeMemory:
                 SELECT *
                 FROM conversation_attachments
                 WHERE conversation_id = ?
+                  AND user_id = ?
+                  AND message_id IS NOT NULL
                   AND (kind = 'image' OR extraction_status = 'low_text_quality')
                 ORDER BY created_at DESC
                 LIMIT ?
                 """,
-                (conversation_id, limit),
+                (conversation_id, user_id, limit),
             ).fetchall()
             return [self._attachment_row_to_dict(row) for row in rows]
         except Exception as error:
             LOGGER.warning("[SafeMemory] list_recent_visual_attachments failed: %s", error)
             return []
 
-    def list_conversation_attachments(self, conversation_id: str) -> list[dict]:
+    def list_conversation_attachments(self, conversation_id: str, user_id: str) -> list[dict]:
         """Returns all attachments associated with a conversation."""
         if self._conn is None:
             return []
@@ -776,9 +787,11 @@ class SafeMemory:
                 SELECT *
                 FROM conversation_attachments
                 WHERE conversation_id = ?
+                  AND user_id = ?
+                  AND message_id IS NOT NULL
                 ORDER BY created_at ASC
                 """,
-                (conversation_id,),
+                (conversation_id, user_id),
             ).fetchall()
             return [self._attachment_row_to_dict(row) for row in rows]
         except Exception as error:
@@ -799,7 +812,6 @@ class SafeMemory:
         if self._conn is None:
             raise ValueError("Attachment persistence requires SQLite memory.")
 
-        bound: list[dict] = []
         for attachment_id in attachment_ids:
             row = self._conn.execute(
                 """
@@ -813,22 +825,32 @@ class SafeMemory:
                 raise ValueError(f"Attachment not found: {attachment_id}")
             if row["message_id"]:
                 raise ValueError(f"Attachment already sent: {attachment_id}")
-            self._conn.execute(
-                """
-                UPDATE conversation_attachments
-                SET message_id = ?, conversation_id = ?
-                WHERE id = ? AND user_id = ?
-                """,
-                (message_id, conversation_id, attachment_id, user_id),
-            )
-            updated = self._conn.execute(
-                "SELECT * FROM conversation_attachments WHERE id = ?",
-                (attachment_id,),
-            ).fetchone()
-            if updated is not None:
-                bound.append(self._attachment_row_to_dict(updated))
-        self._conn.commit()
-        return bound
+
+        bound: list[dict] = []
+        try:
+            for attachment_id in attachment_ids:
+                self._conn.execute(
+                    """
+                    UPDATE conversation_attachments
+                    SET message_id = ?, conversation_id = ?
+                    WHERE id = ? AND user_id = ?
+                    """,
+                    (message_id, conversation_id, attachment_id, user_id),
+                )
+                updated = self._conn.execute(
+                    "SELECT * FROM conversation_attachments WHERE id = ?",
+                    (attachment_id,),
+                ).fetchone()
+                if updated is not None:
+                    bound.append(self._attachment_row_to_dict(updated))
+            self._conn.commit()
+            return bound
+        except Exception:
+            try:
+                self._conn.rollback()
+            except Exception:
+                pass
+            raise
 
     def delete_draft_attachment(self, attachment_id: str, user_id: str) -> bool:
         """Deletes a draft attachment that has not yet been sent."""

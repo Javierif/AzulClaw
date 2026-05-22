@@ -14,6 +14,9 @@ from urllib.parse import quote, urlparse
 import aiohttp
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError, ContentTypeError
+from aiohttp.web_exceptions import HTTPRequestEntityTooLarge
+
+from ..attachments import MAX_ATTACHMENT_SIZE_BYTES
 
 from ..azure_auth import AZURE_OPENAI_SCOPE, set_frontend_azure_token
 from ..bootstrap import build_adapter
@@ -796,24 +799,59 @@ async def desktop_attachments_post_handler(req: web.Request) -> web.Response:
     orchestrator = req.app["orchestrator"]
     user_id = _desktop_user_id(req.query.get("user_id") or req.headers.get("X-Azul-User-Id"))
     conversation_id = str(req.query.get("conversation_id", "")).strip() or None
-    reader = await req.multipart()
+    if conversation_id and not _conversation_belongs_to_user(orchestrator.memory, conversation_id, user_id):
+        return web.json_response({"error": "Conversation not found"}, status=404)
+    try:
+        reader = await req.multipart()
+    except HTTPRequestEntityTooLarge:
+        return web.json_response({"error": "Attachment exceeds the 20 MB size limit."}, status=413)
     created: list[dict] = []
+    file_count = 0
+
+    def _cleanup_created_drafts() -> None:
+        deleter = getattr(orchestrator.memory, "delete_draft_attachment", None)
+        if not callable(deleter):
+            return
+        for item in created:
+            attachment_id = str(item.get("id", "")).strip()
+            if attachment_id:
+                deleter(attachment_id, user_id)
 
     async for part in reader:
         if getattr(part, "filename", None) is None:
             continue
+        file_count += 1
+        if file_count > MAX_ATTACHMENTS_PER_TURN:
+            _cleanup_created_drafts()
+            return web.json_response(
+                {"error": f"At most {MAX_ATTACHMENTS_PER_TURN} attachments are allowed per turn."},
+                status=400,
+            )
         filename = str(part.filename or "").strip() or "attachment"
-        data = await part.read()
+        data = bytearray()
+        try:
+            while True:
+                chunk = await part.read_chunk()
+                if not chunk:
+                    break
+                data.extend(chunk)
+                if len(data) > MAX_ATTACHMENT_SIZE_BYTES:
+                    _cleanup_created_drafts()
+                    return web.json_response({"error": "Attachment exceeds the 20 MB size limit."}, status=413)
+        except HTTPRequestEntityTooLarge:
+            _cleanup_created_drafts()
+            return web.json_response({"error": "Attachment exceeds the 20 MB size limit."}, status=413)
         try:
             created.append(
                 orchestrator.memory.create_attachment_draft(
                     user_id=user_id,
                     filename=filename,
-                    data=data,
+                    data=bytes(data),
                     conversation_id=conversation_id,
                 )
             )
         except ValueError as error:
+            _cleanup_created_drafts()
             return web.json_response({"error": str(error)}, status=400)
 
     if not created:
