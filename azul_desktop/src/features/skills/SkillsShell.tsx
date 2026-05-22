@@ -1,3 +1,5 @@
+import { SectionTopbarPortal } from "../../components/SectionTopbarPortal";
+
 const skills = [
   {
     name: "Email",
@@ -29,18 +31,32 @@ const skills = [
   },
 ];
 
-export function SkillsShell() {
+export function SkillsShell({
+  headerPortalTarget = null,
+}: {
+  headerPortalTarget?: HTMLElement | null;
+}) {
+  const headerContent = (
+    <div className="section-topbar">
+      <div className="section-topbar-copy">
+        <p className="eyebrow">Skills</p>
+        <h2 className="section-topbar-title">Agent capabilities</h2>
+      </div>
+      <div className="section-topbar-actions">
+        <button type="button" className="primary-button">Add skill</button>
+      </div>
+    </div>
+  );
+
   return (
     <section className="single-panel-layout">
+      <SectionTopbarPortal
+        target={headerPortalTarget}
+        fallback={<div className="section-page-header-fallback">{headerContent}</div>}
+      >
+        {headerContent}
+      </SectionTopbarPortal>
       <div className="card panel-stack">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">Skills</p>
-            <h2>Agent capabilities</h2>
-          </div>
-          <button type="button" className="primary-button">Add skill</button>
-        </div>
-
         <div className="skill-grid">
           {skills.map((skill) => (
             <article key={skill.name} className={`subcard skill-card${skill.configured ? " skill-card-configured" : ""}`}>

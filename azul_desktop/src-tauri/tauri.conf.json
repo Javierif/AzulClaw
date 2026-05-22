@@ -28,6 +28,10 @@
   },
   "bundle": {
     "active": true,
+    "publisher": "AzulClaw",
+    "homepage": "https://github.com/Javierif/AzulClaw",
+    "shortDescription": "Azure-first desktop shell for AzulClaw.",
+    "longDescription": "AzulClaw is an Azure-first desktop companion that bundles the desktop shell, backend runtime, and first-run Hatching setup into a single Windows installation.",
     "targets": [
       "nsis"
     ],
@@ -38,6 +42,8 @@
       "nsis": {
         "installMode": "currentUser",
         "startMenuFolder": "AzulClaw",
+        "headerImage": "nsis/assets/installer-header.bmp",
+        "sidebarImage": "nsis/assets/installer-sidebar.bmp",
         "installerIcon": "icons/icon.ico",
         "installerHooks": "nsis/desktop-shortcut.nsh"
       }

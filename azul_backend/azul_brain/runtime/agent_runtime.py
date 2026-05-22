@@ -100,6 +100,18 @@ class AgentRuntimeManager:
         """Loads the effective runtime configuration."""
         return self.store.load_settings()
 
+    def supports_multimodal_input(self, lane: str) -> bool:
+        """Returns whether the selected deployment is expected to accept image inputs."""
+        candidates = self._resolve_candidates(lane)
+        if not candidates:
+            candidates = self._resolve_candidates("auto")
+        if not candidates:
+            return False
+        model = candidates[0]
+        if model.capabilities:
+            return self._capabilities_support_visual_input(model.capabilities)
+        return model.provider == "azure"
+
     def save_settings(self, payload: dict[str, Any]) -> RuntimeSettings:
         """Persists runtime configuration."""
         return self.store.save_settings(payload)
@@ -120,6 +132,7 @@ class AgentRuntimeManager:
                     "deployment": model.deployment,
                     "enabled": model.enabled,
                     "streaming_enabled": model.streaming_enabled,
+                    "capabilities": model.capabilities,
                     "available": model.enabled and cooldown_until <= now and bool(probe["available"]),
                     "cooldown_until": (
                         to_iso_z(datetime.fromtimestamp(cooldown_until, timezone.utc))
@@ -132,6 +145,20 @@ class AgentRuntimeManager:
                 }
             )
         return items
+
+    def _capabilities_support_visual_input(self, capabilities: list[str]) -> bool:
+        normalized = [
+            str(item).strip().lower().replace("_", "-")
+            for item in capabilities
+            if str(item).strip()
+        ]
+        visual_hints = ("vision", "image", "multimodal")
+        for capability in normalized:
+            if "embedding" in capability:
+                continue
+            if any(hint in capability for hint in visual_hints):
+                return True
+        return False
 
     async def execute_messages_stream(
         self,

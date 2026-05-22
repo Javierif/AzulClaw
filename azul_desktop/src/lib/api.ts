@@ -9,20 +9,21 @@ import type {
   AzureKeyVaultSecretOption,
   AzureOpenAIResourceOption,
   AzureSubscriptionOption,
+  AttachmentSummary,
   ConversationSummary,
-  HatchingProfile,
   JobRunResult,
   MemoryRecord,
   MemorySettings,
   ProcessSummary,
   RuntimeOverview,
   ScheduledJob,
+  SetupProfile,
   WorkspaceEntry,
 } from "./contracts";
 import {
   chatMessages,
   defaultChatRuntime,
-  defaultHatchingProfile,
+  defaultSetupProfile,
   memoryItems,
   memorySettings,
   processItems,
@@ -44,6 +45,8 @@ function getApiBase() {
   return (import.meta.env.VITE_AZUL_API_BASE ?? DEFAULT_API_BASE).replace(/\/$/, "");
 }
 
+const SETUP_PROFILE_ENDPOINT = "/api/desktop/hatching";
+
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${getApiBase()}${path}`, init);
   if (!response.ok) {
@@ -52,7 +55,7 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-function cloneProfileWithSafeAzureConfig(profile: HatchingProfile): HatchingProfile {
+function cloneProfileWithSafeAzureConfig(profile: SetupProfile): SetupProfile {
   const azure = profile.skill_configs?.Azure;
   if (!azure) return profile;
 
@@ -73,7 +76,7 @@ function cloneProfileWithSafeAzureConfig(profile: HatchingProfile): HatchingProf
   };
 }
 
-async function prepareProfileForPersistence(profile: HatchingProfile): Promise<HatchingProfile> {
+async function prepareProfileForPersistence(profile: SetupProfile): Promise<SetupProfile> {
   const azure = profile.skill_configs?.Azure;
   if (!azure) return profile;
 
@@ -123,15 +126,34 @@ async function prepareProfileForPersistence(profile: HatchingProfile): Promise<H
 
 export async function sendDesktopMessage(
   message: string,
+  attachmentIds: string[] = [],
   userId = "desktop-user",
-): Promise<{ reply: string; history: ChatExchange[]; runtime: ChatRuntimeMeta }> {
+  conversationId?: string,
+) : Promise<{
+  reply: string;
+  history: ChatExchange[];
+  runtime: ChatRuntimeMeta;
+  conversation_id?: string;
+  conversation_title?: string;
+}> {
   try {
-    const data = await fetchJson<{ reply: string; history: ChatExchange[]; runtime: ChatRuntimeMeta }>(
+    const data = await fetchJson<{
+      reply: string;
+      history: ChatExchange[];
+      runtime: ChatRuntimeMeta;
+      conversation_id?: string;
+      conversation_title?: string;
+    }>(
       "/api/desktop/chat",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, message }),
+        body: JSON.stringify({
+          user_id: userId,
+          message,
+          conversation_id: conversationId,
+          attachment_ids: attachmentIds,
+        }),
       },
     );
     return data;
@@ -145,10 +167,15 @@ export async function sendDesktopMessage(
   }
 }
 
-export async function listConversations(userId = "desktop-user"): Promise<ConversationSummary[]> {
+export async function listConversations(userId = "desktop-user", query = ""): Promise<ConversationSummary[]> {
   try {
+    const search = query.trim();
+    const params = new URLSearchParams({ user_id: userId });
+    if (search) {
+      params.set("q", search);
+    }
     const data = await fetchJson<{ items: ConversationSummary[] }>(
-      `/api/desktop/conversations?user_id=${encodeURIComponent(userId)}`,
+      `/api/desktop/conversations?${params.toString()}`,
     );
     return data.items;
   } catch {
@@ -175,13 +202,15 @@ export async function getConversationMessages(
   conversationId: string,
   userId = "desktop-user",
 ): Promise<ChatExchange[]> {
-  const data = await fetchJson<{ messages: { role: string; content: string }[] }>(
+  const data = await fetchJson<{ messages: Array<{ message_id?: string; role: string; content: string; created_at?: string; attachments?: AttachmentSummary[] }> }>(
     `/api/desktop/conversations/${encodeURIComponent(conversationId)}/messages?user_id=${encodeURIComponent(userId)}`,
   );
   return data.messages.map((m, i) => ({
-    id: `loaded-${i}`,
+    id: m.message_id?.trim() || `loaded-${i}`,
     role: m.role as "user" | "assistant",
     content: m.content,
+    created_at: m.created_at || "",
+    attachments: Array.isArray(m.attachments) ? m.attachments : [],
   }));
 }
 
@@ -190,6 +219,7 @@ export async function sendDesktopMessageStream(
   onEvent: (event: ChatStreamEvent) => void,
   userId = "desktop-user",
   conversationId?: string,
+  attachmentIds: string[] = [],
 ): Promise<{
   reply: string;
   history: ChatExchange[];
@@ -208,7 +238,12 @@ export async function sendDesktopMessageStream(
     const response = await fetch(`${getApiBase()}/api/desktop/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, message, conversation_id: conversationId }),
+      body: JSON.stringify({
+        user_id: userId,
+        message,
+        conversation_id: conversationId,
+        attachment_ids: attachmentIds,
+      }),
     });
     if (!response.ok || !response.body) {
       throw new Error(`HTTP ${response.status}`);
@@ -285,8 +320,49 @@ export async function sendDesktopMessageStream(
         conversation_title: finalConversationTitle,
       };
     }
-    return sendDesktopMessage(message, userId);
+    return sendDesktopMessage(message, attachmentIds, userId, conversationId);
   }
+}
+
+export async function uploadDraftAttachments(
+  files: File[],
+  userId = "desktop-user",
+  conversationId?: string,
+): Promise<AttachmentSummary[]> {
+  const formData = new FormData();
+  for (const file of files) {
+    formData.append("files", file, file.name);
+  }
+  const query = new URLSearchParams({ user_id: userId });
+  if (conversationId) {
+    query.set("conversation_id", conversationId);
+  }
+  const response = await fetch(`${getApiBase()}/api/desktop/attachments?${query.toString()}`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      detail = payload.error || detail;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
+  const payload = (await response.json()) as { items?: AttachmentSummary[] };
+  return Array.isArray(payload.items) ? payload.items : [];
+}
+
+export async function deleteDraftAttachment(
+  attachmentId: string,
+  userId = "desktop-user",
+): Promise<void> {
+  await fetchJson<{ deleted: boolean }>(
+    `/api/desktop/attachments/${encodeURIComponent(attachmentId)}?user_id=${encodeURIComponent(userId)}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function loadProcesses(): Promise<ProcessSummary[]> {
@@ -356,9 +432,9 @@ export async function loadWorkspace(path = "."): Promise<{
   }
 }
 
-export async function loadHatching(): Promise<HatchingProfile> {
+export async function loadSetupProfile(): Promise<SetupProfile> {
   try {
-    const profile = await fetchJson<HatchingProfile>("/api/desktop/hatching");
+    const profile = await fetchJson<SetupProfile>(SETUP_PROFILE_ENDPOINT);
     const azure = profile.skill_configs?.Azure;
     if (azure && isTauri() && (await isAzureOpenAiApiKeyStorageAvailable())) {
       const legacyApiKey = (azure.apiKey ?? "").trim();
@@ -386,7 +462,7 @@ export async function loadHatching(): Promise<HatchingProfile> {
           return profile;
         }
         try {
-          await fetchJson<HatchingProfile>("/api/desktop/hatching", {
+          await fetchJson<SetupProfile>(SETUP_PROFILE_ENDPOINT, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(migrated),
@@ -416,20 +492,20 @@ export async function loadHatching(): Promise<HatchingProfile> {
     const local = localStorage.getItem("azul_mock_profile");
     if (local) {
       try {
-        return cloneProfileWithSafeAzureConfig(JSON.parse(local) as HatchingProfile);
+        return cloneProfileWithSafeAzureConfig(JSON.parse(local) as SetupProfile);
       } catch (e) {
         /* ignore */
       }
     }
-    return defaultHatchingProfile;
+    return defaultSetupProfile;
   }
 }
 
-export async function saveHatching(profile: HatchingProfile): Promise<HatchingProfile> {
+export async function saveSetupProfile(profile: SetupProfile): Promise<SetupProfile> {
   let safeProfile = cloneProfileWithSafeAzureConfig(profile);
   try {
     safeProfile = await prepareProfileForPersistence(profile);
-    return await fetchJson<HatchingProfile>("/api/desktop/hatching", {
+    return await fetchJson<SetupProfile>(SETUP_PROFILE_ENDPOINT, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(safeProfile),
@@ -443,16 +519,16 @@ export async function saveHatching(profile: HatchingProfile): Promise<HatchingPr
 /** Must match ``WIPE_CONFIRMATION_PHRASE`` in ``azul_brain/api/services.py``. */
 export const DATA_WIPE_CONFIRM_PHRASE = "RESET_ALL_LOCAL_DATA";
 
-export async function wipeLocalUserData(confirm: string): Promise<HatchingProfile> {
+export async function resetLocalSetupData(confirm: string): Promise<SetupProfile> {
   try {
     const response = await fetch(`${getApiBase()}/api/desktop/data-wipe`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ confirm }),
     });
-    let data: { error?: string } & Partial<HatchingProfile> = {};
+    let data: { error?: string } & Partial<SetupProfile> = {};
     try {
-      data = (await response.json()) as { error?: string } & Partial<HatchingProfile>;
+      data = (await response.json()) as { error?: string } & Partial<SetupProfile>;
     } catch {
       /* non-JSON body */
     }
@@ -462,7 +538,7 @@ export async function wipeLocalUserData(confirm: string): Promise<HatchingProfil
     if (isTauri()) {
       await clearAzureOpenAiApiKey();
     }
-    return data as HatchingProfile;
+    return data as SetupProfile;
   } catch (error) {
     if (error instanceof Error && error.message && !error.message.includes("Failed to fetch")) {
       throw error;
@@ -472,13 +548,17 @@ export async function wipeLocalUserData(confirm: string): Promise<HatchingProfil
     }
     localStorage.removeItem("azul_mock_profile");
     return {
-      ...defaultHatchingProfile,
+      ...defaultSetupProfile,
       is_hatched: false,
       completed_at: "",
       restart_required: true,
     };
   }
 }
+
+export const loadHatching = loadSetupProfile;
+export const saveHatching = saveSetupProfile;
+export const wipeLocalUserData = resetLocalSetupData;
 
 export async function loadRuntime(): Promise<RuntimeOverview> {
   try {
@@ -625,7 +705,7 @@ export async function discoverAzureDeployments(
 
 export async function saveRuntime(payload: {
   default_lane?: "auto" | "fast" | "slow";
-  models?: Array<{ id: string; streaming_enabled?: boolean; enabled?: boolean; deployment?: string }>;
+  models?: Array<{ id: string; streaming_enabled?: boolean; enabled?: boolean; deployment?: string; capabilities?: string[] }>;
 }): Promise<RuntimeOverview> {
   try {
     return await fetchJson<RuntimeOverview>("/api/desktop/runtime", {
@@ -658,7 +738,6 @@ export async function saveJob(payload: {
   run_at?: string;
   enabled?: boolean;
   delivery_kind?: "desktop_chat" | "none";
-  delivery_user_id?: string;
   delivery_conversation_id?: string;
 }): Promise<ScheduledJob> {
   return fetchJson<ScheduledJob>("/api/desktop/jobs", {

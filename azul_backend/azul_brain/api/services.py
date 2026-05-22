@@ -8,6 +8,7 @@ from pathlib import Path
 
 from azul_backend.azul_hands_mcp.path_validator import PathValidator
 from azul_backend.workspace_layout import ensure_workspace_scaffold
+from azul_backend.azul_brain.runtime.store import SYSTEM_HEARTBEAT_JOB_ID
 
 from .hatching_store import (
     HatchingProfile,
@@ -155,33 +156,73 @@ def summarize_runtime(runtime_manager, scheduler, process_registry) -> dict:
     }
 
 
+def build_job_security_policy(job) -> dict:
+    """Returns backend-enforced heartbeat security metadata for UI display."""
+    is_workspace_heartbeat = job.id == SYSTEM_HEARTBEAT_JOB_ID and bool(job.system)
+    delivery_kind = job.delivery_kind if job.delivery_kind in {"desktop_chat", "none"} else "none"
+    return {
+        "origin": "system" if is_workspace_heartbeat else "user",
+        "protected": is_workspace_heartbeat,
+        "execution_mode": "workspace_heartbeat" if is_workspace_heartbeat else "proactive_message",
+        "workspace_access": "heartbeat_md" if is_workspace_heartbeat else "none",
+        "tools_enabled": False if not is_workspace_heartbeat else True,
+        "memory_context": "none",
+        "delivery_kind": delivery_kind,
+        "suppress_noop_output": is_workspace_heartbeat,
+        "can_delete": not is_workspace_heartbeat,
+    }
+
+
+def build_job_tags(job, security_policy: dict) -> list[str]:
+    """Builds display-only tags from backend security policy."""
+    tags: list[str] = []
+    if security_policy["origin"] == "system":
+        tags.append("System")
+    else:
+        tags.append("User")
+    if security_policy["protected"]:
+        tags.append("Protected")
+    if security_policy["workspace_access"] == "heartbeat_md":
+        tags.append("HEARTBEAT.md")
+    elif security_policy["workspace_access"] == "none":
+        tags.append("No workspace")
+    if not security_policy["tools_enabled"]:
+        tags.append("No tools")
+    if security_policy["delivery_kind"] == "desktop_chat":
+        tags.append("Chat")
+    return tags
+
+
+def summarize_job(job) -> dict:
+    """Serialises one scheduled job with display-only security metadata."""
+    security_policy = build_job_security_policy(job)
+    return {
+        "id": job.id,
+        "name": job.name,
+        "prompt": job.prompt,
+        "lane": job.lane,
+        "schedule_kind": job.schedule_kind,
+        "run_at": job.run_at,
+        "interval_seconds": job.interval_seconds,
+        "cron_expression": job.cron_expression,
+        "enabled": job.enabled,
+        "system": job.system,
+        "source": job.source,
+        "delivery_kind": job.delivery_kind,
+        "delivery_user_id": job.delivery_user_id,
+        "delivery_conversation_id": job.delivery_conversation_id,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
+        "last_run_at": job.last_run_at,
+        "next_run_at": job.next_run_at,
+        "security_policy": security_policy,
+        "tags": build_job_tags(job, security_policy),
+    }
+
+
 def summarize_jobs(store) -> list[dict]:
     """Lists scheduled jobs for the desktop app."""
-    items = []
-    for job in store.load_jobs():
-        items.append(
-            {
-                "id": job.id,
-                "name": job.name,
-                "prompt": job.prompt,
-                "lane": job.lane,
-                "schedule_kind": job.schedule_kind,
-                "run_at": job.run_at,
-                "interval_seconds": job.interval_seconds,
-                "cron_expression": job.cron_expression,
-                "enabled": job.enabled,
-                "system": job.system,
-                "source": job.source,
-                "delivery_kind": job.delivery_kind,
-                "delivery_user_id": job.delivery_user_id,
-                "delivery_conversation_id": job.delivery_conversation_id,
-                "created_at": job.created_at,
-                "updated_at": job.updated_at,
-                "last_run_at": job.last_run_at,
-                "next_run_at": job.next_run_at,
-            }
-        )
-    return items
+    return [summarize_job(job) for job in store.load_jobs()]
 
 
 def load_hatching_profile() -> dict:
@@ -240,8 +281,18 @@ def sync_runtime_models_from_azure_profile(runtime_manager, profile: dict) -> No
         return
 
     deployment = str(azure_config.get("deployment", "")).strip()
+    deployment_capabilities = [
+        item.strip().lower()
+        for item in str(azure_config.get("deploymentCapabilities", "")).split(",")
+        if item.strip()
+    ]
     has_fast_deployment = "fastDeployment" in azure_config
     fast_deployment = str(azure_config.get("fastDeployment", "")).strip()
+    fast_deployment_capabilities = [
+        item.strip().lower()
+        for item in str(azure_config.get("fastDeploymentCapabilities", "")).split(",")
+        if item.strip()
+    ]
     if not deployment and not fast_deployment:
         if not has_fast_deployment:
             return
@@ -250,13 +301,25 @@ def sync_runtime_models_from_azure_profile(runtime_manager, profile: dict) -> No
     updates: list[dict[str, str]] = []
     for model in settings.models:
         next_deployment: str | None = None
+        next_capabilities: list[str] | None = None
         if model.id == "slow" and deployment:
             next_deployment = deployment
+            next_capabilities = deployment_capabilities
         elif model.id == "fast" and has_fast_deployment:
             next_deployment = fast_deployment
+            next_capabilities = fast_deployment_capabilities
 
-        if next_deployment is not None and model.deployment != next_deployment:
-            updates.append({"id": model.id, "deployment": next_deployment})
+        if next_deployment is None:
+            continue
+
+        if model.deployment != next_deployment or model.capabilities != (next_capabilities or []):
+            updates.append(
+                {
+                    "id": model.id,
+                    "deployment": next_deployment,
+                    "capabilities": next_capabilities or [],
+                }
+            )
 
     if updates:
         runtime_manager.save_settings({"models": updates})

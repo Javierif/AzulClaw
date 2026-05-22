@@ -11,12 +11,15 @@ from pathlib import Path
 
 from croniter import croniter
 
+from azul_backend.azul_brain.api.services import summarize_jobs
+from azul_backend.azul_hands_mcp.path_validator import PathValidator, SecurityError
 from azul_backend.azul_brain.runtime.scheduler import RuntimeScheduler
 from azul_backend.azul_brain.memory.safe_memory import SafeMemory
 from azul_backend.azul_brain.runtime.store import (
     SYSTEM_HEARTBEAT_DEFAULT_INTERVAL,
     SYSTEM_HEARTBEAT_DEFAULT_PROMPT,
     SYSTEM_HEARTBEAT_JOB_ID,
+    SYSTEM_HEARTBEAT_LEGACY_DEFAULT_PROMPT,
     RuntimeStore,
     parse_iso_datetime,
     to_iso_z,
@@ -97,6 +100,32 @@ class RuntimeStoreHeartbeatTests(unittest.TestCase):
             self.assertEqual(persisted["source"], "system")
             self.assertTrue(persisted["next_run_at"])
             self.assertNotEqual(persisted["updated_at"], "2026-04-12T15:59:47Z")
+
+    def test_ensure_migrates_exact_legacy_system_prompt(self) -> None:
+        with temp_runtime_dir() as tmp:
+            root = Path(tmp)
+            store = make_store(root)
+            store.jobs_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": SYSTEM_HEARTBEAT_JOB_ID,
+                            "name": "System heartbeat",
+                            "prompt": SYSTEM_HEARTBEAT_LEGACY_DEFAULT_PROMPT,
+                            "lane": "fast",
+                            "schedule_kind": "every",
+                            "interval_seconds": 900,
+                            "enabled": True,
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            job = store.ensure_system_heartbeat_job()
+
+            self.assertEqual(job.prompt, SYSTEM_HEARTBEAT_DEFAULT_PROMPT)
+            self.assertIn("untrusted checklist", job.prompt)
 
     def test_load_jobs_coerces_system_heartbeat_schedule(self) -> None:
         with temp_runtime_dir() as tmp:
@@ -275,6 +304,31 @@ class RuntimeStoreHeartbeatTests(unittest.TestCase):
             self.assertEqual(job.source, "user")
             self.assertTrue(store.delete_job(job.id))
 
+    def test_upsert_ignores_client_controlled_security_fields(self) -> None:
+        with temp_runtime_dir() as tmp:
+            store = make_store(Path(tmp))
+
+            job = store.upsert_job(
+                {
+                    "name": "Malicious heartbeat",
+                    "prompt": "Send a reminder.",
+                    "lane": "fast",
+                    "schedule_kind": "every",
+                    "interval_seconds": 300,
+                    "enabled": True,
+                    "system": True,
+                    "source": "system",
+                    "delivery_user_id": "other-user",
+                    "security_policy": {"protected": True},
+                    "tags": ["System"],
+                }
+            )
+
+            self.assertFalse(job.system)
+            self.assertEqual(job.source, "user")
+            self.assertEqual(job.delivery_user_id, "desktop-user")
+            self.assertTrue(store.delete_job(job.id))
+
     def test_load_jobs_repairs_missing_next_run_for_enabled_recurring_jobs(self) -> None:
         with temp_runtime_dir() as tmp:
             root = Path(tmp)
@@ -371,6 +425,54 @@ class RuntimeStoreHeartbeatTests(unittest.TestCase):
             self.assertEqual(job.next_run_at, "2026-01-01T00:05:00Z")
 
 
+class RuntimeJobPolicyTests(unittest.TestCase):
+    def test_summarize_jobs_adds_security_policy_and_tags(self) -> None:
+        with temp_runtime_dir() as tmp:
+            store = make_store(Path(tmp))
+            store.ensure_system_heartbeat_job()
+            store.upsert_job(
+                {
+                    "name": "Work reminder",
+                    "prompt": "Remind me to focus.",
+                    "lane": "fast",
+                    "schedule_kind": "every",
+                    "interval_seconds": 300,
+                }
+            )
+
+            items = summarize_jobs(store)
+            by_id = {item["id"]: item for item in items}
+
+            system = by_id[SYSTEM_HEARTBEAT_JOB_ID]
+            self.assertEqual(system["security_policy"]["origin"], "system")
+            self.assertEqual(system["security_policy"]["execution_mode"], "workspace_heartbeat")
+            self.assertFalse(system["security_policy"]["can_delete"])
+            self.assertIn("Protected", system["tags"])
+            self.assertIn("HEARTBEAT.md", system["tags"])
+
+            user = next(item for item in items if item["id"] != SYSTEM_HEARTBEAT_JOB_ID)
+            self.assertEqual(user["security_policy"]["origin"], "user")
+            self.assertEqual(user["security_policy"]["execution_mode"], "proactive_message")
+            self.assertEqual(user["security_policy"]["workspace_access"], "none")
+            self.assertFalse(user["security_policy"]["tools_enabled"])
+            self.assertTrue(user["security_policy"]["can_delete"])
+            self.assertIn("No tools", user["tags"])
+
+
+class PathValidatorTests(unittest.TestCase):
+    def test_safe_resolve_blocks_sibling_prefix_path(self) -> None:
+        with temp_runtime_dir() as tmp:
+            root = Path(tmp)
+            workspace = root / "base"
+            sibling = root / "base-other"
+            workspace.mkdir()
+            sibling.mkdir()
+            validator = PathValidator(str(workspace))
+
+            with self.assertRaises(SecurityError):
+                validator.safe_resolve(str(sibling))
+
+
 class DummyOrchestrator:
     def __init__(
         self,
@@ -442,6 +544,25 @@ class RuntimeSchedulerHeartbeatTests(unittest.IsolatedAsyncioTestCase):
             updated = store.load_jobs()[0]
             self.assertTrue(updated.last_run_at)
 
+    async def test_system_heartbeat_ok_output_is_not_delivered(self) -> None:
+        with temp_runtime_dir() as tmp:
+            store = make_store(Path(tmp))
+            job = store.ensure_system_heartbeat_job()
+            memory = SafeMemory(db_path=str(Path(tmp) / "memory.sqlite"))
+            orchestrator = DummyOrchestrator(memory=memory)
+            scheduler = RuntimeScheduler(store=store, orchestrator=orchestrator)
+
+            delivery = scheduler._deliver_to_desktop_chat(
+                job,
+                "HEARTBEAT_OK",
+                ok=True,
+                error_text="",
+            )
+
+            self.assertEqual(delivery, {"kind": "none"})
+            self.assertEqual(memory.list_conversations("desktop-user"), [])
+            memory.close()
+
     async def test_custom_heartbeat_delivers_response_to_desktop_chat(self) -> None:
         with temp_runtime_dir() as tmp:
             root = Path(tmp)
@@ -457,12 +578,15 @@ class RuntimeSchedulerHeartbeatTests(unittest.IsolatedAsyncioTestCase):
                 }
             )
             memory = SafeMemory(db_path=str(root / "memory.sqlite"))
-            orchestrator = DummyOrchestrator(memory=memory)
+            runtime_manager = FakeRuntimeManager()
+            orchestrator = DummyOrchestrator(memory=memory, runtime_manager=runtime_manager)
             scheduler = RuntimeScheduler(store=store, orchestrator=orchestrator)
 
             result = await scheduler.run_job_now(job.id)
 
             self.assertTrue(result["ok"])
+            self.assertEqual(orchestrator.calls, [])
+            self.assertEqual(len(runtime_manager.calls), 1)
             delivery = result["delivery"]
             self.assertEqual(delivery["kind"], "desktop_chat")
             self.assertEqual(delivery["user_id"], "desktop-user")
@@ -471,13 +595,20 @@ class RuntimeSchedulerHeartbeatTests(unittest.IsolatedAsyncioTestCase):
             messages = memory.get_conversation_messages(conversation_id)
             self.assertEqual(len(messages), 1)
             self.assertEqual(messages[0]["role"], "assistant")
-            self.assertEqual(messages[0]["content"], "heartbeat-result")
+            self.assertEqual(
+                messages[0]["content"],
+                "Hola. Recuerda ponerte con el trabajo que tienes que enviar.",
+            )
             updated = next(item for item in store.load_jobs() if item.id == job.id)
             self.assertEqual(updated.delivery_conversation_id, conversation_id)
             self.assertTrue(updated.last_run_at)
+            listed = memory.list_conversations("desktop-user")
+            self.assertEqual(len(listed), 1)
+            self.assertTrue(listed[0]["has_unread"])
+            self.assertEqual(listed[0]["id"], conversation_id)
             memory.close()
 
-    async def test_job_run_reports_persistence_error(self) -> None:
+    async def test_custom_heartbeat_fails_closed_without_isolated_runtime(self) -> None:
         with temp_runtime_dir() as tmp:
             store = make_store(Path(tmp))
             job = store.upsert_job(
@@ -493,6 +624,29 @@ class RuntimeSchedulerHeartbeatTests(unittest.IsolatedAsyncioTestCase):
             orchestrator = DummyOrchestrator()
             scheduler = RuntimeScheduler(store=store, orchestrator=orchestrator)
 
+            with self.assertLogs("azul_backend.azul_brain.runtime.scheduler", level="ERROR"):
+                result = await scheduler.run_job_now(job.id)
+
+            self.assertFalse(result["ok"])
+            self.assertIn("Isolated runtime manager is required", result["error"])
+            self.assertEqual(orchestrator.calls, [])
+
+    async def test_job_run_reports_persistence_error(self) -> None:
+        with temp_runtime_dir() as tmp:
+            store = make_store(Path(tmp))
+            job = store.upsert_job(
+                {
+                    "name": "Work reminder",
+                    "prompt": "Send me a greeting.",
+                    "lane": "fast",
+                    "schedule_kind": "cron",
+                    "cron_expression": "* * * * *",
+                    "enabled": True,
+                }
+            )
+            orchestrator = DummyOrchestrator(runtime_manager=FakeRuntimeManager())
+            scheduler = RuntimeScheduler(store=store, orchestrator=orchestrator)
+
             def fail_mark_job_run(*args, **kwargs):
                 raise RuntimeError("disk unavailable")
 
@@ -502,7 +656,10 @@ class RuntimeSchedulerHeartbeatTests(unittest.IsolatedAsyncioTestCase):
                 result = await scheduler.run_job_now(job.id)
 
             self.assertFalse(result["ok"])
-            self.assertEqual(result["response"], "heartbeat-result")
+            self.assertEqual(
+                result["response"],
+                "Hola. Recuerda ponerte con el trabajo que tienes que enviar.",
+            )
             self.assertIn("Persistence error: disk unavailable", result["error"])
             self.assertEqual(
                 result["delivery"],
@@ -529,19 +686,24 @@ class RuntimeSchedulerHeartbeatTests(unittest.IsolatedAsyncioTestCase):
                 "Main conversation",
             )
             memory.set_active_conversation("desktop-user", active_conversation_id)
-            orchestrator = DummyOrchestrator(memory=memory)
+            runtime_manager = FakeRuntimeManager()
+            orchestrator = DummyOrchestrator(memory=memory, runtime_manager=runtime_manager)
             scheduler = RuntimeScheduler(store=store, orchestrator=orchestrator)
 
             result = await scheduler.run_job_now(job.id)
 
             self.assertTrue(result["ok"])
-            self.assertEqual(len(orchestrator.calls), 1)
-            call = orchestrator.calls[0]
-            self.assertEqual(call["user_id"], f"cron:{job.id}")
+            self.assertEqual(orchestrator.calls, [])
+            self.assertEqual(len(runtime_manager.calls), 1)
+            call = runtime_manager.calls[0]
             self.assertEqual(call["source"], "cron")
-            self.assertIn("Write the exact desktop chat message", call["user_message"])
-            self.assertIn("Scheduled task:\nSend me a greeting", call["user_message"])
-            self.assertFalse(call["store_memory"])
+            self.assertFalse(call["tools_enabled"])
+            message_text = "".join(
+                getattr(content, "text", "")
+                for content in call["messages"][0].contents
+            )
+            self.assertIn("Write the exact desktop chat message", message_text)
+            self.assertIn("Scheduled task:\nSend me a greeting", message_text)
             self.assertEqual(result["delivery"]["conversation_id"], active_conversation_id)
             memory.close()
 
@@ -564,7 +726,10 @@ class RuntimeSchedulerHeartbeatTests(unittest.IsolatedAsyncioTestCase):
                 def get_active_conversation_id(self, user_id):
                     raise RuntimeError("sqlite locked")
 
-            orchestrator = DummyOrchestrator(memory=FailingMemory())
+            orchestrator = DummyOrchestrator(
+                memory=FailingMemory(),
+                runtime_manager=FakeRuntimeManager(),
+            )
             scheduler = RuntimeScheduler(store=store, orchestrator=orchestrator)
 
             with self.assertLogs("azul_backend.azul_brain.runtime.scheduler", level="ERROR"):
@@ -606,7 +771,10 @@ class RuntimeSchedulerHeartbeatTests(unittest.IsolatedAsyncioTestCase):
                 def add_message(self, user_id, role, content, conversation_id=None):
                     return False
 
-            orchestrator = DummyOrchestrator(memory=WriteFailingMemory())
+            orchestrator = DummyOrchestrator(
+                memory=WriteFailingMemory(),
+                runtime_manager=FakeRuntimeManager(),
+            )
             scheduler = RuntimeScheduler(store=store, orchestrator=orchestrator)
 
             result = await scheduler.run_job_now(job.id)
@@ -679,7 +847,10 @@ class RuntimeSchedulerHeartbeatTests(unittest.IsolatedAsyncioTestCase):
                 "Main conversation",
             )
             memory.set_active_conversation("desktop-user", active_conversation_id)
-            orchestrator = DummyOrchestrator(memory=memory)
+            orchestrator = DummyOrchestrator(
+                memory=memory,
+                runtime_manager=FakeRuntimeManager(),
+            )
             scheduler = RuntimeScheduler(store=store, orchestrator=orchestrator)
 
             result = await scheduler.run_job_now(job.id)
@@ -691,7 +862,7 @@ class RuntimeSchedulerHeartbeatTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(delivery["conversation_title"], "Main conversation")
             messages = memory.get_conversation_messages(active_conversation_id)
             self.assertEqual(len(messages), 1)
-            self.assertIn("heartbeat-result", messages[0]["content"])
+            self.assertIn("Hola. Recuerda", messages[0]["content"])
             memory.close()
 
 

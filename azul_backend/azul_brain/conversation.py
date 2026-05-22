@@ -6,8 +6,16 @@ import os
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from agent_framework import Message
+from pathlib import Path
 
+from agent_framework import Content, Message
+
+from .attachments import (
+    AttachmentError,
+    build_attachment_context,
+    build_vision_capability_error,
+    render_pdf_pages_as_data_uris,
+)
 from .cortex.fast.commentary import (
     build_commentary,
     build_progress_snapshot,
@@ -171,13 +179,13 @@ class ConversationOrchestrator:
         role: str,
         content: str,
         conversation_id: str | None = None,
-    ) -> None:
+    ) -> str:
         """Persists to short-term conversation history (SafeMemory only).
 
         Raw conversation turns are NOT indexed in the vector store — only
         extracted preferences and facts go there (via PreferenceExtractor).
         """
-        self.memory.add_message(user_id, role, content, conversation_id=conversation_id)
+        return self.memory.add_message(user_id, role, content, conversation_id=conversation_id)
 
     def _should_generate_conversation_title(
         self,
@@ -346,6 +354,7 @@ class ConversationOrchestrator:
         lane: str,
         source: str,
         title: str,
+        tools_enabled: bool = True,
     ) -> ConversationReply:
         """Invokes the agent with structured messages and falls back on content filter errors."""
         try:
@@ -355,6 +364,7 @@ class ConversationOrchestrator:
                 title=title,
                 source=source,
                 kind="agent-run",
+                tools_enabled=tools_enabled,
             )
             return ConversationReply(
                 text=result.text,
@@ -388,6 +398,7 @@ class ConversationOrchestrator:
         source: str,
         title: str,
         on_delta: Callable[[str], Awaitable[None]],
+        tools_enabled: bool = True,
     ) -> ConversationReply:
         """Invokes the agent and emits deltas when the runtime uses streaming."""
         try:
@@ -398,6 +409,7 @@ class ConversationOrchestrator:
                 source=source,
                 kind="agent-run",
                 on_delta=on_delta,
+                tools_enabled=tools_enabled,
             )
             return ConversationReply(
                 text=result.text,
@@ -510,6 +522,8 @@ class ConversationOrchestrator:
         semantic_memories: list[dict],
         user_message: str,
         user_knowledge: list[dict] | None = None,
+        document_context: str = "",
+        visual_contents: list[Content] | None = None,
     ) -> list[Message]:
         """Converts history and context into real messages for the framework."""
         messages: list[Message] = []
@@ -565,8 +579,106 @@ class ConversationOrchestrator:
                     )
                 )
 
-        messages.append(Message(role="user", contents=user_message))
+        if document_context.strip():
+            messages.append(
+                Message(
+                    role="assistant",
+                    contents="Document context for this conversation:\n" + document_context.strip(),
+                )
+            )
+
+        user_contents: list[Content] = [Content.from_text(user_message)]
+        if visual_contents:
+            user_contents.extend(visual_contents)
+        messages.append(Message(role="user", contents=user_contents))
         return messages
+
+    def _supports_visual_inputs(self, lane: str) -> bool:
+        checker = getattr(self.runtime_manager, "supports_multimodal_input", None)
+        if callable(checker):
+            return bool(checker(lane))
+        return False
+
+    def _resolve_visual_lane(self, preferred_lane: str) -> str:
+        """Chooses a lane that can accept visual inputs, preferring fast as fallback."""
+        if self._supports_visual_inputs(preferred_lane):
+            return preferred_lane
+        if preferred_lane != "fast" and self._supports_visual_inputs("fast"):
+            LOGGER.info(
+                "[Brain] Falling back from lane=%s to lane=fast for visual input support.",
+                preferred_lane,
+            )
+            return "fast"
+        return preferred_lane
+
+    def _load_attachment(self, attachment_id: str, user_id: str) -> dict | None:
+        loader = getattr(self.memory, "get_attachment", None)
+        if not callable(loader):
+            return None
+        return loader(attachment_id, user_id)
+
+    def _prepare_attachment_inputs(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str | None,
+        user_message: str,
+        lane: str,
+        attachment_ids: list[str] | None,
+    ) -> tuple[str, list[Content], bool, str]:
+        requested_ids = [str(item).strip() for item in (attachment_ids or []) if str(item).strip()]
+        current_attachments = [
+            attachment
+            for attachment in (self._load_attachment(attachment_id, user_id) for attachment_id in requested_ids)
+            if attachment is not None
+        ]
+        if requested_ids and len(current_attachments) != len(requested_ids):
+            missing = sorted(set(requested_ids) - {str(item["id"]) for item in current_attachments})
+            raise AttachmentError(f"Attachment not found: {', '.join(missing)}")
+
+        conversation_attachments: list[dict] = []
+        if conversation_id and hasattr(self.memory, "list_conversation_attachments"):
+            conversation_attachments = self.memory.list_conversation_attachments(conversation_id, user_id)
+        all_attachments = [
+            *conversation_attachments,
+            *[
+                item
+                for item in current_attachments
+                if str(item["id"]) not in {str(existing.get("id")) for existing in conversation_attachments}
+            ],
+        ]
+
+        document_context, _ = build_attachment_context(all_attachments, user_message)
+
+        visual_candidates = [
+            item
+            for item in current_attachments
+            if item.get("kind") == "image" or item.get("extraction_status") == "low_text_quality"
+        ]
+        if not visual_candidates and conversation_id and hasattr(self.memory, "list_recent_visual_attachments"):
+            visual_candidates = self.memory.list_recent_visual_attachments(conversation_id, user_id, limit=2)
+
+        if not visual_candidates:
+            return document_context, [], False, lane
+
+        selected_lane = self._resolve_visual_lane(lane)
+        if not self._supports_visual_inputs(selected_lane):
+            raise AttachmentError(build_vision_capability_error())
+
+        visual_contents: list[Content] = []
+        for attachment in visual_candidates:
+            mime_type = str(attachment.get("mime_type", "")).lower()
+            storage_path = Path(str(attachment.get("storage_path", "")))
+            if not storage_path.exists():
+                continue
+            if mime_type.startswith("image/"):
+                visual_contents.append(Content.from_data(storage_path.read_bytes(), mime_type))
+                continue
+            if mime_type == "application/pdf":
+                for data_uri in render_pdf_pages_as_data_uris(storage_path):
+                    visual_contents.append(Content.from_uri(data_uri, media_type="image/png"))
+
+        return document_context, visual_contents, bool(visual_contents), selected_lane
 
     def resolve_route(self, user_message: str, requested_lane: str = "auto") -> TriageDecision:
         """Determines the effective cognitive route for this turn."""
@@ -627,6 +739,7 @@ class ConversationOrchestrator:
         user_message: str,
         lane: str = "auto",
         conversation_id: str | None = None,
+        attachment_ids: list[str] | None = None,
     ) -> ConversationReply:
         """Builds context, runs inference, and persists the conversation."""
         heartbeat_reply = await self._try_handle_heartbeat_intent(
@@ -642,7 +755,24 @@ class ConversationOrchestrator:
         history = self._load_chat_history(user_id, conversation_id, limit=12)
         semantic_memories = await self.retrieve_semantic_memories(user_id, user_message)
         user_knowledge = self.retrieve_user_knowledge(user_id)
-        messages = self.build_agent_messages(history, semantic_memories, user_message, user_knowledge)
+        try:
+            document_context, visual_contents, has_visual_inputs, effective_lane = self._prepare_attachment_inputs(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                user_message=user_message,
+                lane=effective_lane,
+                attachment_ids=attachment_ids,
+            )
+        except AttachmentError as error:
+            return ConversationReply(text=str(error), lane=effective_lane)
+        messages = self.build_agent_messages(
+            history,
+            semantic_memories,
+            user_message,
+            user_knowledge,
+            document_context=document_context,
+            visual_contents=visual_contents,
+        )
 
         LOGGER.info("[Brain] Message received. History=%s Knowledge=%s", len(history), len(user_knowledge))
         reply = await self.invoke_messages(
@@ -651,16 +781,28 @@ class ConversationOrchestrator:
             lane=effective_lane,
             source="chat",
             title="Main conversation",
+            tools_enabled=not has_visual_inputs,
         )
 
-        await self.persist_with_vector_memory(user_id, "user", user_message, conversation_id=conversation_id)
+        user_message_id = await self.persist_with_vector_memory(
+            user_id, "user", user_message, conversation_id=conversation_id
+        )
+        if attachment_ids and conversation_id and user_message_id and hasattr(self.memory, "bind_draft_attachments_to_message"):
+            self.memory.bind_draft_attachments_to_message(
+                attachment_ids=[str(item).strip() for item in attachment_ids if str(item).strip()],
+                user_id=user_id,
+                conversation_id=conversation_id,
+                message_id=user_message_id,
+            )
         await self.persist_with_vector_memory(user_id, "assistant", reply.text, conversation_id=conversation_id)
         # Fire-and-forget preference extraction (skip if message contains credentials)
         if self.preference_extractor and not should_skip_vectorization(user_message):
             self.preference_extractor.fire_and_forget(user_id, user_message, reply.text)
         if conversation_id:
             reply.conversation_title = self.memory.get_conversation_title(conversation_id)
-        reply.triage_reason = route.reason
+        reply.triage_reason = (
+            route.reason if effective_lane == route.lane else f"{route.reason}|visual-fallback-fast"
+        )
         return reply
 
     def _load_chat_history(
@@ -688,6 +830,7 @@ class ConversationOrchestrator:
         *,
         lane: str = "auto",
         conversation_id: str | None = None,
+        attachment_ids: list[str] | None = None,
         on_delta: Callable[[str], Awaitable[None]],
         on_commentary: Callable[[str], Awaitable[None]] | None = None,
         on_progress: Callable[[dict], Awaitable[None]] | None = None,
@@ -704,6 +847,22 @@ class ConversationOrchestrator:
 
         route = self.resolve_route(user_message, lane)
         effective_lane = route.lane
+        history = self._load_chat_history(user_id, conversation_id, limit=12)
+        is_first_turn = len(history) == 0
+        semantic_memories = await self.retrieve_semantic_memories(user_id, user_message)
+        user_knowledge = self.retrieve_user_knowledge(user_id)
+        try:
+            document_context, visual_contents, has_visual_inputs, effective_lane = self._prepare_attachment_inputs(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                user_message=user_message,
+                lane=effective_lane,
+                attachment_ids=attachment_ids,
+            )
+        except AttachmentError as error:
+            await on_delta(str(error))
+            return ConversationReply(text=str(error), lane=effective_lane)
+
         progress_blueprint: dict | None = None
         if effective_lane == "slow":
             initial_commentary, progress_blueprint = await self.generate_fast_visible_plan(
@@ -723,11 +882,14 @@ class ConversationOrchestrator:
                     blueprint=progress_blueprint,
                 )
             )
-        history = self._load_chat_history(user_id, conversation_id, limit=12)
-        is_first_turn = len(history) == 0
-        semantic_memories = await self.retrieve_semantic_memories(user_id, user_message)
-        user_knowledge = self.retrieve_user_knowledge(user_id)
-        messages = self.build_agent_messages(history, semantic_memories, user_message, user_knowledge)
+        messages = self.build_agent_messages(
+            history,
+            semantic_memories,
+            user_message,
+            user_knowledge,
+            document_context=document_context,
+            visual_contents=visual_contents,
+        )
         context_commentary = "I now have the necessary context. Preparing the full response."
         if effective_lane == "slow" and on_commentary is not None:
             await on_commentary(context_commentary)
@@ -763,6 +925,7 @@ class ConversationOrchestrator:
                 source="chat",
                 title="Main conversation",
                 on_delta=on_delta,
+                tools_enabled=not has_visual_inputs,
             )
         finally:
             if commentary_task is not None:
@@ -772,7 +935,16 @@ class ConversationOrchestrator:
                 except asyncio.CancelledError:
                     pass
 
-        await self.persist_with_vector_memory(user_id, "user", user_message, conversation_id=conversation_id)
+        user_message_id = await self.persist_with_vector_memory(
+            user_id, "user", user_message, conversation_id=conversation_id
+        )
+        if attachment_ids and conversation_id and user_message_id and hasattr(self.memory, "bind_draft_attachments_to_message"):
+            self.memory.bind_draft_attachments_to_message(
+                attachment_ids=[str(item).strip() for item in attachment_ids if str(item).strip()],
+                user_id=user_id,
+                conversation_id=conversation_id,
+                message_id=user_message_id,
+            )
         await self.persist_with_vector_memory(user_id, "assistant", reply.text, conversation_id=conversation_id)
         # Fire-and-forget preference extraction (skip if message contains credentials)
         if self.preference_extractor and not should_skip_vectorization(user_message):
@@ -790,7 +962,9 @@ class ConversationOrchestrator:
             )
         if conversation_id:
             reply.conversation_title = self.memory.get_conversation_title(conversation_id)
-        reply.triage_reason = route.reason
+        reply.triage_reason = (
+            route.reason if effective_lane == route.lane else f"{route.reason}|visual-fallback-fast"
+        )
         if effective_lane == "slow" and on_progress is not None:
             await on_progress(
                 build_progress_snapshot(

@@ -1,6 +1,6 @@
 # Desktop Low-Fidelity Wireframes
 
-Last reviewed: 2026-04-15
+Last reviewed: 2026-05-19
 
 ## Purpose
 
@@ -20,7 +20,7 @@ These wireframes describe the main desktop surfaces at a structural level. They 
 +-----------------------------------------------------------+
 ```
 
-## 2. Hatching configuration
+## 2. Hatching configuration and Azure setup
 
 ```text
 +---------------------+-------------------------------------+
@@ -28,6 +28,9 @@ These wireframes describe the main desktop surfaces at a structural level. They 
 | section nav         | tone                                |
 |                     | preferred working style             |
 |                     | workspace root                      |
+|                     | Azure login or API key mode         |
+|                     | tenant / subscription / resource    |
+|                     | deployments / Key Vault             |
 |                     | [ Save and continue ]               |
 +---------------------+-------------------------------------+
 ```
@@ -35,36 +38,39 @@ These wireframes describe the main desktop surfaces at a structural level. They 
 ## 3. Main chat
 
 ```text
-+-----------+-----------------------------------------------+
-| sidebar   | top bar: session, status, workspace           |
-|           +-----------------------------------------------+
-| nav       | message history                               |
-|           | commentary and progress cards                 |
-|           | assistant answer stream                       |
-|           +-----------------------------------------------+
-|           | composer + quick actions                      |
-+-----------+-----------------------------------------------+
++-----------+-----------------------------------------------+----------------------+
+| sidebar   | top bar: session, status, workspace           | live context panel   |
+|           +-----------------------------------------------+----------------------+
+| nav       | message history                               | memories             |
+|           | commentary and progress cards                 | runtime status       |
+|           | assistant answer stream                       | workspace hints      |
+|           +-----------------------------------------------+----------------------+
+|           | attachment chips + composer + quick actions                          |
++-----------+---------------------------------------------------------------------+
 ```
 
-## 4. Memory
+## 4. Skills
 
 ```text
-+----------------------+------------------------------------+
-| memory list          | selected memory detail             |
-| type / date / tags   | content                            |
-|                      | source metadata                    |
-|                      | [ Delete ]                         |
-+----------------------+------------------------------------+
++-----------------------------------------------------------+
+| skill catalog / presets                                   |
+| descriptions and availability                             |
+| setup or launch actions                                   |
++-----------------------------------------------------------+
 ```
 
-## 5. Workspace
+## 5. Context
 
 ```text
-+----------------------+------------------------------------+
-| root indicator       | current path                       |
-| folders/files list   | item details or preview area       |
-|                      | safety note: sandbox only          |
-+----------------------+------------------------------------+
++-----------------------------------------------------------+
+| header: processes / memories / workspace item counts      |
+|-----------------------------------------------------------|
+| tabs: Overview | Processes | Memory | Workspace           |
+|-----------------------------------------------------------|
+| overview cards or selected tab content                    |
+| process list / memory inspector / workspace browser       |
+| footer: refresh context                                   |
++-----------------------------------------------------------+
 ```
 
 ## 6. Heartbeats
@@ -77,4 +83,16 @@ These wireframes describe the main desktop surfaces at a structural level. They 
 |                      | status                             |
 |                      | [ Run now ] [ Pause ]              |
 +----------------------+------------------------------------+
+```
+
+## 7. Settings
+
+```text
++-----------------------------------------------------------+
+| tabs: Azure | Runtime | Memory | Identity | Security | Data |
+|-----------------------------------------------------------|
+| Azure connection state, deployments, Key Vault            |
+| backend diagnostics, auth state, runtime/log paths        |
+| local reset, wipe, and profile actions                    |
++-----------------------------------------------------------+
 ```

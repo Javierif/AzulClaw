@@ -20,7 +20,7 @@ const KIND_COLOR: Record<string, string> = {
 
 const SOURCE_LABEL: Record<string, string> = {
   "featured": "Featured",
-  "hatching-profile": "Featured",
+  "hatching-profile": "Profile setup",
   "extractor": "Auto-learned",
   "extracted": "Auto-learned",
   "user": "You said",
@@ -73,7 +73,7 @@ export function MemoryShell() {
   }
 
   const learned = records
-    .filter((r) => r.kind === "preference" || r.kind === "semantic" || r.kind === "fact" as string)
+    .filter((r) => r.kind === "preference" || r.kind === "semantic")
     .sort((a, b) => {
       const aFeatured = a.source === "featured" || a.source === "hatching-profile" ? 0 : 1;
       const bFeatured = b.source === "featured" || b.source === "hatching-profile" ? 0 : 1;

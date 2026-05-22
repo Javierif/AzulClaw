@@ -190,12 +190,23 @@ class FoundryAgent:
         if self._instructions:
             result.append({"role": "system", "content": self._instructions})
         for message in messages:
-            parts = [
-                content.text
-                for content in message.contents
-                if getattr(content, "type", None) == "text" and content.text
-            ]
-            result.append({"role": message.role, "content": "".join(parts)})
+            serialized_parts: list[dict[str, Any]] = []
+            plain_text_parts: list[str] = []
+            for content in message.contents:
+                content_type = getattr(content, "type", None)
+                if content_type == "text" and content.text:
+                    serialized_parts.append({"type": "text", "text": content.text})
+                    plain_text_parts.append(content.text)
+                    continue
+                if content_type in {"data", "uri"}:
+                    uri = getattr(content, "uri", "") or ""
+                    media_type = str(getattr(content, "media_type", "") or "").lower()
+                    if media_type.startswith("image/") and uri:
+                        serialized_parts.append({"type": "image_url", "image_url": {"url": uri}})
+            if serialized_parts and any(part["type"] == "image_url" for part in serialized_parts):
+                result.append({"role": message.role, "content": serialized_parts})
+            else:
+                result.append({"role": message.role, "content": "".join(plain_text_parts)})
         return result
 
     async def invoke_messages(self, messages: list[Message], response_format=None) -> _Result:

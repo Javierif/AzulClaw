@@ -1,22 +1,19 @@
 import mascotIcon from "../../../img/azulclaw_ico.png";
 import hatchlingIcon from "../../../img/hatching_azulclaw_ico.png";
 
-import type { AppView, HatchingProfile } from "../lib/contracts";
+import type { AppView, SetupProfile } from "../lib/contracts";
 
 const navItems: { label: string; view: AppView }[] = [
   { label: "Chat", view: "chat" },
-  { label: "Hatching", view: "hatching" },
   { label: "Skills", view: "skills" },
-  { label: "Processes", view: "processes" },
   { label: "Heartbeats", view: "heartbeats" },
-  { label: "Memory", view: "memory" },
-  { label: "Workspace", view: "workspace" },
+  { label: "Context", view: "context" },
   { label: "Settings", view: "settings" },
 ];
 
 interface SidebarProps {
   activeView: AppView;
-  profile: HatchingProfile;
+  profile: SetupProfile;
   onNavigate: (view: AppView) => void;
 }
 
@@ -27,7 +24,7 @@ export function Sidebar({ activeView, onNavigate, profile }: SidebarProps) {
     <aside className="sidebar">
       <div className="brand-card">
         <div>
-          <p className="eyebrow">{profile.is_hatched ? profile.archetype : "Hatching"}</p>
+          <p className="eyebrow">{profile.is_hatched ? profile.archetype : "Setup"}</p>
           <h2 style={{ fontSize: "1.2rem" }}>{profile.name}</h2>
         </div>
       </div>
@@ -46,13 +43,6 @@ export function Sidebar({ activeView, onNavigate, profile }: SidebarProps) {
       </nav>
 
       <section className="sidebar-account">
-        <div className="account-plan-badge">
-          <div className="account-plan-icon">✦</div>
-          <div className="account-plan-info">
-            <span className="account-plan-name">Pro</span>
-            <span className="account-plan-hint">Upgrade plan</span>
-          </div>
-        </div>
         <button type="button" className="disconnect-btn">
           Disconnect
         </button>

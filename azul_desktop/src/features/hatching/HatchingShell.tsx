@@ -1,6 +1,6 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import adultMascot from "../../../../img/azulclaw.png";
 import babyMascot from "../../../../img/hatching_azulclaw.png";
@@ -14,7 +14,7 @@ import {
   discoverAzureResources,
   discoverAzureSubscriptions,
   hydrateAzureKeyVaultSecrets,
-  saveHatching,
+  saveSetupProfile,
 } from "../../lib/api";
 import { AZURE_ARM_SCOPE, loginWithMicrosoft, loginWithMicrosoftForAzure, loginWithMicrosoftForKeyVault } from "../../lib/azure-auth";
 import {
@@ -29,16 +29,16 @@ import type {
   AzureKeyVaultSecretOption,
   AzureOpenAIResourceOption,
   AzureSubscriptionOption,
-  HatchingProfile,
+  SetupProfile,
 } from "../../lib/contracts";
-import { defaultHatchingProfile } from "../../lib/mock-data";
+import { defaultSetupProfile } from "../../lib/mock-data";
 
-interface HatchingShellProps {
-  profile?: HatchingProfile;
+interface SetupWizardShellProps {
+  profile?: SetupProfile;
   onboardingRequired?: boolean;
   forceWizard?: boolean;
   initialStep?: number;
-  onProfileSaved?: (profile: HatchingProfile) => void;
+  onProfileSaved?: (profile: SetupProfile) => void;
 }
 
 type StepType = "text" | "textarea" | "azure" | "skills" | "superpowers" | "path";
@@ -165,11 +165,11 @@ function previewMemoryDbPath(workspaceRoot: string): string {
   return `${trimmed.replace(/[/\\]$/, "")}${sep}.azul${sep}azul_memory.db`;
 }
 
-function buildTextAnswers(profile: HatchingProfile) {
+function buildTextAnswers(profile: SetupProfile) {
   return [profile.name, profile.role, profile.mission, [profile.tone, profile.style, profile.autonomy].filter(Boolean).join(", ")];
 }
 
-function buildAzureConfig(profile: HatchingProfile): AzureConfig {
+function buildAzureConfig(profile: SetupProfile): AzureConfig {
   const saved = profile.skill_configs?.Azure ?? {};
   return {
     tenantId: saved.tenantId ?? "",
@@ -197,7 +197,18 @@ function buildAzureConfig(profile: HatchingProfile): AzureConfig {
   };
 }
 
-function serializeAzureConfig(config: AzureConfig): Record<string, string> {
+function serializeSelectedDeploymentCapabilities(
+  deploymentName: string,
+  deployments: AzureDeploymentOption[],
+): string {
+  const selected = deployments.find((item) => item.name === deploymentName.trim());
+  return selected ? selected.capabilities.join(",") : "";
+}
+
+function serializeAzureConfig(
+  config: AzureConfig,
+  deployments: AzureDeploymentOption[],
+): Record<string, string> {
   return {
     tenantId: config.tenantId.trim(),
     clientId: config.clientId.trim(),
@@ -208,7 +219,9 @@ function serializeAzureConfig(config: AzureConfig): Record<string, string> {
     apiKeyStored: config.apiKeyStored ? "true" : "false",
     endpoint: config.endpoint.trim(),
     deployment: config.deployment.trim(),
+    deploymentCapabilities: serializeSelectedDeploymentCapabilities(config.deployment, deployments),
     fastDeployment: config.fastDeployment.trim(),
+    fastDeploymentCapabilities: serializeSelectedDeploymentCapabilities(config.fastDeployment, deployments),
     embeddingDeployment: config.embeddingDeployment.trim(),
     connected: config.connected ? "true" : "false",
     lastConnectedAt: config.lastConnectedAt,
@@ -224,7 +237,7 @@ function serializeAzureConfig(config: AzureConfig): Record<string, string> {
   };
 }
 
-function buildWizardState(profile: HatchingProfile, onboardingRequired: boolean): WizardState {
+function buildWizardState(profile: SetupProfile, onboardingRequired: boolean): WizardState {
   return {
     answers: buildTextAnswers(profile),
     azureConfig: buildAzureConfig(profile),
@@ -260,11 +273,15 @@ function deriveAutonomy(value: string, fallback: string) {
   return fallback || "Moderately autonomous";
 }
 
-function buildProfileFromWizard(base: HatchingProfile, state: WizardState): HatchingProfile {
+function buildProfileFromWizard(
+  base: SetupProfile,
+  state: WizardState,
+  azureDeployments: AzureDeploymentOption[],
+) : SetupProfile {
   const [name, role, mission, temper] = state.answers;
   const nextSkillConfigs = {
     ...state.skillConfigs,
-    Azure: serializeAzureConfig(state.azureConfig),
+    Azure: serializeAzureConfig(state.azureConfig, azureDeployments),
   };
   return {
     ...base,
@@ -318,18 +335,18 @@ function chooseSecretName(
   );
 }
 
-export function HatchingShell({
+export function SetupWizardShell({
   profile: incomingProfile,
   onboardingRequired = false,
   forceWizard = false,
   initialStep = 0,
   onProfileSaved,
-}: HatchingShellProps) {
-  const initial = incomingProfile ?? defaultHatchingProfile;
+}: SetupWizardShellProps) {
+  const initial = incomingProfile ?? defaultSetupProfile;
   const initialState = buildWizardState(initial, onboardingRequired);
   const initialCurrentStep = Math.min(Math.max(initialStep, 0), wizardQuestions.length);
 
-  const [profile, setProfile] = useState<HatchingProfile>(initial);
+  const [profile, setProfile] = useState<SetupProfile>(initial);
   const [answers, setAnswers] = useState<string[]>(initialState.answers);
   const [azureConfig, setAzureConfig] = useState<AzureConfig>(initialState.azureConfig);
   const [azureManagementToken, setAzureManagementToken] = useState("");
@@ -362,7 +379,10 @@ export function HatchingShell({
   const [showApiKeyModeWarning, setShowApiKeyModeWarning] = useState(false);
   const [showApiKeyConnectWarning, setShowApiKeyConnectWarning] = useState(false);
   const [editingStoredApiKey, setEditingStoredApiKey] = useState(false);
+  const [storedApiKeyNeedsReplacement, setStoredApiKeyNeedsReplacement] = useState(false);
+  const [storedApiKeyIssue, setStoredApiKeyIssue] = useState("");
   const [apiKeyStorageAvailable, setApiKeyStorageAvailable] = useState(false);
+  const hydratedFromIncomingProfile = useRef(false);
 
   async function ensureAzureKeyVaultToken(): Promise<string> {
     if (azureKeyVaultToken) {
@@ -394,11 +414,21 @@ export function HatchingShell({
   }, []);
 
   useEffect(() => {
-    if (!incomingProfile) return;
+    if (!incomingProfile || hydratedFromIncomingProfile.current) return;
     const nextState = buildWizardState(incomingProfile, onboardingRequired);
     setProfile(incomingProfile);
     setAnswers(nextState.answers);
-    setAzureConfig(nextState.azureConfig);
+    setAzureConfig((current) => {
+      if (storedApiKeyNeedsReplacement && nextState.azureConfig.authMethod === "api_key") {
+        return {
+          ...nextState.azureConfig,
+          apiKey: current.apiKey,
+          apiKeyStored: false,
+          connected: false,
+        };
+      }
+      return nextState.azureConfig;
+    });
     setAzureManagementToken("");
     setAzureKeyVaultToken("");
     setAzureSubscriptions([]);
@@ -411,7 +441,8 @@ export function HatchingShell({
     setSkillConfigs(nextState.skillConfigs);
     setWorkspaceRoot(nextState.workspaceRoot);
     setConfirmSensitiveActions(nextState.confirmSensitiveActions);
-    setEditingStoredApiKey(false);
+    setEditingStoredApiKey(storedApiKeyNeedsReplacement);
+    hydratedFromIncomingProfile.current = true;
   }, [incomingProfile, onboardingRequired]);
 
   useEffect(() => {
@@ -450,8 +481,8 @@ export function HatchingShell({
   ]);
 
   const draftProfile = useMemo(
-    () => buildProfileFromWizard(profile, { answers, azureConfig, configuredSkills, skillConfigs, workspaceRoot, confirmSensitiveActions }),
-    [answers, azureConfig, configuredSkills, confirmSensitiveActions, profile, skillConfigs, workspaceRoot],
+    () => buildProfileFromWizard(profile, { answers, azureConfig, configuredSkills, skillConfigs, workspaceRoot, confirmSensitiveActions }, azureDeployments),
+    [answers, azureConfig, azureDeployments, configuredSkills, confirmSensitiveActions, profile, skillConfigs, workspaceRoot],
   );
 
   const isFinalStep = currentStep === wizardQuestions.length;
@@ -522,6 +553,10 @@ export function HatchingShell({
       connected: field === "lastConnectedAt" ? current.connected : false,
       lastConnectedAt: field === "lastConnectedAt" ? value : "",
     }));
+    if (field === "apiKey") {
+      setStoredApiKeyNeedsReplacement(false);
+      setStoredApiKeyIssue("");
+    }
     if (field === "subscriptionId") {
       setAzureResources([]);
       setAzureKeyVaults([]);
@@ -542,6 +577,8 @@ export function HatchingShell({
       lastConnectedAt: "",
     }));
     setShowApiKeyModeWarning(false);
+    setStoredApiKeyNeedsReplacement(false);
+    setStoredApiKeyIssue("");
     setAzureError("");
   }
 
@@ -560,6 +597,8 @@ export function HatchingShell({
       lastConnectedAt: "",
     }));
     setEditingStoredApiKey(false);
+    setStoredApiKeyNeedsReplacement(false);
+    setStoredApiKeyIssue("");
     setAzureError("");
   }
 
@@ -783,9 +822,9 @@ export function HatchingShell({
       return;
     }
 
-    setAzureBusy(true);
     try {
       if (authMethod === "entra") {
+        setAzureBusy(true);
         const login = await loginWithMicrosoftForAzure({
           tenantId: azureConfig.tenantId,
           clientId: azureConfig.clientId,
@@ -828,12 +867,33 @@ export function HatchingShell({
         let apiKey = azureConfig.apiKey.trim();
         const usedStoredApiKey = !apiKey && azureConfig.apiKeyStored && !editingStoredApiKey;
         if (!apiKey && azureConfig.apiKeyStored && !editingStoredApiKey) {
-          apiKey = (await loadAzureOpenAiApiKey()) ?? "";
+          try {
+            apiKey = (await loadAzureOpenAiApiKey()) ?? "";
+          } catch (error) {
+            setEditingStoredApiKey(true);
+            setStoredApiKeyNeedsReplacement(true);
+            setStoredApiKeyIssue(
+              error instanceof Error
+                ? `AzulClaw could not read the API key stored on this machine. Paste a new key to reconnect. ${error.message}`
+                : "AzulClaw could not read the API key stored on this machine. Paste a new key to reconnect.",
+            );
+            setAzureError("");
+            return;
+          }
         }
         if (!apiKey) {
+          if (azureConfig.apiKeyStored && !editingStoredApiKey) {
+            setEditingStoredApiKey(true);
+            setStoredApiKeyNeedsReplacement(true);
+            setStoredApiKeyIssue("The previously stored Azure OpenAI API key is no longer available on this machine. Paste a new key to reconnect.");
+            setAzureConfig((current) => ({ ...current, apiKeyStored: false }));
+            setAzureError("");
+            return;
+          }
           setAzureError("Enter the Azure OpenAI API key.");
           return;
         }
+        setAzureBusy(true);
         const connectedAt = new Date().toISOString();
         await connectAzure({
           auth_mode: "api_key",
@@ -863,6 +923,8 @@ export function HatchingShell({
           lastConnectedAt: connectedAt,
         }));
         setEditingStoredApiKey(false);
+        setStoredApiKeyNeedsReplacement(false);
+        setStoredApiKeyIssue("");
       }
     } catch (error) {
       setAzureError(error instanceof Error ? error.message : String(error));
@@ -939,7 +1001,7 @@ export function HatchingShell({
     setIsSaving(true);
     setSaveError("");
     try {
-      const saved = await saveHatching({ ...draftProfile, is_hatched: markAsHatched || profile.is_hatched });
+      const saved = await saveSetupProfile({ ...draftProfile, is_hatched: markAsHatched || profile.is_hatched });
       const nextState = buildWizardState(saved, false);
       setProfile(saved);
       setAnswers(nextState.answers);
@@ -1011,7 +1073,7 @@ export function HatchingShell({
           <div className="panel-heading" style={{ borderBottom: "1px solid var(--line)", paddingBottom: "20px", marginBottom: "4px" }}>
             <div>
               <p className="eyebrow">Identity</p>
-              <h2>Hatching profile</h2>
+              <h2>Profile setup</h2>
               <p className="hint-text" style={{ margin: "4px 0 0" }}>Adjust your agent's core personality and environment at any time.</p>
             </div>
             <button type="button" className="primary-button" onClick={() => void handleSave(true)} disabled={isSaving}>
@@ -1101,8 +1163,8 @@ export function HatchingShell({
         <div className="hw-brand">
           <img className="hw-mascot" src={mascotImage} alt="AzulClaw" />
           <div>
-            <p className="hw-eyebrow">Hatching</p>
-            <h2 className="hw-brand-title">{onboardingRequired ? "Create your AzulClaw" : "Reconfigure your AzulClaw"}</h2>
+            <p className="hw-eyebrow">{onboardingRequired ? "Hatching" : "Setup"}</p>
+            <h2 className="hw-brand-title">{onboardingRequired ? "Create your AzulClaw" : "Update your AzulClaw setup"}</h2>
           </div>
         </div>
         <div className="hw-dots" aria-label={`Step ${stepNumber} of ${wizardQuestions.length}`}>
@@ -1247,6 +1309,8 @@ export function HatchingShell({
                                 className={`hw-azure-choice${azureConfig.authMethod === "entra" ? " hw-azure-choice-active" : ""}`}
                                 onClick={() => {
                                   setEditingStoredApiKey(false);
+                                  setStoredApiKeyNeedsReplacement(false);
+                                  setStoredApiKeyIssue("");
                                   setAzureConfig((current) => ({ ...current, authMethod: "entra", connected: false, lastConnectedAt: "" }));
                                 }}
                               >
@@ -1293,7 +1357,17 @@ export function HatchingShell({
                                       <div className="hw-azure-secret-state">
                                         <span className="hw-inline-note">Stored locally on this machine.</span>
                                         <div className="hw-azure-secret-actions">
-                                          <button type="button" className="hw-btn-ghost" onClick={() => setEditingStoredApiKey(true)}>Replace key</button>
+                                          <button
+                                            type="button"
+                                            className="hw-btn-ghost"
+                                            onClick={() => {
+                                              setEditingStoredApiKey(true);
+                                              setStoredApiKeyNeedsReplacement(false);
+                                              setStoredApiKeyIssue("");
+                                            }}
+                                          >
+                                            Replace key
+                                          </button>
                                           <button type="button" className="hw-btn-ghost" onClick={() => void handleClearStoredApiKey()}>Clear key</button>
                                         </div>
                                       </div>
@@ -1301,7 +1375,11 @@ export function HatchingShell({
                                   ) : (
                                     <input className="hw-modal-input" type="password" value={azureConfig.apiKey} placeholder="Paste the Azure OpenAI key" onChange={(event) => handleAzureConfigChange("apiKey", event.target.value)} />
                                   )}
-                                  <span className="hw-inline-note hw-inline-note-warning">This key is stored locally on this machine. Use this mode only as a fallback when Microsoft login is not available.</span>
+                                  {storedApiKeyIssue ? (
+                                    <span className="hw-inline-note hw-inline-note-warning">{storedApiKeyIssue}</span>
+                                  ) : (
+                                    <span className="hw-inline-note hw-inline-note-warning">This key is stored locally on this machine. Use this mode only as a fallback when Microsoft login is not available.</span>
+                                  )}
                                 </label>
                               )}
                             </div>
@@ -1878,3 +1956,5 @@ export function HatchingShell({
     </div>
   );
 }
+
+export { SetupWizardShell as HatchingShell };

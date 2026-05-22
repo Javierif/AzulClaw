@@ -1,6 +1,6 @@
 # Desktop Architecture and Repository Structure
 
-Last reviewed: 2026-04-23
+Last reviewed: 2026-05-19
 
 ## Purpose
 
@@ -31,7 +31,18 @@ Contains shared UI pieces reused across features.
 
 ### `src/features/`
 
-Contains product surfaces grouped by domain such as chat, memory, workspace, and heartbeats.
+Contains product surfaces grouped by domain such as:
+
+- chat
+- skills
+- context
+- heartbeats
+- settings
+- hatching
+
+`Context` now owns the previously separate operational surfaces for processes,
+memory, and workspace browsing. Those domains still have dedicated panels, but
+they are no longer top-level desktop views.
 
 The settings surface now also includes desktop diagnostics for the local backend,
 including reachability, enabled model profile counts, runtime paths, and recent
@@ -43,6 +54,12 @@ Contains API access, shared contracts, fallback data, and small utilities.
 
 This folder also defines desktop-only contracts such as backend diagnostics
 status payloads consumed by Settings.
+
+It also owns desktop-specific integration helpers for:
+
+- Azure onboarding and session renewal
+- draft attachment upload and deletion
+- local attachment ingestion in Tauri mode
 
 ### `resources/`
 
@@ -79,6 +96,14 @@ Local backend endpoints
 ```
 
 The frontend should not duplicate backend business rules. It should display state, collect intent, and submit API requests.
+
+The main desktop navigation currently resolves to:
+
+- `Chat`
+- `Skills`
+- `Heartbeats`
+- `Context`
+- `Settings`
 
 In installed desktop builds the native wrapper is also responsible for making
 the backend process lifecycle mostly invisible to the user: one desktop icon,

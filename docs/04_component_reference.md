@@ -33,9 +33,7 @@ This document maps the main source areas to their responsibilities so new contri
 | `azul_desktop/src/features/chat/ChatShell.tsx` | Streaming chat UX and heartbeat confirmation card rendering |
 | `azul_desktop/src/features/hatching/HatchingShell.tsx` | First-run setup flow |
 | `azul_desktop/src/features/heartbeats/HeartbeatsShell.tsx` | Scheduler and automation UI, including manual run output and delivery status |
-| `azul_desktop/src/features/memory/MemoryShell.tsx` | Memory inspection and deletion |
-| `azul_desktop/src/features/workspace/WorkspaceShell.tsx` | Workspace browser |
-| `azul_desktop/src/features/processes/ProcessesShell.tsx` | Process visibility |
+| `azul_desktop/src/features/context/ContextShell.tsx` | Context shell with overview, process visibility, memory inspection, and workspace browser |
 | `azul_desktop/src/features/settings/SettingsShell.tsx` | Local reset, runtime summary, and packaged backend diagnostics |
 | `azul_desktop/src-tauri/src/main.rs` | Native process launcher for repo and packaged backend modes |
 | `azul_desktop/src-tauri/tauri.conf.json` | Tauri bundling config, backend resources, NSIS target, and desktop shortcut hook |

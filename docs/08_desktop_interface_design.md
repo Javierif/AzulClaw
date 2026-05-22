@@ -12,9 +12,7 @@ AzulClaw should feel like a capable local companion, not a generic SaaS chat win
 
 Conversation is the primary interaction mode, but the user also needs clear surfaces for:
 
-- workspace
-- memory
-- processes
+- context
 - heartbeats
 - settings
 
@@ -36,10 +34,8 @@ Primary navigation:
 
 - Chat
 - Skills
-- Processes
+- Context
 - Heartbeats
-- Memory
-- Workspace
 - Settings
 
 Secondary context:

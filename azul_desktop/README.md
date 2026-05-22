@@ -12,12 +12,13 @@
 ## Main views
 
 - Chat
-- Hatching
+- Skills
+- Context
 - Heartbeats
-- Memory
-- Workspace
-- Processes
 - Settings
+
+`Hatching` is still part of the desktop experience, but it is a first-run/setup
+flow rather than a primary navigation destination.
 
 ## Commands
 

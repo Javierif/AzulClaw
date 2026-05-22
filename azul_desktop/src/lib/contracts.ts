@@ -1,12 +1,9 @@
 export type AppView =
   | "chat"
-  | "hatching"
   | "skills"
-  | "processes"
+  | "context"
   | "heartbeats"
   | "runtime"
-  | "memory"
-  | "workspace"
   | "settings";
 
 export interface WorkspaceEntry {
@@ -47,16 +44,50 @@ export interface MemorySettings {
   reload_error?: string;
 }
 
+export interface AttachmentPreview {
+  kind: "image" | "document" | "text";
+  mime_type?: string;
+  thumbnail_data_uri?: string;
+  snippet?: string;
+  width?: number;
+  height?: number;
+  page_count?: number;
+  pages_with_text?: number;
+  avg_chars_per_page?: number;
+}
+
+export interface AttachmentSummary {
+  id: string;
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+  kind: "image" | "document" | "text";
+  extraction_status: "pending" | "ready" | "low_text_quality" | "unsupported" | "failed";
+  page_count: number;
+  preview?: AttachmentPreview;
+  message_id?: string;
+  conversation_id?: string;
+  created_at?: string;
+}
+
 export interface ChatExchange {
   id: string;
   role: "user" | "assistant";
   content: string;
+  created_at?: string;
+  attachments?: AttachmentSummary[];
 }
 
 export interface ConversationSummary {
   id: string;
   title: string;
   updated_at: string;
+  has_unread: boolean;
+  last_message_id?: string;
+  last_message_at?: string;
+  last_message_role?: "user" | "assistant" | "";
+  last_message_preview?: string;
+  snippet?: string;
 }
 
 export interface ThinkingStep {
@@ -101,7 +132,7 @@ export interface ChatStreamEvent {
   conversation_title?: string;
 }
 
-export interface HatchingProfile {
+export interface SetupProfile {
   name: string;
   role: string;
   mission: string;
@@ -121,6 +152,15 @@ export interface HatchingProfile {
   restart_required?: boolean;
 }
 
+export interface DesktopShellPreferences {
+  tray_icon_enabled: boolean;
+  global_shortcut_enabled: boolean;
+  close_to_tray_enabled: boolean;
+  global_shortcut: string;
+}
+
+export type HatchingProfile = SetupProfile;
+
 export interface RuntimeModelStatus {
   id: string;
   label: string;
@@ -129,6 +169,7 @@ export interface RuntimeModelStatus {
   deployment: string;
   enabled: boolean;
   streaming_enabled: boolean;
+  capabilities: string[];
   available: boolean;
   cooldown_until: string;
   last_error: string;
@@ -221,6 +262,18 @@ export interface BackendStatus {
   error?: string;
 }
 
+export interface ScheduledJobSecurityPolicy {
+  origin: "system" | "user";
+  protected: boolean;
+  execution_mode: "workspace_heartbeat" | "proactive_message";
+  workspace_access: "heartbeat_md" | "none";
+  tools_enabled: boolean;
+  memory_context: "none";
+  delivery_kind: "desktop_chat" | "none";
+  suppress_noop_output: boolean;
+  can_delete: boolean;
+}
+
 export interface ScheduledJob {
   id: string;
   name: string;
@@ -240,6 +293,8 @@ export interface ScheduledJob {
   updated_at: string;
   last_run_at: string;
   next_run_at: string;
+  security_policy?: ScheduledJobSecurityPolicy;
+  tags?: string[];
 }
 
 export interface JobRunResult {
