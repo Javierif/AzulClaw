@@ -413,12 +413,18 @@ export function ChatShell({
   onAnswerStart,
   onTitleChange,
   onRegisterNewChat,
+  focusRequestNonce = 0,
+  unreadByConversationId = {},
+  externalConversationRequest,
 }: {
   onThinkingChange?: (thinking: boolean) => void;
   onTypingChange?: (typing: boolean) => void;
   onAnswerStart?: () => void;
   onTitleChange?: (title: string) => void;
   onRegisterNewChat?: (fn: () => void) => void;
+  focusRequestNonce?: number;
+  unreadByConversationId?: Record<string, boolean>;
+  externalConversationRequest?: { conversationId: string; title: string; nonce: number } | null;
 }) {
   const [messages, setMessages] = useState<ChatMessageItem[]>([]);
   const [draft, setDraft] = useState("");
@@ -445,9 +451,18 @@ export function ChatShell({
   const bottomRef = useRef<HTMLDivElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const shouldAutoScrollRef = useRef(true);
   const streamPumpRef = useRef<number | null>(null);
   const hasLoadedConversationsRef = useRef(false);
+  const lastHandledExternalConversationRef = useRef(0);
+
+  useEffect(() => {
+    if (focusRequestNonce <= 0) {
+      return;
+    }
+    composerInputRef.current?.focus();
+  }, [focusRequestNonce]);
 
   function isMessageListNearBottom(): boolean {
     const list = messageListRef.current;
@@ -724,6 +739,20 @@ export function ChatShell({
     };
   }, [conversationId, conversationSearch, isSending, onTitleChange]);
 
+  useEffect(() => {
+    if (!externalConversationRequest) {
+      return;
+    }
+    if (externalConversationRequest.nonce === lastHandledExternalConversationRef.current) {
+      return;
+    }
+    lastHandledExternalConversationRef.current = externalConversationRequest.nonce;
+    void handleLoadConversation(
+      externalConversationRequest.conversationId,
+      normalizeConversationTitle(externalConversationRequest.title),
+    );
+  }, [externalConversationRequest]);
+
   // Register the new-chat handler with the parent (topbar button)
   const handleNewChatRef = useRef<() => void>(() => {});
   const currentMessagesRef = useRef(messages);
@@ -969,7 +998,7 @@ export function ChatShell({
             setRecentChats((prev) => {
               const has = prev.some((c) => c.id === cid);
               if (!has) {
-                return [{ id: cid, title: t, updated_at: new Date().toISOString() }, ...prev];
+                return [{ id: cid, title: t, updated_at: new Date().toISOString(), has_unread: false }, ...prev];
               }
               return prev.map((c) => (c.id === cid ? { ...c, title: t } : c));
             });
@@ -1055,7 +1084,7 @@ export function ChatShell({
           const idx = chats.findIndex((c) => c.id === effectiveId);
           merged =
             idx === -1
-              ? [{ id: effectiveId, title: t, updated_at: new Date().toISOString() }, ...chats]
+              ? [{ id: effectiveId, title: t, updated_at: new Date().toISOString(), has_unread: false }, ...chats]
               : chats.map((c) => (c.id === effectiveId ? { ...c, title: t } : c));
         }
         setRecentChats(merged);
@@ -1136,6 +1165,7 @@ export function ChatShell({
       id: DRAFT_SESSION_ID,
       title: normalizeConversationTitle(sessionListTitle),
       updated_at: new Date().toISOString(),
+      has_unread: false,
     };
     if (!conversationSearch.trim() && conversationId === null) {
       return [draft, ...recentChats];
@@ -1258,6 +1288,7 @@ export function ChatShell({
             <label className="composer-field">
               <span className="sr-only">Message AzulClaw</span>
               <textarea
+                ref={composerInputRef}
                 placeholder="Type a message... (Enter to send, Shift+Enter for new line)"
                 rows={1}
                 value={draft}
@@ -1370,6 +1401,10 @@ export function ChatShell({
               const isDraft = c.id === DRAFT_SESSION_ID;
               const isActive =
                 conversationId === null ? isDraft : c.id === conversationId;
+              const showUnreadDot =
+                !isDraft &&
+                !isActive &&
+                Boolean(unreadByConversationId[c.id]);
               const snippet = (c.snippet || "").trim();
               const relativeDate = formatRelativeDate(c.updated_at);
               return (
@@ -1382,7 +1417,10 @@ export function ChatShell({
                   }}
                 >
                   <div className="recent-chat-info">
-                    <span className="recent-chat-title">{normalizeConversationTitle(c.title)}</span>
+                    <div className="recent-chat-title-row">
+                      {showUnreadDot ? <span className="recent-chat-unread-dot" aria-hidden="true" /> : null}
+                      <span className="recent-chat-title">{normalizeConversationTitle(c.title)}</span>
+                    </div>
                     {snippet ? (
                       <span className="recent-chat-snippet">{snippet}</span>
                     ) : null}

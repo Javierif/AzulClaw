@@ -82,6 +82,11 @@ export interface ConversationSummary {
   id: string;
   title: string;
   updated_at: string;
+  has_unread: boolean;
+  last_message_id?: string;
+  last_message_at?: string;
+  last_message_role?: "user" | "assistant" | "";
+  last_message_preview?: string;
   snippet?: string;
 }
 
@@ -145,6 +150,13 @@ export interface SetupProfile {
   memory_db_path?: string;
   /** Present on ``POST /api/desktop/data-wipe`` responses only. */
   restart_required?: boolean;
+}
+
+export interface DesktopShellPreferences {
+  tray_icon_enabled: boolean;
+  global_shortcut_enabled: boolean;
+  close_to_tray_enabled: boolean;
+  global_shortcut: string;
 }
 
 export type HatchingProfile = SetupProfile;

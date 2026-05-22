@@ -12,8 +12,19 @@ import {
   saveMemorySettings,
 } from "../../lib/api";
 import { profileCanRenewAzureLogin, renewAzureLoginFromProfile } from "../../lib/azure-session";
+import {
+  defaultDesktopShellPreferences,
+  loadDesktopShellPreferences,
+  saveDesktopShellPreferences,
+} from "../../lib/desktop-shell";
 import { SetupWizardShell } from "../hatching/HatchingShell";
-import type { BackendStatus, MemorySettings, RuntimeOverview, SetupProfile } from "../../lib/contracts";
+import type {
+  BackendStatus,
+  DesktopShellPreferences,
+  MemorySettings,
+  RuntimeOverview,
+  SetupProfile,
+} from "../../lib/contracts";
 import { defaultSetupProfile, memorySettings as defaultMemorySettings, runtimeOverview } from "../../lib/mock-data";
 
 interface SettingsShellProps {
@@ -21,7 +32,7 @@ interface SettingsShellProps {
   onLocalDataWiped?: (profile: SetupProfile) => void;
 }
 
-type SettingsTab = "azure" | "runtime" | "memory" | "identity" | "security" | "data";
+type SettingsTab = "azure" | "desktop" | "runtime" | "memory" | "identity" | "security" | "data";
 
 const initialBackendStatus: BackendStatus = {
   status: "offline",
@@ -44,6 +55,7 @@ const initialBackendStatus: BackendStatus = {
 
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: "azure", label: "Azure" },
+  { id: "desktop", label: "Desktop" },
   { id: "runtime", label: "Runtime" },
   { id: "memory", label: "Memory" },
   { id: "identity", label: "Identity" },
@@ -69,6 +81,10 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
   const [memorySettingsBusy, setMemorySettingsBusy] = useState(false);
   const [memorySettingsMessage, setMemorySettingsMessage] = useState("");
   const [memorySettingsError, setMemorySettingsError] = useState("");
+  const [desktopShellPreferences, setDesktopShellPreferences] = useState<DesktopShellPreferences>(defaultDesktopShellPreferences);
+  const [desktopShellBusy, setDesktopShellBusy] = useState(false);
+  const [desktopShellMessage, setDesktopShellMessage] = useState("");
+  const [desktopShellError, setDesktopShellError] = useState("");
   const [azureWizardOpen, setAzureWizardOpen] = useState(false);
   const [settingsWizardStep, setSettingsWizardStep] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<SettingsTab>("azure");
@@ -96,28 +112,31 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
   );
 
   async function refreshSettings() {
-    const [runtimeData, backendData, profileData, memoryData] = await Promise.all([
+    const [runtimeData, backendData, profileData, memoryData, shellData] = await Promise.all([
       loadRuntime(),
       loadBackendStatus(),
       loadSetupProfile(),
       loadMemorySettings(),
+      loadDesktopShellPreferences(),
     ]);
     setRuntime(runtimeData);
     setBackendStatus(backendData);
     setProfile(profileData);
     setMemorySettings(memoryData);
     setMemoryPathDraft(memoryData.memory_db_path_override || "");
+    setDesktopShellPreferences(shellData);
   }
 
   useEffect(() => {
     let isMounted = true;
 
     async function refreshMountedSettings() {
-      const [runtimeData, backendData, profileData, memoryData] = await Promise.all([
+      const [runtimeData, backendData, profileData, memoryData, shellData] = await Promise.all([
         loadRuntime(),
         loadBackendStatus(),
         loadSetupProfile(),
         loadMemorySettings(),
+        loadDesktopShellPreferences(),
       ]);
       if (!isMounted) {
         return;
@@ -127,6 +146,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
       setProfile(profileData);
       setMemorySettings(memoryData);
       setMemoryPathDraft((current) => current || memoryData.memory_db_path_override || "");
+      setDesktopShellPreferences(shellData);
     }
 
     void refreshMountedSettings();
@@ -186,6 +206,21 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
     setMemoryPathDraft("");
     setMemorySettingsMessage("");
     setMemorySettingsError("");
+  }
+
+  async function handleSaveDesktopShellPreferences() {
+    setDesktopShellBusy(true);
+    setDesktopShellMessage("");
+    setDesktopShellError("");
+    try {
+      const saved = await saveDesktopShellPreferences(desktopShellPreferences);
+      setDesktopShellPreferences(saved);
+      setDesktopShellMessage("Desktop access settings saved.");
+    } catch (error) {
+      setDesktopShellError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDesktopShellBusy(false);
+    }
   }
 
   function handleCopyLogs() {
@@ -359,6 +394,140 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
             />
           </div>
         )}
+      </section>
+    );
+  }
+
+  function renderDesktopTab() {
+    return (
+      <section className="subcard settings-card panel-tab-panel">
+        <div className="settings-card-header">
+          <div className="settings-card-icon settings-icon-identity">
+            <span>UI</span>
+          </div>
+          <div>
+            <p className="eyebrow">Desktop shell</p>
+            <h3 className="settings-card-title">Quick access</h3>
+          </div>
+        </div>
+
+        <p className="settings-card-desc">
+          Add a Claude-style desktop access layer: tray icon, a global shortcut and optional close-to-tray behavior.
+        </p>
+
+        <div className="runtime-kv-list">
+          <p className="runtime-kv-section-title">Activation</p>
+          <div className="runtime-kv-row">
+            <span className="runtime-kv-key">Global shortcut</span>
+            <code className="runtime-kv-code">{desktopShellPreferences.global_shortcut}</code>
+          </div>
+          <div className="runtime-kv-row">
+            <span className="runtime-kv-key">Shortcut status</span>
+            <span className={`status-tag ${desktopShellPreferences.global_shortcut_enabled ? "status-done" : "status-waiting"}`}>
+              {desktopShellPreferences.global_shortcut_enabled ? "Enabled" : "Disabled"}
+            </span>
+          </div>
+          <div className="runtime-kv-row">
+            <span className="runtime-kv-key">Tray icon</span>
+            <span className={`status-tag ${desktopShellPreferences.tray_icon_enabled ? "status-done" : "status-waiting"}`}>
+              {desktopShellPreferences.tray_icon_enabled ? "Visible" : "Hidden"}
+            </span>
+          </div>
+          <div className="runtime-kv-row">
+            <span className="runtime-kv-key">Close action</span>
+            <span className="runtime-kv-val">
+              {desktopShellPreferences.close_to_tray_enabled ? "Hide to tray" : "Close normally"}
+            </span>
+          </div>
+        </div>
+
+        <div className="settings-shell-grid">
+          <label className="settings-shell-toggle-card">
+            <div>
+              <strong>Enable shortcut</strong>
+              <p>Press {desktopShellPreferences.global_shortcut} to bring AzulClaw to the front and focus chat.</p>
+            </div>
+            <input
+              type="checkbox"
+              checked={desktopShellPreferences.global_shortcut_enabled}
+              onChange={(event) => {
+                setDesktopShellPreferences((current) => ({
+                  ...current,
+                  global_shortcut_enabled: event.target.checked,
+                }));
+                setDesktopShellMessage("");
+                setDesktopShellError("");
+              }}
+            />
+          </label>
+
+          <label className="settings-shell-toggle-card">
+            <div>
+              <strong>Show tray icon</strong>
+              <p>Keep AzulClaw available from the system tray with open, hide and quit actions.</p>
+            </div>
+            <input
+              type="checkbox"
+              checked={desktopShellPreferences.tray_icon_enabled}
+              onChange={(event) => {
+                const trayEnabled = event.target.checked;
+                setDesktopShellPreferences((current) => ({
+                  ...current,
+                  tray_icon_enabled: trayEnabled,
+                  close_to_tray_enabled: trayEnabled ? current.close_to_tray_enabled : false,
+                }));
+                setDesktopShellMessage("");
+                setDesktopShellError("");
+              }}
+            />
+          </label>
+
+          <label className="settings-shell-toggle-card">
+            <div>
+              <strong>Close to tray</strong>
+              <p>When the window close button is pressed, hide AzulClaw instead of exiting.</p>
+            </div>
+            <input
+              type="checkbox"
+              checked={desktopShellPreferences.close_to_tray_enabled}
+              disabled={!desktopShellPreferences.tray_icon_enabled}
+              onChange={(event) => {
+                setDesktopShellPreferences((current) => ({
+                  ...current,
+                  close_to_tray_enabled: event.target.checked,
+                }));
+                setDesktopShellMessage("");
+                setDesktopShellError("");
+              }}
+            />
+          </label>
+        </div>
+
+        {desktopShellMessage && (
+          <p className="hw-inline-note" style={{ marginTop: "10px" }}>{desktopShellMessage}</p>
+        )}
+        {desktopShellError && (
+          <p className="hw-inline-note hw-inline-note-warning" style={{ marginTop: "10px" }}>{desktopShellError}</p>
+        )}
+
+        <div className="settings-card-footer" style={{ gap: "10px", justifyContent: "flex-start" }}>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => void handleSaveDesktopShellPreferences()}
+            disabled={desktopShellBusy}
+          >
+            {desktopShellBusy ? "Saving..." : "Save desktop access"}
+          </button>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => void loadDesktopShellPreferences().then(setDesktopShellPreferences)}
+            disabled={desktopShellBusy}
+          >
+            Reload
+          </button>
+        </div>
       </section>
     );
   }
@@ -783,6 +952,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
         </div>
 
         {activeTab === "azure" && renderAzureTab()}
+        {activeTab === "desktop" && renderDesktopTab()}
         {activeTab === "runtime" && renderRuntimeTab()}
         {activeTab === "memory" && renderMemoryTab()}
         {activeTab === "identity" && renderIdentityTab()}

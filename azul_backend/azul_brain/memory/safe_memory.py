@@ -43,6 +43,14 @@ def _conversation_match_snippet(content: str, query: str, radius: int = 70) -> s
     return f"{prefix}{text[start:end]}{suffix}"
 
 
+def _conversation_preview(content: str, limit: int = 160) -> str:
+    """Builds a compact one-line preview for recent-message surfaces."""
+    text = " ".join((content or "").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[: max(0, limit - 3)].rstrip()}..."
+
+
 class SafeMemory:
     """Thread-safe, bounded conversation history store with SQLite backup."""
 
@@ -116,6 +124,7 @@ class SafeMemory:
                 id         TEXT PRIMARY KEY,
                 user_id    TEXT NOT NULL,
                 title      TEXT NOT NULL DEFAULT 'New conversation',
+                last_viewed_at TEXT,
                 created_at TEXT DEFAULT (datetime('now')),
                 updated_at TEXT DEFAULT (datetime('now'))
             )
@@ -142,6 +151,12 @@ class SafeMemory:
         """)
 
         # Migration: add conversation_id column if it doesn't exist yet
+        try:
+            self._conn.execute(
+                "ALTER TABLE conversations ADD COLUMN last_viewed_at TEXT"
+            )
+        except sqlite3.OperationalError:
+            pass  # Column already exists
         try:
             self._conn.execute(
                 "ALTER TABLE conversation_history ADD COLUMN conversation_id TEXT"
@@ -330,20 +345,86 @@ class SafeMemory:
         self._active_conversation_by_user.pop(safe_user_id, None)
         return ""
 
+    def mark_conversation_viewed(self, user_id: str, conversation_id: str) -> bool:
+        """Marks a conversation as viewed by its owning user."""
+        safe_user_id = (user_id or "").strip()
+        safe_conversation_id = (conversation_id or "").strip()
+        if not safe_user_id or not safe_conversation_id:
+            return False
+        if not self.conversation_belongs_to_user(safe_conversation_id, safe_user_id):
+            return False
+        if self._conn is None:
+            return False
+        try:
+            cur = self._conn.execute(
+                """
+                UPDATE conversations
+                SET last_viewed_at = datetime('now')
+                WHERE id = ? AND user_id = ?
+                """,
+                (safe_conversation_id, safe_user_id),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+        except Exception as error:
+            LOGGER.warning("[SafeMemory] mark_conversation_viewed failed: %s", error)
+            return False
+
     def list_conversations(self, user_id: str, limit: int = 20, query: str = "") -> list[dict]:
         """Returns conversations ordered by most recently updated."""
         if self._conn is None:
             return []
         normalized_query = query.strip()
+        latest_message_select = """
+                        (
+                            SELECT h.message_id
+                            FROM conversation_history h
+                            WHERE h.conversation_id = c.id
+                            ORDER BY h.created_at DESC, h.id DESC
+                            LIMIT 1
+                        ) AS last_message_id,
+                        (
+                            SELECT h.created_at
+                            FROM conversation_history h
+                            WHERE h.conversation_id = c.id
+                            ORDER BY h.created_at DESC, h.id DESC
+                            LIMIT 1
+                        ) AS last_message_at,
+                        (
+                            SELECT h.role
+                            FROM conversation_history h
+                            WHERE h.conversation_id = c.id
+                            ORDER BY h.created_at DESC, h.id DESC
+                            LIMIT 1
+                        ) AS last_message_role,
+                        (
+                            SELECT h.content
+                            FROM conversation_history h
+                            WHERE h.conversation_id = c.id
+                            ORDER BY h.created_at DESC, h.id DESC
+                            LIMIT 1
+                        ) AS last_message_content,
+                        EXISTS (
+                            SELECT 1
+                            FROM conversation_history h
+                            WHERE h.conversation_id = c.id
+                              AND h.role = 'assistant'
+                              AND (
+                                c.last_viewed_at IS NULL
+                                OR h.created_at > c.last_viewed_at
+                              )
+                        ) AS has_unread
+        """
         try:
             if normalized_query:
                 like_query = f"%{normalized_query.lower()}%"
                 rows = self._conn.execute(
-                    """
+                    f"""
                     SELECT
                         c.id,
                         c.title,
                         c.updated_at,
+                        {latest_message_select},
                         (
                             SELECT h.content
                             FROM conversation_history h
@@ -370,11 +451,15 @@ class SafeMemory:
                 ).fetchall()
             else:
                 rows = self._conn.execute(
-                    """
-                    SELECT id, title, updated_at
-                    FROM conversations
-                    WHERE user_id = ?
-                    ORDER BY updated_at DESC
+                    f"""
+                    SELECT
+                        c.id,
+                        c.title,
+                        c.updated_at,
+                        {latest_message_select}
+                    FROM conversations c
+                    WHERE c.user_id = ?
+                    ORDER BY c.updated_at DESC
                     LIMIT ?
                     """,
                     (user_id, limit),
@@ -384,6 +469,11 @@ class SafeMemory:
                     "id": row["id"],
                     "title": self._conversation_titles.get(row["id"], row["title"]),
                     "updated_at": row["updated_at"],
+                    "has_unread": bool(row["has_unread"]),
+                    "last_message_id": str(row["last_message_id"] or ""),
+                    "last_message_at": str(row["last_message_at"] or ""),
+                    "last_message_role": str(row["last_message_role"] or ""),
+                    "last_message_preview": _conversation_preview(str(row["last_message_content"] or "")),
                     "snippet": _conversation_match_snippet(
                         str(row["matched_content"] or ""),
                         normalized_query,

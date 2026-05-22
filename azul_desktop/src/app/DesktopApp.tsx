@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 import adultMascot from "../../../img/azulclaw.png";
 import babyMascot from "../../../img/hatching_azulclaw.png";
@@ -10,9 +12,10 @@ import { HeartbeatsShell } from "../features/heartbeats/HeartbeatsShell";
 import { SetupWizardShell } from "../features/hatching/HatchingShell";
 import { SettingsShell } from "../features/settings/SettingsShell";
 import { SkillsShell } from "../features/skills/SkillsShell";
-import { ensureBackendAuth, loadBackendStatus, loadSetupProfile } from "../lib/api";
+import { ensureBackendAuth, listConversations, loadBackendStatus, loadSetupProfile } from "../lib/api";
 import { profileCanRenewAzureLogin, renewAzureLoginFromProfile } from "../lib/azure-session";
 import { DEFAULT_CONVERSATION_TITLE, normalizeConversationTitle } from "../lib/conversation-copy";
+import { notifyUnreadConversation } from "../lib/desktop-notifications";
 import type { AppView, SetupProfile } from "../lib/contracts";
 import { defaultSetupProfile } from "../lib/mock-data";
 
@@ -57,7 +60,10 @@ function renderView(
   onLocalDataWiped: (p: SetupProfile) => void,
   onTitleChange: (title: string) => void,
   onRegisterNewChat: (fn: () => void) => void,
+  unreadByConversationId: Record<string, boolean>,
+  externalConversationRequest: { conversationId: string; title: string; nonce: number } | null,
   headerPortalTarget: HTMLElement | null,
+  focusRequestNonce: number,
 ) {
   switch (view) {
     case "skills":
@@ -77,6 +83,9 @@ function renderView(
           onAnswerStart={onAnswerStart}
           onTitleChange={onTitleChange}
           onRegisterNewChat={onRegisterNewChat}
+          unreadByConversationId={unreadByConversationId}
+          externalConversationRequest={externalConversationRequest}
+          focusRequestNonce={focusRequestNonce}
         />
       );
   }
@@ -93,11 +102,19 @@ export function DesktopApp() {
   const [topbarLabel, setTopbarLabel] = useState<{ text: string; mode: "thinking" | "typing" } | null>(null);
   const [conversationTitle, setConversationTitle] = useState(DEFAULT_CONVERSATION_TITLE);
   const [sectionHeaderHost, setSectionHeaderHost] = useState<HTMLDivElement | null>(null);
+  const [unreadByConversationId, setUnreadByConversationId] = useState<Record<string, boolean>>({});
+  const [externalConversationRequest, setExternalConversationRequest] = useState<{
+    conversationId: string;
+    title: string;
+    nonce: number;
+  } | null>(null);
+  const [chatFocusNonce, setChatFocusNonce] = useState(0);
   const newChatFnRef = useRef<() => void>(() => {});
   const thinkingIntervalRef = useRef<number | null>(null);
   const typingClearRef = useRef<number | null>(null);
   const sentenceIndexRef = useRef(0);
   const isThinkingRef = useRef(false);
+  const notificationNonceRef = useRef(0);
 
   useEffect(() => {
     let isMounted = true;
@@ -213,6 +230,75 @@ export function DesktopApp() {
     }
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    let pollId: number | null = null;
+
+    async function refreshConversationActivity() {
+      try {
+        const summaries = await listConversations("desktop-user");
+        if (cancelled) {
+          return;
+        }
+        setUnreadByConversationId(
+          summaries.reduce<Record<string, boolean>>((acc, item) => {
+            acc[item.id] = Boolean(item.has_unread);
+            return acc;
+          }, {}),
+        );
+        for (const item of summaries) {
+          await notifyUnreadConversation(item, async () => {
+            if (cancelled) {
+              return;
+            }
+            notificationNonceRef.current += 1;
+            setActiveView("chat");
+            setExternalConversationRequest({
+              conversationId: item.id,
+              title: item.title,
+              nonce: notificationNonceRef.current,
+            });
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setUnreadByConversationId({});
+        }
+      } finally {
+        if (!cancelled) {
+          pollId = window.setTimeout(() => void refreshConversationActivity(), 5_000);
+        }
+      }
+    }
+
+    void refreshConversationActivity();
+
+    return () => {
+      cancelled = true;
+      if (pollId !== null) {
+        window.clearTimeout(pollId);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+
+    let unlisten: (() => void) | undefined;
+    void listen("azul://shell/activate-chat", () => {
+      setActiveView("chat");
+      setChatFocusNonce((current) => current + 1);
+    }).then((dispose) => {
+      unlisten = dispose;
+    });
+
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
   if (isBootstrapping) {
     return (
       <div className="onboarding-stage">
@@ -299,7 +385,10 @@ export function DesktopApp() {
           },
           setConversationTitle,
           (fn) => { newChatFnRef.current = fn; },
+          unreadByConversationId,
+          externalConversationRequest,
           sectionHeaderHost,
+          chatFocusNonce,
         )}
         {authPromptVisible && (
           <div className="hw-modal-backdrop">

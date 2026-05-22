@@ -12,8 +12,13 @@ use std::{
     time::Duration,
 };
 
-use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use serde::{Deserialize, Serialize};
+use tauri::{
+    menu::MenuBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Emitter, Manager, WindowEvent,
+};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 #[cfg(target_os = "windows")]
 use std::{ffi::OsString, os::windows::ffi::OsStringExt};
@@ -21,8 +26,37 @@ use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 const BACKEND_HOST: &str = "localhost";
 const BACKEND_PORT: u16 = 3978;
 const AZURE_OPENAI_API_KEY_SECRET_FILE: &str = "azure-openai-api-key.bin";
+const DESKTOP_SHELL_SETTINGS_FILE: &str = "desktop-shell.json";
+const DEFAULT_GLOBAL_SHORTCUT: &str = "Ctrl+Alt+Space";
+const MAIN_WINDOW_LABEL: &str = "main";
+const SHELL_ACTIVATE_CHAT_EVENT: &str = "azul://shell/activate-chat";
+const TRAY_ICON_ID: &str = "azulclaw-main-tray";
+const TRAY_MENU_OPEN_ID: &str = "tray-open-main";
+const TRAY_MENU_HIDE_ID: &str = "tray-hide-main";
+const TRAY_MENU_QUIT_ID: &str = "tray-quit";
 
 struct BackendProcess(Mutex<Option<Child>>);
+struct DesktopShellState(Mutex<DesktopShellPreferences>);
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
+struct DesktopShellPreferences {
+    tray_icon_enabled: bool,
+    global_shortcut_enabled: bool,
+    close_to_tray_enabled: bool,
+    global_shortcut: String,
+}
+
+impl Default for DesktopShellPreferences {
+    fn default() -> Self {
+        Self {
+            tray_icon_enabled: false,
+            global_shortcut_enabled: false,
+            close_to_tray_enabled: false,
+            global_shortcut: DEFAULT_GLOBAL_SHORTCUT.to_string(),
+        }
+    }
+}
 
 #[derive(Serialize)]
 struct NativeFilePayload {
@@ -324,6 +358,260 @@ fn clear_azure_openai_api_key(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn is_azure_openai_api_key_storage_available() -> bool {
     cfg!(target_os = "windows")
+}
+
+#[tauri::command]
+fn load_desktop_shell_preferences(app: AppHandle) -> Result<DesktopShellPreferences, String> {
+    let state = app.state::<DesktopShellState>();
+    let guard = state
+        .0
+        .lock()
+        .map_err(|_| "desktop shell settings lock is poisoned".to_string())?;
+    Ok(guard.clone())
+}
+
+#[tauri::command]
+fn save_desktop_shell_preferences(
+    app: AppHandle,
+    preferences: DesktopShellPreferences,
+) -> Result<DesktopShellPreferences, String> {
+    let state = app.state::<DesktopShellState>();
+    let current = {
+        let guard = state
+            .0
+            .lock()
+            .map_err(|_| "desktop shell settings lock is poisoned".to_string())?;
+        guard.clone()
+    };
+    let next = normalize_desktop_shell_preferences(preferences);
+
+    if let Err(error) = apply_desktop_shell_preferences(&app, &current, &next) {
+        let _ = apply_desktop_shell_preferences(&app, &next, &current);
+        return Err(error);
+    }
+    if let Err(error) = persist_desktop_shell_preferences(&app, &next) {
+        let _ = apply_desktop_shell_preferences(&app, &next, &current);
+        return Err(error);
+    }
+
+    let mut guard = state
+        .0
+        .lock()
+        .map_err(|_| "desktop shell settings lock is poisoned".to_string())?;
+    *guard = next.clone();
+    Ok(next)
+}
+
+fn normalize_desktop_shell_preferences(
+    mut preferences: DesktopShellPreferences,
+) -> DesktopShellPreferences {
+    let shortcut = preferences.global_shortcut.trim();
+    preferences.global_shortcut = if shortcut.is_empty() {
+        DEFAULT_GLOBAL_SHORTCUT.to_string()
+    } else {
+        shortcut.to_string()
+    };
+    if !preferences.tray_icon_enabled {
+        preferences.close_to_tray_enabled = false;
+    }
+    preferences
+}
+
+fn desktop_shell_settings_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("could not resolve AzulClaw app data directory: {error}"))?;
+    Ok(app_data_dir.join(DESKTOP_SHELL_SETTINGS_FILE))
+}
+
+fn load_desktop_shell_preferences_from_disk(
+    app: &AppHandle,
+) -> Result<DesktopShellPreferences, String> {
+    let path = desktop_shell_settings_path(app)?;
+    if !path.exists() {
+        return Ok(DesktopShellPreferences::default());
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|error| format!("could not read desktop shell settings: {error}"))?;
+    let parsed: DesktopShellPreferences = serde_json::from_str(&raw)
+        .map_err(|error| format!("desktop shell settings are invalid JSON: {error}"))?;
+    Ok(normalize_desktop_shell_preferences(parsed))
+}
+
+fn persist_desktop_shell_preferences(
+    app: &AppHandle,
+    preferences: &DesktopShellPreferences,
+) -> Result<(), String> {
+    let path = desktop_shell_settings_path(app)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("could not create desktop shell settings directory: {error}"))?;
+    }
+    let payload = serde_json::to_string_pretty(preferences)
+        .map_err(|error| format!("could not serialize desktop shell settings: {error}"))?;
+    fs::write(path, payload).map_err(|error| format!("could not persist desktop shell settings: {error}"))
+}
+
+fn show_main_window(app: &AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window(MAIN_WINDOW_LABEL)
+        .ok_or_else(|| format!("window `{MAIN_WINDOW_LABEL}` is not available"))?;
+    let _ = window.unminimize();
+    window
+        .show()
+        .map_err(|error| format!("could not show main window: {error}"))?;
+    let _ = window.set_focus();
+    app.emit(SHELL_ACTIVATE_CHAT_EVENT, ())
+        .map_err(|error| format!("could not emit desktop shell event: {error}"))?;
+    Ok(())
+}
+
+fn hide_main_window(app: &AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window(MAIN_WINDOW_LABEL)
+        .ok_or_else(|| format!("window `{MAIN_WINDOW_LABEL}` is not available"))?;
+    window
+        .hide()
+        .map_err(|error| format!("could not hide main window: {error}"))
+}
+
+fn create_tray_icon(app: &AppHandle) -> Result<(), String> {
+    if app.tray_by_id(TRAY_ICON_ID).is_some() {
+        return Ok(());
+    }
+
+    let menu = MenuBuilder::new(app)
+        .text(TRAY_MENU_OPEN_ID, "Open AzulClaw")
+        .text(TRAY_MENU_HIDE_ID, "Hide window")
+        .separator()
+        .text(TRAY_MENU_QUIT_ID, "Quit")
+        .build()
+        .map_err(|error| format!("could not create tray menu: {error}"))?;
+
+    let mut builder = TrayIconBuilder::with_id(TRAY_ICON_ID)
+        .menu(&menu)
+        .tooltip("AzulClaw")
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            TRAY_MENU_OPEN_ID => {
+                let _ = show_main_window(app);
+            }
+            TRAY_MENU_HIDE_ID => {
+                let _ = hide_main_window(app);
+            }
+            TRAY_MENU_QUIT_ID => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| match event {
+            TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } => {
+                let _ = show_main_window(&tray.app_handle());
+            }
+            _ => {}
+        });
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        builder = builder.icon(icon);
+    }
+
+    builder
+        .build(app)
+        .map_err(|error| format!("could not create tray icon: {error}"))?;
+    Ok(())
+}
+
+fn remove_tray_icon(app: &AppHandle) {
+    let _ = app.remove_tray_by_id(TRAY_ICON_ID);
+}
+
+fn sync_tray_icon(
+    app: &AppHandle,
+    current: &DesktopShellPreferences,
+    next: &DesktopShellPreferences,
+) -> Result<(), String> {
+    match (current.tray_icon_enabled, next.tray_icon_enabled) {
+        (false, true) => create_tray_icon(app),
+        (true, false) => {
+            remove_tray_icon(app);
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn sync_global_shortcut(
+    app: &AppHandle,
+    current: &DesktopShellPreferences,
+    next: &DesktopShellPreferences,
+) -> Result<(), String> {
+    let shortcut_manager = app.global_shortcut();
+    for shortcut in [
+        current.global_shortcut.trim(),
+        next.global_shortcut.trim(),
+    ] {
+        if !shortcut.is_empty() && shortcut_manager.is_registered(shortcut) {
+            shortcut_manager.unregister(shortcut).map_err(|error| {
+                format!("could not unregister desktop shortcut `{shortcut}`: {error}")
+            })?;
+        }
+    }
+
+    if next.global_shortcut_enabled {
+        shortcut_manager
+            .register(next.global_shortcut.trim())
+            .map_err(|error| {
+                format!(
+                    "could not register desktop shortcut `{}`: {error}",
+                    next.global_shortcut
+                )
+            })?;
+    }
+
+    Ok(())
+}
+
+fn apply_desktop_shell_preferences(
+    app: &AppHandle,
+    current: &DesktopShellPreferences,
+    next: &DesktopShellPreferences,
+) -> Result<(), String> {
+    sync_tray_icon(app, current, next)?;
+    sync_global_shortcut(app, current, next)?;
+    Ok(())
+}
+
+fn initialize_desktop_shell(app: &tauri::App) -> Result<DesktopShellPreferences, String> {
+    let defaults = DesktopShellPreferences::default();
+    let loaded = match load_desktop_shell_preferences_from_disk(&app.handle()) {
+        Ok(settings) => settings,
+        Err(error) => {
+            record_backend_autostart_error(app, &format!("Desktop shell settings could not be loaded: {error}"));
+            defaults.clone()
+        }
+    };
+    let normalized = normalize_desktop_shell_preferences(loaded);
+    match apply_desktop_shell_preferences(&app.handle(), &defaults, &normalized) {
+        Ok(()) => Ok(normalized),
+        Err(error) if normalized.global_shortcut_enabled => {
+            let mut fallback = normalized.clone();
+            fallback.global_shortcut_enabled = false;
+            apply_desktop_shell_preferences(&app.handle(), &defaults, &fallback)?;
+            let _ = persist_desktop_shell_preferences(&app.handle(), &fallback);
+            record_backend_autostart_error(
+                app,
+                &format!(
+                    "Desktop shortcut `{}` could not be restored and was disabled: {error}",
+                    normalized.global_shortcut
+                ),
+            );
+            Ok(fallback)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn infer_mime_type(path: &Path) -> String {
@@ -636,7 +924,35 @@ fn start_backend(app: &tauri::App) -> Result<Option<Child>, String> {
 
 fn main() {
     tauri::Builder::default()
+        .on_window_event(|window, event| {
+            if window.label() != MAIN_WINDOW_LABEL {
+                return;
+            }
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let app = window.app_handle();
+                let state = app.state::<DesktopShellState>();
+                let preferences = match state.0.lock() {
+                    Ok(guard) => guard.clone(),
+                    Err(_) => DesktopShellPreferences::default(),
+                };
+                if preferences.tray_icon_enabled && preferences.close_to_tray_enabled {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
+            #[cfg(desktop)]
+            app.handle().plugin(
+                tauri_plugin_global_shortcut::Builder::new()
+                    .with_handler(|app, _shortcut, event| {
+                        if event.state() == ShortcutState::Pressed {
+                            let _ = show_main_window(app);
+                        }
+                    })
+                    .build(),
+            )?;
+
             match start_backend(app) {
                 Ok(child) => {
                     app.manage(BackendProcess(Mutex::new(child)));
@@ -646,6 +962,9 @@ fn main() {
                     app.manage(BackendProcess(Mutex::new(None)));
                 }
             }
+
+            let shell_preferences = initialize_desktop_shell(app)?;
+            app.manage(DesktopShellState(Mutex::new(shell_preferences)));
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
@@ -655,6 +974,8 @@ fn main() {
             has_azure_openai_api_key,
             clear_azure_openai_api_key,
             is_azure_openai_api_key_storage_available,
+            load_desktop_shell_preferences,
+            save_desktop_shell_preferences,
             read_clipboard_file_paths,
             read_local_files
         ])

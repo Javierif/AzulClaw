@@ -946,6 +946,44 @@ textarea {
   color: var(--text);
 }
 
+.settings-shell-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.settings-shell-toggle-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.settings-shell-toggle-card strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+
+.settings-shell-toggle-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  max-width: 620px;
+}
+
+.settings-shell-toggle-card input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
 .skill-toggle-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -4657,6 +4695,22 @@ textarea {
   transition: background 0.14s, border-color 0.14s;
   width: 100%;
   position: relative;
+}
+
+.recent-chat-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.recent-chat-unread-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #38bdf8;
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.14);
+  flex-shrink: 0;
 }
 
 .recent-chat-info {

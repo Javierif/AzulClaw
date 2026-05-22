@@ -602,6 +602,10 @@ class RuntimeSchedulerHeartbeatTests(unittest.IsolatedAsyncioTestCase):
             updated = next(item for item in store.load_jobs() if item.id == job.id)
             self.assertEqual(updated.delivery_conversation_id, conversation_id)
             self.assertTrue(updated.last_run_at)
+            listed = memory.list_conversations("desktop-user")
+            self.assertEqual(len(listed), 1)
+            self.assertTrue(listed[0]["has_unread"])
+            self.assertEqual(listed[0]["id"], conversation_id)
             memory.close()
 
     async def test_custom_heartbeat_fails_closed_without_isolated_runtime(self) -> None:

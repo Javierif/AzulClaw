@@ -40,6 +40,7 @@ class FakeMemory:
     def __init__(self) -> None:
         self.active: list[tuple[str, str]] = []
         self.created_for: list[str] = []
+        self.viewed: list[tuple[str, str]] = []
         self.owned_conversations = {"conv-open": "desktop-user"}
 
     def get_or_create_empty_conversation(self, user_id: str) -> tuple[str, str]:
@@ -60,6 +61,10 @@ class FakeMemory:
 
     def get_conversation_messages(self, conversation_id: str, limit: int = 12) -> list[dict]:
         return [{"role": "user", "content": "hello", "conversation_id": conversation_id}]
+
+    def mark_conversation_viewed(self, user_id: str, conversation_id: str) -> bool:
+        self.viewed.append((user_id, conversation_id))
+        return True
 
 
 class FakeOrchestrator:
@@ -106,6 +111,7 @@ class DesktopChatRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(orchestrator.memory.active, [("desktop-user", "conv-open")])
         self.assertEqual(orchestrator.memory.created_for, [])
         self.assertEqual(orchestrator.calls[0]["conversation_id"], "conv-open")
+        self.assertEqual(orchestrator.memory.viewed, [("desktop-user", "conv-open")])
         self.assertEqual(payload["conversation_id"], "conv-open")
         self.assertEqual(payload["conversation_title"], "Current chat")
 
@@ -120,6 +126,7 @@ class DesktopChatRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(orchestrator.memory.created_for, ["desktop-user"])
         self.assertEqual(orchestrator.memory.active, [("desktop-user", "conv-created")])
         self.assertEqual(orchestrator.calls[0]["conversation_id"], "conv-created")
+        self.assertEqual(orchestrator.memory.viewed, [("desktop-user", "conv-created")])
         self.assertEqual(payload["conversation_id"], "conv-created")
 
     async def test_non_stream_chat_accepts_attachment_only_turns(self) -> None:
@@ -171,6 +178,24 @@ class DesktopChatRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 404)
         self.assertEqual(payload["error"], "Conversation not found")
         self.assertEqual(orchestrator.memory.active, [])
+        self.assertEqual(orchestrator.memory.viewed, [])
+
+    async def test_messages_marks_conversation_viewed(self) -> None:
+        orchestrator = FakeOrchestrator()
+        request = FakeRequest(
+          {},
+          orchestrator,
+          query={"user_id": "desktop-user"},
+          match_info={"conv_id": "conv-open"},
+        )
+
+        response = await desktop_conversation_messages_handler(request)
+        payload = json.loads(response.text)
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(orchestrator.memory.active, [("desktop-user", "conv-open")])
+        self.assertEqual(orchestrator.memory.viewed, [("desktop-user", "conv-open")])
+        self.assertEqual(payload["messages"][0]["conversation_id"], "conv-open")
 
 
 if __name__ == "__main__":

@@ -862,6 +862,9 @@ async def desktop_chat_handler(req: web.Request) -> web.Response:
         conversation_id=conversation_id,
         attachment_ids=attachment_ids,
     )
+    marker = getattr(orchestrator.memory, "mark_conversation_viewed", None)
+    if callable(marker):
+        marker(user_id, conversation_id)
     history_loader = getattr(orchestrator.memory, "get_conversation_message_records", None)
     if callable(history_loader):
         history = history_loader(conversation_id, limit=12)
@@ -953,6 +956,9 @@ async def desktop_chat_stream_handler(req: web.Request) -> web.StreamResponse:
             history = history_loader(conversation_id, limit=12)
         else:
             history = orchestrator.memory.get_conversation_messages(conversation_id, limit=12)
+        marker = getattr(orchestrator.memory, "mark_conversation_viewed", None)
+        if callable(marker):
+            marker(user_id, conversation_id)
         conv_title = reply.conversation_title or orchestrator.memory.get_conversation_title(
             conversation_id
         )
@@ -1014,6 +1020,9 @@ async def desktop_conversation_messages_handler(req: web.Request) -> web.Respons
     if not _conversation_belongs_to_user(orchestrator.memory, conv_id, user_id):
         return web.json_response({"error": "Conversation not found"}, status=404)
     orchestrator.memory.set_active_conversation(user_id, conv_id)
+    marker = getattr(orchestrator.memory, "mark_conversation_viewed", None)
+    if callable(marker):
+        marker(user_id, conv_id)
     loader = getattr(orchestrator.memory, "get_conversation_message_records", None)
     if callable(loader):
         msgs = loader(conv_id)
