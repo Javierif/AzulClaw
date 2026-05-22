@@ -73,7 +73,7 @@ export function MemoryShell() {
   }
 
   const learned = records
-    .filter((r) => r.kind === "preference" || r.kind === "semantic" || r.kind === "fact" as string)
+    .filter((r) => r.kind === "preference" || r.kind === "semantic")
     .sort((a, b) => {
       const aFeatured = a.source === "featured" || a.source === "hatching-profile" ? 0 : 1;
       const bFeatured = b.source === "featured" || b.source === "hatching-profile" ? 0 : 1;

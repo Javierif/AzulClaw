@@ -150,7 +150,7 @@ class SafeMemory:
             ON conversation_history(user_id, created_at)
         """)
 
-        # Migration: add conversation_id column if it doesn't exist yet
+        # Migration: extend legacy conversation/message tables with newer metadata columns.
         try:
             self._conn.execute(
                 "ALTER TABLE conversations ADD COLUMN last_viewed_at TEXT"

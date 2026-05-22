@@ -5,7 +5,24 @@ import type { ConversationSummary } from "./contracts";
 
 const DEFAULT_NOTIFICATION_BODY = "Open AzulClaw to read the latest message.";
 const MAX_NOTIFICATION_BODY = 160;
+const MAX_TRACKED_MESSAGE_IDS = 256;
 const shownMessageIds = new Set<string>();
+const shownMessageOrder: string[] = [];
+
+function rememberShownMessageId(messageId: string): void {
+  if (!messageId || shownMessageIds.has(messageId)) {
+    return;
+  }
+  shownMessageIds.add(messageId);
+  shownMessageOrder.push(messageId);
+  if (shownMessageOrder.length <= MAX_TRACKED_MESSAGE_IDS) {
+    return;
+  }
+  const oldest = shownMessageOrder.shift();
+  if (oldest) {
+    shownMessageIds.delete(oldest);
+  }
+}
 
 function supportsDesktopNotifications(): boolean {
   return (
@@ -96,7 +113,7 @@ export async function notifyUnreadConversation(
     body: buildNotificationBody(summary),
     tag: `conversation:${summary.id}`,
   });
-  shownMessageIds.add(messageId);
+  rememberShownMessageId(messageId);
   notification.onclick = () => {
     notification.close();
     void (async () => {

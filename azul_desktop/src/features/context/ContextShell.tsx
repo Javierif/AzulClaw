@@ -27,7 +27,7 @@ export function ContextShell({
   const [activeTab, setActiveTab] = useState<ContextTab>("overview");
   const [processes, setProcesses] = useState<ProcessSummary[]>(processItems);
   const [records, setRecords] = useState<MemoryRecord[]>(memoryItems);
-  const [workspaceRoot, setWorkspaceRoot] = useState("C:/Users/javie/Desktop/AzulWorkspace");
+  const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [workspacePath, setWorkspacePath] = useState(".");
   const [entries, setEntries] = useState<WorkspaceEntry[]>(workspaceEntries);
 

@@ -42,7 +42,7 @@ export function isDeletableMemory(record: MemoryRecord): boolean {
 
 export function getLearnedMemory(records: MemoryRecord[]): MemoryRecord[] {
   return records
-    .filter((record) => record.kind === "preference" || record.kind === "semantic" || record.kind === ("fact" as string))
+    .filter((record) => record.kind === "preference" || record.kind === "semantic")
     .sort((a, b) => {
       const aFeatured = a.source === "featured" || a.source === "hatching-profile" ? 0 : 1;
       const bFeatured = b.source === "featured" || b.source === "hatching-profile" ? 0 : 1;

@@ -16,7 +16,7 @@ from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError, ContentTypeError
 from aiohttp.web_exceptions import HTTPRequestEntityTooLarge
 
-from ..attachments import MAX_ATTACHMENT_SIZE_BYTES
+from ..attachments import MAX_ATTACHMENTS_PER_TURN, MAX_ATTACHMENT_SIZE_BYTES
 
 from ..azure_auth import AZURE_OPENAI_SCOPE, set_frontend_azure_token
 from ..bootstrap import build_adapter
@@ -50,7 +50,6 @@ KEY_VAULT_HOST_SUFFIXES = (
     "vault.usgovcloudapi.net",
     "vault.microsoftazure.de",
 )
-MAX_ATTACHMENTS_PER_TURN = 10
 
 
 def _desktop_user_id(value: object = "desktop-user") -> str:

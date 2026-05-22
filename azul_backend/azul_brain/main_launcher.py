@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 from aiohttp import web
 
-from .attachments import MAX_ATTACHMENT_SIZE_BYTES
+from .attachments import MAX_ATTACHMENT_REQUEST_SIZE_BYTES
 from botbuilder.schema import Activity
 
 if __package__ in (None, ""):
@@ -181,7 +181,7 @@ async def create_app() -> web.Application:
 
     app = web.Application(
         middlewares=[cors_middleware],
-        client_max_size=MAX_ATTACHMENT_SIZE_BYTES,
+        client_max_size=MAX_ATTACHMENT_REQUEST_SIZE_BYTES,
     )
     app.on_response_prepare.append(cors_on_prepare)
     app["bot"] = AzulBot(orchestrator)
