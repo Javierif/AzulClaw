@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { MemoryRecord } from "../../lib/contracts";
 import {
@@ -6,8 +7,8 @@ import {
   getLearnedMemory,
   isDeletableMemory,
   MEMORY_KIND_COLOR,
-  MEMORY_KIND_LABEL,
-  MEMORY_SOURCE_LABEL,
+  memoryKindLabel,
+  memorySourceLabel,
 } from "./panel-utils";
 
 interface ContextMemoryPanelProps {
@@ -16,6 +17,7 @@ interface ContextMemoryPanelProps {
 }
 
 export function ContextMemoryPanel({ records, onDelete }: ContextMemoryPanelProps) {
+  const { t } = useTranslation();
   const learned = getLearnedMemory(records);
   const [selected, setSelected] = useState<MemoryRecord | null>(learned[0] ?? null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -36,7 +38,7 @@ export function ContextMemoryPanel({ records, onDelete }: ContextMemoryPanelProp
     try {
       await onDelete(record);
     } catch {
-      setDeleteError("Could not delete. Check the backend is running.");
+      setDeleteError(t("memory.deleteError"));
     } finally {
       setIsDeleting(false);
     }
@@ -46,11 +48,11 @@ export function ContextMemoryPanel({ records, onDelete }: ContextMemoryPanelProp
     <section className="subcard panel-tab-panel" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
       <div className="panel-heading" style={{ flexShrink: 0 }}>
         <div>
-          <p className="eyebrow">Memory</p>
-          <h3>Agent memory</h3>
+          <p className="eyebrow">{t("memory.eyebrow")}</p>
+          <h3>{t("memory.agentMemory")}</h3>
         </div>
         <div className="filter-row">
-          <span className="status-pill">{learned.length} learned</span>
+          <span className="status-pill">{learned.length} {t("memory.learned")}</span>
         </div>
       </div>
 
@@ -72,11 +74,11 @@ export function ContextMemoryPanel({ records, onDelete }: ContextMemoryPanelProp
                   ) : null}
                   <strong style={{ fontSize: "0.82rem" }}>{record.title}</strong>
                 </div>
-                <p className="process-row-meta">{MEMORY_SOURCE_LABEL[record.source] ?? record.source}</p>
+                <p className="process-row-meta">{memorySourceLabel(record.source)}</p>
               </div>
               <div className="process-row-aside">
                 <span className={`status-tag ${MEMORY_KIND_COLOR[record.kind] ?? ""}`}>
-                  {MEMORY_KIND_LABEL[record.kind] ?? record.kind}
+                  {memoryKindLabel(record.kind)}
                 </span>
               </div>
             </article>
@@ -84,7 +86,7 @@ export function ContextMemoryPanel({ records, onDelete }: ContextMemoryPanelProp
 
           {records.length === 0 ? (
             <p style={{ padding: "20px 14px", color: "var(--muted)", margin: 0, fontSize: "0.85rem" }}>
-              No memories yet. Chat with AzulClaw to start building context.
+              {t("memory.noMemoriesYet")}
             </p>
           ) : null}
         </div>
@@ -94,11 +96,11 @@ export function ContextMemoryPanel({ records, onDelete }: ContextMemoryPanelProp
             <>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
                 <span className={`status-tag ${MEMORY_KIND_COLOR[selected.kind] ?? ""}`}>
-                  {MEMORY_KIND_LABEL[selected.kind] ?? selected.kind}
+                  {memoryKindLabel(selected.kind)}
                 </span>
                 {selected.pinned ? (
                   <span style={{ fontSize: "0.75rem", color: "var(--accent, #2563eb)", fontWeight: 600, letterSpacing: "0.04em" }}>
-                    ● PINNED
+                    ● {t("memory.pinned")}
                   </span>
                 ) : null}
               </div>
@@ -117,25 +119,25 @@ export function ContextMemoryPanel({ records, onDelete }: ContextMemoryPanelProp
 
               <div className="runtime-kv-list">
                 <div className="runtime-kv-row">
-                  <span className="runtime-kv-key">Source</span>
-                  <span className="runtime-kv-val">{MEMORY_SOURCE_LABEL[selected.source] ?? selected.source}</span>
+                  <span className="runtime-kv-key">{t("memory.source")}</span>
+                  <span className="runtime-kv-val">{memorySourceLabel(selected.source)}</span>
                 </div>
                 <div className="runtime-kv-row">
-                  <span className="runtime-kv-key">Kind</span>
+                  <span className="runtime-kv-key">{t("memory.kind")}</span>
                   <span className={`status-tag ${MEMORY_KIND_COLOR[selected.kind] ?? ""}`}>
-                    {MEMORY_KIND_LABEL[selected.kind] ?? selected.kind}
+                    {memoryKindLabel(selected.kind)}
                   </span>
                 </div>
                 {selected.created_at ? (
                   <div className="runtime-kv-row">
-                    <span className="runtime-kv-key">Saved</span>
+                    <span className="runtime-kv-key">{t("memory.saved")}</span>
                     <span className="runtime-kv-val">{formatMemoryDate(selected.created_at)}</span>
                   </div>
                 ) : null}
                 {selected.pinned ? (
                   <div className="runtime-kv-row">
-                    <span className="runtime-kv-key">Persistence</span>
-                    <span className="runtime-kv-val" style={{ color: "var(--accent, #2563eb)" }}>Saved across sessions</span>
+                    <span className="runtime-kv-key">{t("memory.persistence")}</span>
+                    <span className="runtime-kv-val" style={{ color: "var(--accent, #2563eb)" }}>{t("memory.savedAcrossSessions")}</span>
                   </div>
                 ) : null}
               </div>
@@ -153,14 +155,14 @@ export function ContextMemoryPanel({ records, onDelete }: ContextMemoryPanelProp
                     disabled={isDeleting}
                     onClick={() => void handleDelete(selected)}
                   >
-                    {isDeleting ? "Deleting..." : "Delete memory"}
+                    {isDeleting ? t("common.deleting") : t("memory.deleteMemory")}
                   </button>
                 </div>
               ) : null}
             </>
           ) : (
             <p style={{ color: "var(--muted)", margin: 0, fontSize: "0.85rem" }}>
-              Select a memory record to preview it.
+              {t("memory.selectRecord")}
             </p>
           )}
         </div>

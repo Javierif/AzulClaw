@@ -191,6 +191,21 @@ resource.
 - Workspace browsing restricted to a dedicated sandbox root.
 - Heartbeats and scheduled jobs stored locally.
 - Optional Azure relay for Bot Framework channels.
+- English and Spanish UI with OS-locale autodetection and a manual override in Settings.
+
+## Language support
+
+AzulClaw ships with English and Spanish translations covering every screen: chat, heartbeats, the setup wizard, skills, memory, context panels, and settings.
+
+At startup the app reads the saved language preference from the user profile. If the preference is set to **Auto**, the OS locale is used (`navigator.language`), falling back to English when the locale is unsupported.
+
+The language can be changed at any time in **Settings → Desktop → Language** without restarting the app. The selected language is also injected into the AI system prompt so the assistant replies in the chosen language.
+
+To add a new language:
+
+1. Add a translation file at `azul_desktop/src/locales/<code>.json` following the structure of `en.json`.
+2. Register the locale in `azul_desktop/src/lib/i18n.ts`.
+3. Add the option to the language selector in `azul_desktop/src/features/settings/SettingsShell.tsx`.
 
 ## Documentation
 

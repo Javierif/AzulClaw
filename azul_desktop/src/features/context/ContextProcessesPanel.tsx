@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { ProcessSummary } from "../../lib/contracts";
 
@@ -8,6 +9,7 @@ interface ContextProcessesPanelProps {
 }
 
 export function ContextProcessesPanel({ items, onRefresh }: ContextProcessesPanelProps) {
+  const { t } = useTranslation();
   const [selected, setSelected] = useState<ProcessSummary | null>(items[0] ?? null);
 
   useEffect(() => {
@@ -22,21 +24,21 @@ export function ContextProcessesPanel({ items, onRefresh }: ContextProcessesPane
     <section className="subcard panel-tab-panel" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
       <div className="panel-heading" style={{ flexShrink: 0 }}>
         <div>
-          <p className="eyebrow">Processes</p>
-          <h3>Agent internal activity</h3>
+          <p className="eyebrow">{t("process.eyebrow")}</p>
+          <h3>{t("process.agentActivity")}</h3>
         </div>
         <div className="filter-row">
           <span className="process-count-pill process-count-running">
             <span className="process-count-dot process-dot-running" />
-            {items.filter((item) => item.status === "running").length} running
+            {items.filter((item) => item.status === "running").length} {t("process.running")}
           </span>
           <span className="process-count-pill process-count-waiting">
             <span className="process-count-dot process-dot-waiting" />
-            {items.filter((item) => item.status === "waiting").length} waiting
+            {items.filter((item) => item.status === "waiting").length} {t("process.waiting")}
           </span>
           <span className="process-count-pill process-count-done">
             <span className="process-count-dot process-dot-done" />
-            {items.filter((item) => item.status === "done").length} done
+            {items.filter((item) => item.status === "done").length} {t("process.done")}
           </span>
         </div>
       </div>
@@ -73,35 +75,35 @@ export function ContextProcessesPanel({ items, onRefresh }: ContextProcessesPane
                   <p className="eyebrow" style={{ margin: 0 }}>{selected.status}</p>
                 </div>
                 <h3 style={{ margin: "0 0 4px" }}>{selected.title}</h3>
-                <p style={{ margin: 0 }}>{selected.detail || "No detail available."}</p>
+                <p style={{ margin: 0 }}>{selected.detail || t("process.noDetail")}</p>
               </div>
 
               <div className="runtime-kv-list" style={{ marginTop: "4px" }}>
                 <div className="runtime-kv-row">
-                  <span className="runtime-kv-key">Skill</span>
+                  <span className="runtime-kv-key">{t("process.skill")}</span>
                   <span className="runtime-kv-val">{selected.skill}</span>
                 </div>
                 <div className="runtime-kv-row">
-                  <span className="runtime-kv-key">Kind</span>
+                  <span className="runtime-kv-key">{t("process.kind")}</span>
                   <code className="runtime-kv-code">{selected.kind}</code>
                 </div>
                 <div className="runtime-kv-row">
-                  <span className="runtime-kv-key">Lane</span>
+                  <span className="runtime-kv-key">{t("process.lane")}</span>
                   <code className="runtime-kv-code">{selected.lane}</code>
                 </div>
                 {selected.modelLabel ? (
                   <div className="runtime-kv-row">
-                    <span className="runtime-kv-key">Model</span>
+                    <span className="runtime-kv-key">{t("process.model")}</span>
                     <span className="runtime-kv-val">{selected.modelLabel}</span>
                   </div>
                 ) : null}
                 <div className="runtime-kv-row">
-                  <span className="runtime-kv-key">Started</span>
+                  <span className="runtime-kv-key">{t("process.started")}</span>
                   <span className="runtime-kv-val">{selected.startedAt}</span>
                 </div>
                 {selected.updatedAt ? (
                   <div className="runtime-kv-row">
-                    <span className="runtime-kv-key">Updated</span>
+                    <span className="runtime-kv-key">{t("process.updated")}</span>
                     <span className="runtime-kv-val">{selected.updatedAt}</span>
                   </div>
                 ) : null}
@@ -109,13 +111,13 @@ export function ContextProcessesPanel({ items, onRefresh }: ContextProcessesPane
 
               <div className="filter-row" style={{ marginTop: "auto" }}>
                 <button type="button" className="ghost-button" onClick={() => void onRefresh()}>
-                  Refresh
+                  {t("process.refresh")}
                 </button>
-                <button type="button" className="primary-button">Runtime →</button>
+                <button type="button" className="primary-button">{t("process.runtimeLink")}</button>
               </div>
             </>
           ) : (
-            <p style={{ color: "var(--muted)", margin: 0 }}>Select a process to see its details.</p>
+            <p style={{ color: "var(--muted)", margin: 0 }}>{t("process.selectProcess")}</p>
           )}
         </div>
       </div>

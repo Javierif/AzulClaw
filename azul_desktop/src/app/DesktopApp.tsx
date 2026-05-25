@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { useTranslation } from "react-i18next";
 
 import adultMascot from "../../../img/azulclaw.png";
 import babyMascot from "../../../img/hatching_azulclaw.png";
@@ -18,37 +19,14 @@ import { DEFAULT_CONVERSATION_TITLE, normalizeConversationTitle } from "../lib/c
 import { notifyUnreadConversation } from "../lib/desktop-notifications";
 import type { AppView, SetupProfile } from "../lib/contracts";
 import { defaultSetupProfile } from "../lib/mock-data";
+import i18n from "../lib/i18n";
 
-const THINKING_SENTENCES = [
-  "Connecting the dots...",
-  "Pulling the threads together.",
-  "Reading between the lines.",
-  "On it. Give me a moment.",
-  "Thinking this through carefully.",
-  "Running the cognitive layer.",
-  "Parsing your request.",
-  "Consulting the knowledge base.",
-  "Firing up the slow brain.",
-  "Cross-referencing context.",
-  "Let me think about that.",
-  "Assembling a response.",
-  "Checking what I know.",
-  "Working through it step by step.",
-  "Almost there, stay with me.",
-];
-
-const TYPING_SENTENCES = [
-  "Oh, you're typing... interesting.",
-  "I see those fingers moving.",
-  "Go on, I'm listening.",
-  "Hmm, what's on your mind?",
-  "Drafting something? I'm ready.",
-  "I'm all ears.",
-  "Take your time.",
-  "Whenever you're ready.",
-  "Something's coming my way...",
-  "I can feel a question forming.",
-];
+function resolveLanguage(profileLanguage: string | undefined): string {
+  const lang = (profileLanguage ?? "auto").trim();
+  if (lang !== "auto" && lang) return lang;
+  const nav = (navigator.language ?? "").slice(0, 2).toLowerCase();
+  return nav === "es" ? "es" : "en";
+}
 
 function renderView(
   view: AppView,
@@ -92,6 +70,7 @@ function renderView(
 }
 
 export function DesktopApp() {
+  const { t } = useTranslation();
   const [activeView, setActiveView] = useState<AppView>("chat");
   const [profile, setProfile] = useState<SetupProfile>(defaultSetupProfile);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
@@ -121,6 +100,7 @@ export function DesktopApp() {
 
     loadSetupProfile().then(async (data) => {
       if (isMounted) {
+        void i18n.changeLanguage(resolveLanguage(data.language));
         setProfile(data);
         setIsBootstrapping(false);
       }
@@ -183,11 +163,13 @@ export function DesktopApp() {
   const onThinkingChange = useCallback((thinking: boolean) => {
     isThinkingRef.current = thinking;
     if (thinking) {
-      sentenceIndexRef.current = Math.floor(Math.random() * THINKING_SENTENCES.length);
-      setTopbarLabel({ text: THINKING_SENTENCES[sentenceIndexRef.current], mode: "thinking" });
+      const sentences = i18n.t("desktop.thinking", { returnObjects: true }) as string[];
+      sentenceIndexRef.current = Math.floor(Math.random() * sentences.length);
+      setTopbarLabel({ text: sentences[sentenceIndexRef.current], mode: "thinking" });
       thinkingIntervalRef.current = window.setInterval(() => {
-        sentenceIndexRef.current = (sentenceIndexRef.current + 1) % THINKING_SENTENCES.length;
-        setTopbarLabel({ text: THINKING_SENTENCES[sentenceIndexRef.current], mode: "thinking" });
+        const current = i18n.t("desktop.thinking", { returnObjects: true }) as string[];
+        sentenceIndexRef.current = (sentenceIndexRef.current + 1) % current.length;
+        setTopbarLabel({ text: current[sentenceIndexRef.current], mode: "thinking" });
       }, 2800);
     } else {
       if (thinkingIntervalRef.current !== null) {
@@ -209,11 +191,11 @@ export function DesktopApp() {
   const onTypingChange = useCallback((typing: boolean) => {
     if (isThinkingRef.current) return;
     if (typing) {
-      // Pick a sentence only when transitioning from nothing
       setTopbarLabel((current) => {
         if (current?.mode === "typing") return current;
-        const idx = Math.floor(Math.random() * TYPING_SENTENCES.length);
-        return { text: TYPING_SENTENCES[idx], mode: "typing" };
+        const sentences = i18n.t("desktop.typing", { returnObjects: true }) as string[];
+        const idx = Math.floor(Math.random() * sentences.length);
+        return { text: sentences[idx], mode: "typing" };
       });
       // Reset the 3s idle clear timer on every keystroke
       if (typingClearRef.current !== null) window.clearTimeout(typingClearRef.current);
@@ -304,12 +286,9 @@ export function DesktopApp() {
       <div className="onboarding-stage">
         <section className="onboarding-card">
           <img className="onboarding-mascot" src={babyMascot} alt="AzulClaw hatchling" />
-          <p className="eyebrow">Wake up</p>
-          <h1>Preparing AzulClaw's nest</h1>
-          <p>
-            Loading profile, sandbox and companion state before opening the
-            desktop.
-          </p>
+          <p className="eyebrow">{t("desktop.wakeUp")}</p>
+          <h1>{t("desktop.preparingNest")}</h1>
+          <p>{t("desktop.preparingNestDesc")}</p>
         </section>
       </div>
     );
@@ -346,7 +325,7 @@ export function DesktopApp() {
           {activeView === "chat" && (
             <div className="topbar-chat-area">
               <div className="topbar-session-block">
-                <p className="topbar-context-eyebrow">Active session</p>
+                <p className="topbar-context-eyebrow">{t("desktop.activeSession")}</p>
                 <h2
                   className="topbar-context-title"
                   title={normalizeConversationTitle(conversationTitle)}
@@ -360,9 +339,9 @@ export function DesktopApp() {
             <div className="topbar-right">
             <div className="topbar-status-row">
               <span className="topbar-live-dot" />
-              <span className="topbar-status-label">Slow Brain</span>
+              <span className="topbar-status-label">{t("desktop.slowBrain")}</span>
               <span className="topbar-status-divider">·</span>
-              <span className="topbar-status-label">auto</span>
+              <span className="topbar-status-label">{t("desktop.auto")}</span>
             </div>
             <span className="topbar-workspace-chip" title={profile.workspace_root}>
               {profile.workspace_root}
@@ -401,16 +380,16 @@ export function DesktopApp() {
             >
               <div className="hw-modal-head">
                 <div>
-                  <p className="hw-label">MICROSOFT LOGIN</p>
-                  <h3 className="hw-modal-title">Azure needs a fresh sign-in</h3>
+                  <p className="hw-label">{t("desktop.microsoftLoginTitle")}</p>
+                  <h3 className="hw-modal-title">{t("desktop.azureFreshSignIn")}</h3>
                 </div>
               </div>
               <p className="hw-inline-note">
-                AzulClaw kept your Azure resource, model and Key Vault settings. It only needs a new Microsoft token for this session.
+                {t("desktop.azureSettingsKept")}
               </p>
               {authPromptDismissWarning && (
                 <p className="hw-inline-note hw-inline-note-warning" style={{ marginTop: "10px" }}>
-                  Without Microsoft sign-in, AzulClaw cannot call Azure OpenAI or use your Azure-backed resources in this session.
+                  {t("desktop.azureSignInWarning")}
                 </p>
               )}
               {authPromptError && (
@@ -418,10 +397,10 @@ export function DesktopApp() {
               )}
               <div className="hw-modal-actions" style={{ marginTop: "16px" }}>
                 <button type="button" className="hw-btn-ghost" onClick={handleDismissAzureLogin} disabled={authPromptBusy}>
-                  {authPromptDismissWarning ? "Continue without sign-in" : "Not now"}
+                  {authPromptDismissWarning ? t("desktop.continueWithoutSignIn") : t("desktop.notNow")}
                 </button>
                 <button type="button" className="hw-btn-primary" onClick={() => void handleRenewAzureLogin()} disabled={authPromptBusy}>
-                  {authPromptBusy ? "Signing in..." : "Sign in with Microsoft"}
+                  {authPromptBusy ? t("desktop.signingIn") : t("desktop.signInMicrosoft")}
                 </button>
               </div>
             </section>

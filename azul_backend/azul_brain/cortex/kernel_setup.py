@@ -8,7 +8,6 @@ from urllib.parse import urlparse
 
 import aiohttp
 from agent_framework import Agent, Message, tool
-from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.openai import OpenAIChatClient
 from pydantic import BaseModel
 
@@ -22,7 +21,8 @@ from ..foundry_url import (
     normalize_azure_openai_endpoint,
     normalize_foundry_base_url,
 )
-from ..soul.system_prompt import AZULCLAW_SYSTEM_PROMPT
+from ..api.hatching_store import HatchingStore
+from ..soul.system_prompt import build_system_prompt
 from .mcp_plugin import MCPToolsPlugin
 
 LOGGER = logging.getLogger(__name__)
@@ -95,13 +95,22 @@ def _stringify_result_value(value: Any) -> str:
         return str(value)
 
 
+def _get_system_prompt() -> str:
+    try:
+        language = HatchingStore().load().language
+    except Exception:
+        language = "auto"
+    return build_system_prompt(language)
+
+
 def _compose_instructions(instructions: str | None) -> str:
+    base = _get_system_prompt()
     if instructions is None:
-        return AZULCLAW_SYSTEM_PROMPT
+        return base
     scoped = instructions.strip()
     if not scoped:
-        return AZULCLAW_SYSTEM_PROMPT
-    return f"{AZULCLAW_SYSTEM_PROMPT}\n\nTask-specific instructions:\n{scoped}"
+        return base
+    return f"{base}\n\nTask-specific instructions:\n{scoped}"
 
 
 class _Result:
@@ -401,16 +410,16 @@ async def create_agent(
             kwargs["api_key"] = api_key or _require_env("AZURE_OPENAI_API_KEY")
         chat_client = OpenAIChatClient(**kwargs)
     else:
-        kwargs = {
-            "deployment_name": deployment_name,
-            "endpoint": normalize_azure_openai_endpoint(endpoint),
+        kwargs: dict = {
+            "model": deployment_name,
+            "azure_endpoint": normalize_azure_openai_endpoint(endpoint),
             "api_version": api_version,
         }
         if auth_mode == "entra":
             kwargs["credential"] = get_default_azure_credential()
         else:
             kwargs["api_key"] = api_key or _require_env("AZURE_OPENAI_API_KEY")
-        chat_client = AzureOpenAIChatClient(**kwargs)
+        chat_client = OpenAIChatClient(**kwargs)
 
     agent = Agent(
         client=chat_client,

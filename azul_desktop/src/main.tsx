@@ -1,11 +1,15 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { isTauri } from "@tauri-apps/api/core";
+import { useTranslation } from "react-i18next";
 
 import { DesktopApp } from "./app/DesktopApp";
+import "./lib/i18n";
 import "./styles/global.css";
 
 function AzureAuthCallbackBridge() {
+  const { t } = useTranslation();
+
   React.useEffect(() => {
     if (!isTauri()) {
       return;
@@ -30,9 +34,9 @@ function AzureAuthCallbackBridge() {
   return (
     <div className="onboarding-stage">
       <section className="onboarding-card">
-        <p className="eyebrow">Microsoft Login</p>
-        <h1>Completing sign-in</h1>
-        <p>Returning your Microsoft session to AzulClaw.</p>
+        <p className="eyebrow">{t("auth.microsoftLogin")}</p>
+        <h1>{t("auth.completingSignIn")}</h1>
+        <p>{t("auth.returningSession")}</p>
       </section>
     </div>
   );

@@ -1,5 +1,7 @@
+import { useTranslation } from "react-i18next";
+
 import type { MemoryRecord, ProcessSummary, WorkspaceEntry } from "../../lib/contracts";
-import { getLearnedMemory, MEMORY_SOURCE_LABEL } from "./panel-utils";
+import { getLearnedMemory, memorySourceLabel } from "./panel-utils";
 
 interface ContextOverviewPanelProps {
   processes: ProcessSummary[];
@@ -16,6 +18,7 @@ export function ContextOverviewPanel({
   entries,
   onSelectTab,
 }: ContextOverviewPanelProps) {
+  const { t } = useTranslation();
   const learned = getLearnedMemory(records);
   const pinned = learned.filter((record) => record.pinned).length;
   const recentProcesses = processes.slice(0, 3);
@@ -27,25 +30,25 @@ export function ContextOverviewPanel({
       <article className="subcard context-overview-card">
         <div className="context-overview-head">
           <div>
-            <p className="eyebrow">Processes</p>
-            <h3>Current activity</h3>
+            <p className="eyebrow">{t("context.tabs.processes")}</p>
+            <h3>{t("context.overview.currentActivity")}</h3>
           </div>
           <button type="button" className="ghost-button" onClick={() => onSelectTab("processes")}>
-            Open tab
+            {t("context.overview.openTab")}
           </button>
         </div>
         <div className="filter-row">
           <span className="process-count-pill process-count-running">
             <span className="process-count-dot process-dot-running" />
-            {processes.filter((item) => item.status === "running").length} running
+            {processes.filter((item) => item.status === "running").length} {t("context.overview.running")}
           </span>
           <span className="process-count-pill process-count-waiting">
             <span className="process-count-dot process-dot-waiting" />
-            {processes.filter((item) => item.status === "waiting").length} waiting
+            {processes.filter((item) => item.status === "waiting").length} {t("context.overview.waiting")}
           </span>
           <span className="process-count-pill process-count-done">
             <span className="process-count-dot process-dot-done" />
-            {processes.filter((item) => item.status === "done").length} done
+            {processes.filter((item) => item.status === "done").length} {t("context.overview.done")}
           </span>
         </div>
         <div className="context-overview-list">
@@ -64,23 +67,23 @@ export function ContextOverviewPanel({
       <article className="subcard context-overview-card">
         <div className="context-overview-head">
           <div>
-            <p className="eyebrow">Memory</p>
-            <h3>Learned context</h3>
+            <p className="eyebrow">{t("context.tabs.memory")}</p>
+            <h3>{t("context.overview.learnedContext")}</h3>
           </div>
           <button type="button" className="ghost-button" onClick={() => onSelectTab("memory")}>
-            Open tab
+            {t("context.overview.openTab")}
           </button>
         </div>
         <div className="filter-row">
-          <span className="status-pill">{learned.length} learned</span>
-          <span className="status-pill">{pinned} pinned</span>
+          <span className="status-pill">{learned.length} {t("context.overview.learned")}</span>
+          <span className="status-pill">{pinned} {t("context.overview.pinned")}</span>
         </div>
         <div className="context-overview-list">
           {recentMemory.map((record) => (
             <div key={record.id} className="context-overview-row">
               <div>
                 <strong>{record.title}</strong>
-                <p>{MEMORY_SOURCE_LABEL[record.source] ?? record.source}</p>
+                <p>{memorySourceLabel(record.source)}</p>
               </div>
               <span className="status-tag">{record.kind}</span>
             </div>
@@ -91,20 +94,20 @@ export function ContextOverviewPanel({
       <article className="subcard context-overview-card">
         <div className="context-overview-head">
           <div>
-            <p className="eyebrow">Workspace</p>
-            <h3>Sandbox visibility</h3>
+            <p className="eyebrow">{t("context.tabs.workspace")}</p>
+            <h3>{t("context.overview.sandboxVisibility")}</h3>
           </div>
           <button type="button" className="ghost-button" onClick={() => onSelectTab("workspace")}>
-            Open tab
+            {t("context.overview.openTab")}
           </button>
         </div>
         <div className="runtime-kv-list">
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Root</span>
-            <code className="runtime-kv-code">{workspaceRoot || "Unavailable"}</code>
+            <span className="runtime-kv-key">{t("context.overview.root")}</span>
+            <code className="runtime-kv-code">{workspaceRoot || t("context.overview.unavailable")}</code>
           </div>
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Visible entries</span>
+            <span className="runtime-kv-key">{t("context.overview.visibleEntries")}</span>
             <span className="runtime-kv-val">{entries.length}</span>
           </div>
         </div>

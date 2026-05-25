@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { loadRuntime } from "../../lib/api";
 import type { RuntimeOverview } from "../../lib/contracts";
@@ -7,13 +8,8 @@ import { runtimeOverview } from "../../lib/mock-data";
 const laneOptions = ["auto", "fast", "slow"] as const;
 type Lane = (typeof laneOptions)[number];
 
-const laneDescriptions: Record<string, string> = {
-  auto: "Let AzulClaw choose based on the task complexity",
-  fast: "Always use the fast model — quick, lightweight tasks",
-  slow: "Always use the slow model — deliberate, context-heavy tasks",
-};
-
 export function RuntimeShell() {
+  const { t } = useTranslation();
   const [runtime, setRuntime] = useState<RuntimeOverview>(runtimeOverview);
 
   useEffect(() => {
@@ -38,29 +34,27 @@ export function RuntimeShell() {
     <section className="single-panel-layout">
       <div className="card panel-stack">
 
-        {/* ── Header ─────────────────────────────────── */}
         <div className="panel-heading">
           <div>
-            <p className="eyebrow">Runtime</p>
-            <h2>Models and inference</h2>
+            <p className="eyebrow">{t("runtime.eyebrow")}</p>
+            <h2>{t("runtime.modelsAndInference")}</h2>
           </div>
           <div className="filter-row">
             <span
               className={`status-pill${runtime.scheduler_running ? " status-pill-live" : ""}`}
             >
-              {runtime.scheduler_running ? "Scheduler running" : "Scheduler stopped"}
+              {runtime.scheduler_running ? t("runtime.schedulerRunning") : t("runtime.schedulerStopped")}
             </span>
-            <span className="status-pill">{runtime.jobs_total} jobs</span>
-            <span className="status-pill">{runtime.jobs_running} running</span>
+            <span className="status-pill">{runtime.jobs_total} {t("runtime.jobs")}</span>
+            <span className="status-pill">{runtime.jobs_running} {t("runtime.running")}</span>
           </div>
         </div>
 
-        {/* ── Default lane selector ───────────────────── */}
         <div className="runtime-lane-bar subcard">
           <div className="runtime-lane-meta">
-            <p className="eyebrow">Default lane</p>
+            <p className="eyebrow">{t("runtime.defaultLane")}</p>
             <p className="runtime-lane-hint">
-              {laneDescriptions[runtime.default_lane]}
+              {t(`runtime.lane.${runtime.default_lane}Desc`)}
             </p>
           </div>
           <div className="runtime-lane-options">
@@ -72,38 +66,40 @@ export function RuntimeShell() {
                 onClick={() => setRuntime((current) => ({ ...current, default_lane: lane as Lane }))}
               >
                 <span className="runtime-lane-btn-dot" />
-                {lane}
+                {t(`runtime.lane.${lane}`)}
               </button>
             ))}
           </div>
         </div>
 
-        {/* ── Model cards ─────────────────────────────── */}
         <div className="two-column-grid">
           {runtime.models.map((model) => (
             <section key={model.id} className="subcard runtime-model-card">
               <div className="runtime-model-header">
                 <div>
-                  <p className="eyebrow">{model.lane === "fast" ? "Fast Brain" : "Slow Brain"}</p>
+                  <p className="eyebrow">{model.lane === "fast" ? t("runtime.fastBrain") : t("runtime.slowBrain")}</p>
                   <h3 className="runtime-model-name">{model.label}</h3>
                   <p className="runtime-model-desc">{model.description}</p>
                 </div>
-                <span className={`runtime-status-dot${model.available ? " runtime-status-dot-ok" : " runtime-status-dot-err"}`} title={model.available ? "Available" : "Unavailable"} />
+                <span
+                  className={`runtime-status-dot${model.available ? " runtime-status-dot-ok" : " runtime-status-dot-err"}`}
+                  title={model.available ? t("runtime.available") : t("runtime.unavailable")}
+                />
               </div>
 
               <div className="runtime-kv-list">
                 <div className="runtime-kv-row">
-                  <span className="runtime-kv-key">Provider</span>
+                  <span className="runtime-kv-key">{t("runtime.provider")}</span>
                   <span className="runtime-kv-val">{model.provider}</span>
                 </div>
                 <div className="runtime-kv-row">
-                  <span className="runtime-kv-key">Deployment</span>
+                  <span className="runtime-kv-key">{t("runtime.deployment")}</span>
                   <code className="runtime-kv-code">{model.deployment}</code>
                 </div>
                 <div className="runtime-kv-row">
-                  <span className="runtime-kv-key">Status</span>
+                  <span className="runtime-kv-key">{t("runtime.status")}</span>
                   <span className={`status-tag ${model.available ? "status-done" : "status-failed"}`}>
-                    {model.available ? "Available" : "Unavailable"}
+                    {model.available ? t("runtime.available") : t("runtime.unavailable")}
                   </span>
                 </div>
               </div>
@@ -123,19 +119,19 @@ export function RuntimeShell() {
                     }))
                   }
                 />
-                Response streaming
+                {t("runtime.streaming")}
               </label>
 
               {model.probe_detail ? (
                 <div className="runtime-probe">
-                  <span className="runtime-kv-key">Probe</span>
+                  <span className="runtime-kv-key">{t("runtime.probe")}</span>
                   <code className="inline-code">{model.probe_detail}</code>
                 </div>
               ) : null}
 
               {model.last_error ? (
                 <div className="error-block">
-                  <span className="error-block-label">Last error</span>
+                  <span className="error-block-label">{t("runtime.lastError")}</span>
                   <code className="error-code">{model.last_error}</code>
                 </div>
               ) : null}
@@ -143,10 +139,9 @@ export function RuntimeShell() {
           ))}
         </div>
 
-        {/* ── Scheduler status ─────────────────────────── */}
         {runtime.scheduler_last_error ? (
           <div className="error-block">
-            <span className="error-block-label">Scheduler error</span>
+            <span className="error-block-label">{t("runtime.schedulerError")}</span>
             <code className="error-code">{runtime.scheduler_last_error}</code>
           </div>
         ) : null}

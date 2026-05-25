@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Tooltip } from "../../components/Tooltip";
 import type { WorkspaceEntry } from "../../lib/contracts";
@@ -13,31 +14,38 @@ function getWorkspacePreview(entries: WorkspaceEntry[]): WorkspaceEntry | null {
 }
 
 export function ContextWorkspacePanel({ workspaceRoot, entries }: ContextWorkspacePanelProps) {
+  const { t } = useTranslation();
   const preview = useMemo(() => getWorkspacePreview(entries), [entries]);
+
+  function previewText(): string {
+    if (!preview) return t("workspace.workspaceEmpty");
+    if (preview.kind === "file") return t("workspace.workspaceFile", { name: preview.name });
+    return t("workspace.workspaceFolder", { name: preview.name });
+  }
 
   return (
     <section className="subcard panel-tab-panel" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
       <div className="panel-heading">
         <div>
-          <p className="eyebrow">Workspace</p>
-          <h3>AzulClaw operative sandbox</h3>
+          <p className="eyebrow">{t("workspace.eyebrow")}</p>
+          <h3>{t("workspace.sandbox")}</h3>
         </div>
         <div className="action-row">
           <button type="button" className="ghost-button">
-            New folder
+            {t("workspace.newFolder")}
           </button>
           <button type="button" className="primary-button">
-            Open in system
+            {t("workspace.openSystem")}
           </button>
         </div>
       </div>
 
       <div className="workspace-banner">
-        <strong>Active path</strong>
+        <strong>{t("workspace.activePath")}</strong>
         <Tooltip text={workspaceRoot} className="workspace-banner-path">
           {workspaceRoot}
         </Tooltip>
-        <span>AzulClaw can only read and write within this sandbox.</span>
+        <span>{t("workspace.sandboxNote")}</span>
       </div>
 
       <div className="list-detail-grid" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
@@ -58,15 +66,9 @@ export function ContextWorkspacePanel({ workspaceRoot, entries }: ContextWorkspa
         </div>
 
         <div className="subcard">
-          <p className="eyebrow">Preview</p>
-          <h3>{preview ? preview.path : "No preview available"}</h3>
-          <p>
-            {preview?.kind === "file"
-              ? `Workspace file ${preview.name} is available inside the active sandbox.`
-              : preview?.kind === "folder"
-                ? `${preview.name} is part of the current sandbox structure.`
-                : "The workspace listing is empty."}
-          </p>
+          <p className="eyebrow">{t("workspace.preview")}</p>
+          <h3>{preview ? preview.path : t("workspace.noPreview")}</h3>
+          <p>{previewText()}</p>
         </div>
       </div>
     </section>
