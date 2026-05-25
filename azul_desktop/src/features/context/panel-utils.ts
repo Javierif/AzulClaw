@@ -1,11 +1,5 @@
+import i18n from "../../lib/i18n";
 import type { MemoryRecord } from "../../lib/contracts";
-
-export const MEMORY_KIND_LABEL: Record<string, string> = {
-  preference: "Preference",
-  semantic: "Context",
-  episodic: "Conversation",
-  session: "Session",
-};
 
 export const MEMORY_KIND_COLOR: Record<string, string> = {
   preference: "status-done",
@@ -14,6 +8,24 @@ export const MEMORY_KIND_COLOR: Record<string, string> = {
   session: "",
 };
 
+export function memoryKindLabel(kind: string): string {
+  return i18n.t(`memory.kinds.${kind}`, { defaultValue: kind });
+}
+
+export function memorySourceLabel(source: string): string {
+  const key = source === "hatching-profile" ? "hatchingProfile" : source;
+  return i18n.t(`memory.sources.${key}`, { defaultValue: source });
+}
+
+/** @deprecated Use memoryKindLabel() — kept for reference only */
+export const MEMORY_KIND_LABEL: Record<string, string> = {
+  preference: "Preference",
+  semantic: "Context",
+  episodic: "Conversation",
+  session: "Session",
+};
+
+/** @deprecated Use memorySourceLabel() — kept for reference only */
 export const MEMORY_SOURCE_LABEL: Record<string, string> = {
   featured: "Featured",
   "hatching-profile": "Profile setup",

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { SectionTopbarPortal } from "../../components/SectionTopbarPortal";
 import {
@@ -14,6 +15,7 @@ import type {
   ScheduledJobSecurityPolicy,
 } from "../../lib/contracts";
 import { runtimeOverview, scheduledJobs } from "../../lib/mock-data";
+import i18n from "../../lib/i18n";
 
 const INTERVAL_PRESETS = [
   { label: "5 min", seconds: 300 },
@@ -78,7 +80,7 @@ function humanInterval(seconds: number): string {
 }
 
 function lastRunLabel(iso: string): string {
-  if (!iso) return "No runs yet";
+  if (!iso) return i18n.t("heartbeats.noRuns");
   try {
     const date = new Date(iso);
     const diff = Date.now() - date.getTime();
@@ -92,7 +94,7 @@ function lastRunLabel(iso: string): string {
 }
 
 function nextRunLabel(iso: string): string {
-  if (!iso) return "Pending";
+  if (!iso) return i18n.t("heartbeats.pending");
   try {
     const date = new Date(iso);
     const diff = date.getTime() - Date.now();
@@ -197,7 +199,7 @@ function buildEditorForm(job?: ScheduledJob): HeartbeatEditorForm {
 }
 
 function modeLabel(policy: ScheduledJobSecurityPolicy): string {
-  return policy.execution_mode === "workspace_heartbeat" ? "Workspace heartbeat" : "Proactive reminder";
+  return policy.execution_mode === "workspace_heartbeat" ? i18n.t("heartbeats.modeWorkspace") : i18n.t("heartbeats.modeProactive");
 }
 
 function visibleTags(job: ScheduledJob): string[] {
@@ -215,6 +217,7 @@ export function HeartbeatsShell({
 }: {
   headerPortalTarget?: HTMLElement | null;
 }) {
+  const { t } = useTranslation();
   const [runtime, setRuntime] = useState<RuntimeOverview>(runtimeOverview);
   const [jobs, setJobs] = useState<ScheduledJob[]>(scheduledJobs);
   const [editorMode, setEditorMode] = useState<EditorMode | null>(null);
@@ -263,19 +266,19 @@ export function HeartbeatsShell({
   const headerContent = (
     <div className="section-topbar">
       <div className="section-topbar-copy">
-        <p className="eyebrow">Automations</p>
-        <h2 className="section-topbar-title">Heartbeats</h2>
-        <p className="section-topbar-description">Scheduled checks, reminders, and workspace routines.</p>
+        <p className="eyebrow">{t("heartbeats.automations")}</p>
+        <h2 className="section-topbar-title">{t("heartbeats.title")}</h2>
+        <p className="section-topbar-description">{t("heartbeats.description")}</p>
       </div>
       <div className="section-topbar-actions filter-row">
         <span className={`status-pill${runtime.scheduler_running ? " status-pill-live" : ""}`}>
-          {runtime.scheduler_running ? "Scheduler running" : "Scheduler stopped"}
+          {runtime.scheduler_running ? t("heartbeats.schedulerRunning") : t("heartbeats.schedulerStopped")}
         </span>
         <span className="status-pill">
-          {runtime.jobs_total} {runtime.jobs_total === 1 ? "heartbeat" : "heartbeats"}
+          {runtime.jobs_total} {runtime.jobs_total === 1 ? t("heartbeats.heartbeat") : t("heartbeats.heartbeats")}
         </span>
         <button type="button" className="primary-button" onClick={openCreateModal}>
-          + New heartbeat
+          {t("heartbeats.newHeartbeat")}
         </button>
       </div>
     </div>
@@ -357,7 +360,7 @@ export function HeartbeatsShell({
   }
 
   async function handleRunJob(job: ScheduledJob) {
-    setRunStatus((current) => ({ ...current, [job.id]: "Running..." }));
+    setRunStatus((current) => ({ ...current, [job.id]: i18n.t("common.loading") }));
     setRunOutput((current) => ({ ...current, [job.id]: "" }));
     try {
       const result = await runJob(job.id);
@@ -377,19 +380,19 @@ export function HeartbeatsShell({
               ? `Run completed, delivery issue: ${deliveryError}`
               : `Run failed, delivery issue: ${deliveryError}`
             : result.delivery?.kind === "desktop_chat" && deliveredTitle
-              ? `Delivered to chat: ${deliveredTitle}`
+              ? i18n.t("heartbeats.deliveredToChat", { title: deliveredTitle })
               : result.delivery?.kind === "desktop_chat"
-                ? "Delivered to desktop chat"
+                ? i18n.t("heartbeats.deliveredDesktop")
                 : result.ok
-                  ? "Run completed"
-                  : "Run failed",
+                  ? i18n.t("heartbeats.runCompleted")
+                  : i18n.t("heartbeats.runFailed"),
       }));
       if (output && output !== "HEARTBEAT_OK" && output !== "HEARTBEAT_SKIP") {
         setRunOutput((current) => ({ ...current, [job.id]: output }));
       }
       setJobs(await loadJobs());
     } catch {
-      setRunStatus((current) => ({ ...current, [job.id]: "Run failed" }));
+      setRunStatus((current) => ({ ...current, [job.id]: i18n.t("heartbeats.runFailed") }));
     }
   }
 
@@ -405,20 +408,20 @@ export function HeartbeatsShell({
         <div className="hb-board">
           <div className="hb-section-head">
             <div>
-              <h3>Scheduled</h3>
+              <h3>{t("heartbeats.scheduled")}</h3>
             </div>
           </div>
 
           {orderedJobs.length === 0 ? (
             <div className="hb-empty">
-              <p>No heartbeats yet.</p>
+              <p>{t("heartbeats.noHeartbeats")}</p>
               <button
                 type="button"
                 className="ghost-button"
                 style={{ marginTop: 12 }}
                 onClick={openCreateModal}
               >
-                Create your first
+                {t("heartbeats.createFirst")}
               </button>
             </div>
           ) : (
@@ -438,7 +441,7 @@ export function HeartbeatsShell({
                       </div>
                       <div className="hb-card-badges">
                         <span className={`hb-state-pill ${job.enabled ? "hb-state-pill-on" : "hb-state-pill-off"}`}>
-                          {job.enabled ? "Enabled" : "Paused"}
+                          {job.enabled ? t("heartbeats.enabled") : t("heartbeats.paused")}
                         </span>
                         {tags.map((tag) => (
                           <span key={tag} className="hb-job-tag">
@@ -450,19 +453,19 @@ export function HeartbeatsShell({
 
                     <div className="hb-card-stats">
                       <div className="hb-card-stat">
-                        <span>Schedule</span>
+                        <span>{t("heartbeats.schedule")}</span>
                         <strong>{scheduleLabel(job)}</strong>
                       </div>
                       <div className="hb-card-stat">
-                        <span>Next run</span>
+                        <span>{t("heartbeats.nextRun")}</span>
                         <strong>{nextRunLabel(job.next_run_at)}</strong>
                       </div>
                       <div className="hb-card-stat">
-                        <span>Last run</span>
+                        <span>{t("heartbeats.lastRun")}</span>
                         <strong>{lastRunLabel(job.last_run_at)}</strong>
                       </div>
                       <div className="hb-card-stat">
-                        <span>Mode</span>
+                        <span>{t("heartbeats.mode")}</span>
                         <strong>{modeLabel(policy)}</strong>
                       </div>
                     </div>
@@ -474,21 +477,21 @@ export function HeartbeatsShell({
                           className="hb-action-primary"
                           onClick={() => openEditModal(job)}
                         >
-                          Edit
+                          {t("heartbeats.edit")}
                         </button>
                         <button
                           type="button"
                           className="hb-action-secondary"
                           onClick={() => void handleToggleJob(job)}
                         >
-                          {job.enabled ? "Pause" : "Enable"}
+                          {job.enabled ? t("common.pause") : t("common.enable")}
                         </button>
                         <button
                           type="button"
                           className="hb-action-secondary"
                           onClick={() => void handleRunJob(job)}
                         >
-                          Run now
+                          {t("common.runNow")}
                         </button>
                         {policy.can_delete ? (
                           <button
@@ -512,7 +515,7 @@ export function HeartbeatsShell({
 
                     {runOutput[job.id] ? (
                       <div className="hb-run-output">
-                        <span>Latest output</span>
+                        <span>{t("heartbeats.latestOutput")}</span>
                         <p>{runOutput[job.id]}</p>
                       </div>
                     ) : null}
@@ -529,8 +532,8 @@ export function HeartbeatsShell({
           <div className="hb-modal-card hb-editor-modal-card" onClick={(event) => event.stopPropagation()}>
             <div className="hb-modal-header">
               <div>
-                <p className="eyebrow">{editorMode === "create" ? "New heartbeat" : "Edit heartbeat"}</p>
-                <h3>{editorMode === "create" ? "Create heartbeat" : editorForm.name || "Edit heartbeat"}</h3>
+                <p className="eyebrow">{editorMode === "create" ? t("heartbeats.newHeartbeatEyebrow") : t("heartbeats.editHeartbeatEyebrow")}</p>
+                <h3>{editorMode === "create" ? t("heartbeats.create") : editorForm.name || t("heartbeats.editHeartbeatEyebrow")}</h3>
               </div>
               <button type="button" className="hb-modal-close" onClick={closeEditor}>
                 x
@@ -540,7 +543,7 @@ export function HeartbeatsShell({
             <div className="hb-editor-hero">
               <div>
                 <p className="hb-editor-hero-title">
-                  {editorMode === "create" ? "Schedule a new heartbeat" : scheduleSummary(editorForm, protectedEditor)}
+                  {editorMode === "create" ? t("heartbeats.scheduleNewHeartbeat") : scheduleSummary(editorForm, protectedEditor)}
                 </p>
               </div>
               <div className="hb-editor-tag-row">
@@ -556,25 +559,25 @@ export function HeartbeatsShell({
               <div className="hb-editor-main">
                 <div className="hb-editor-panel">
                   <div className="hb-editor-panel-head">
-                    <span>Basics</span>
+                    <span>{t("heartbeats.basics")}</span>
                     <em>{modeLabel(editorPolicy)}</em>
                   </div>
                   <label className="form-field">
-                    <span>Name</span>
+                    <span>{t("heartbeats.name")}</span>
                     <input
                       value={editorForm.name}
-                      placeholder="e.g. Weekly summary"
+                      placeholder={t("heartbeats.namePlaceholder")}
                       onChange={(event) => updateEditorForm({ name: event.target.value })}
                     />
                   </label>
 
                   <label className="form-field">
-                    <span>Instructions</span>
+                    <span>{t("heartbeats.instructions")}</span>
                     <textarea
                       className="hb-editor-textarea"
                       rows={8}
                       value={editorForm.prompt}
-                      placeholder="What should this heartbeat do on each run?"
+                      placeholder={t("heartbeats.instructionsPlaceholder")}
                       onChange={(event) => updateEditorForm({ prompt: event.target.value })}
                     />
                   </label>
@@ -584,7 +587,7 @@ export function HeartbeatsShell({
               <div className="hb-editor-side">
                 <div className="hb-editor-panel">
                   <div className="hb-editor-panel-head">
-                    <span>Schedule</span>
+                    <span>{t("heartbeats.scheduleSection")}</span>
                     <em>{scheduleSummary(editorForm, protectedEditor)}</em>
                   </div>
                   <div className="hb-schedule-kind-row">
@@ -593,7 +596,7 @@ export function HeartbeatsShell({
                       className={`hb-schedule-kind${editorForm.scheduleKind === "every" || protectedEditor ? " hb-schedule-kind-active" : ""}`}
                       onClick={() => handleSelectScheduleKind("every")}
                     >
-                      Every
+                      {t("heartbeats.everyBtn")}
                     </button>
                     <button
                       type="button"
@@ -601,7 +604,7 @@ export function HeartbeatsShell({
                       onClick={() => handleSelectScheduleKind("cron")}
                       disabled={protectedEditor}
                     >
-                      Cron
+                      {t("heartbeats.cronBtn")}
                     </button>
                     <button
                       type="button"
@@ -609,19 +612,19 @@ export function HeartbeatsShell({
                       onClick={() => handleSelectScheduleKind("at")}
                       disabled={protectedEditor}
                     >
-                      Once
+                      {t("heartbeats.onceBtn")}
                     </button>
                   </div>
 
                   {protectedEditor ? (
                     <p className="hb-editor-note">
-                      Protected heartbeats use a recurring interval.
+                      {t("heartbeats.protectedNote")}
                     </p>
                   ) : null}
 
                   {(editorForm.scheduleKind === "every" || protectedEditor) ? (
                     <div className="hb-schedule-detail">
-                      <p className="hb-schedule-detail-label">Repeat interval</p>
+                      <p className="hb-schedule-detail-label">{t("heartbeats.repeatInterval")}</p>
                       <div className="hb-interval-row">
                         {INTERVAL_PRESETS.map((preset) => (
                           <button
@@ -635,7 +638,7 @@ export function HeartbeatsShell({
                         ))}
                       </div>
                       <label className="form-field">
-                        <span>Custom interval (seconds)</span>
+                        <span>{t("heartbeats.customInterval")}</span>
                         <input
                           type="number"
                           min={60}
@@ -648,12 +651,12 @@ export function HeartbeatsShell({
 
                   {editorForm.scheduleKind === "cron" && !protectedEditor ? (
                     <div className="hb-schedule-detail">
-                      <p className="hb-schedule-detail-label">Cron timing</p>
+                      <p className="hb-schedule-detail-label">{t("heartbeats.cronTiming")}</p>
                       <label className="form-field">
-                        <span>Cron expression</span>
+                        <span>{t("heartbeats.cronExpression")}</span>
                         <input
                           value={editorForm.cronExpression}
-                          placeholder="e.g. 0 9 * * 1-5"
+                          placeholder={t("heartbeats.cronPlaceholder")}
                           onChange={(event) => updateEditorForm({ cronExpression: event.target.value })}
                         />
                       </label>
@@ -662,9 +665,9 @@ export function HeartbeatsShell({
 
                   {editorForm.scheduleKind === "at" && !protectedEditor ? (
                     <div className="hb-schedule-detail">
-                      <p className="hb-schedule-detail-label">One-time timing</p>
+                      <p className="hb-schedule-detail-label">{t("heartbeats.oneTimeTiming")}</p>
                       <label className="form-field">
-                        <span>Run at</span>
+                        <span>{t("heartbeats.runAt")}</span>
                         <input
                           type="datetime-local"
                           value={editorForm.runAt}
@@ -677,8 +680,8 @@ export function HeartbeatsShell({
 
                 <div className="hb-editor-panel">
                   <div className="hb-editor-panel-head">
-                    <span>Status</span>
-                    <em>{editorForm.enabled ? "Will run on schedule" : "Paused"}</em>
+                    <span>{t("heartbeats.statusSection")}</span>
+                    <em>{editorForm.enabled ? t("heartbeats.willRunOnSchedule") : t("heartbeats.paused")}</em>
                   </div>
                   <div className="hb-segment-row">
                     <button
@@ -686,29 +689,29 @@ export function HeartbeatsShell({
                       className={`hb-interval-chip${editorForm.enabled ? " hb-interval-chip-active" : ""}`}
                       onClick={() => updateEditorForm({ enabled: true })}
                     >
-                      Enabled
+                      {t("heartbeats.enabled")}
                     </button>
                     <button
                       type="button"
                       className={`hb-interval-chip${!editorForm.enabled ? " hb-interval-chip-active" : ""}`}
                       onClick={() => updateEditorForm({ enabled: false })}
                     >
-                      Paused
+                      {t("heartbeats.paused")}
                     </button>
                   </div>
 
                   <div className="hb-editor-capability-list">
                     <div className="hb-editor-capability">
-                      <span>Workspace access</span>
-                      <strong>{editorPolicy.workspace_access === "heartbeat_md" ? "HEARTBEAT.md only" : "Disabled"}</strong>
+                      <span>{t("heartbeats.workspaceAccess")}</span>
+                      <strong>{editorPolicy.workspace_access === "heartbeat_md" ? t("heartbeats.heartbeatMdOnly") : t("common.disabled")}</strong>
                     </div>
                     <div className="hb-editor-capability">
-                      <span>Tools</span>
-                      <strong>{editorPolicy.tools_enabled ? "Available" : "Disabled"}</strong>
+                      <span>{t("heartbeats.tools")}</span>
+                      <strong>{editorPolicy.tools_enabled ? t("heartbeats.available") : t("common.disabled")}</strong>
                     </div>
                     <div className="hb-editor-capability">
-                      <span>Delivery</span>
-                      <strong>{editorPolicy.delivery_kind === "desktop_chat" ? "Desktop chat" : "No delivery"}</strong>
+                      <span>{t("heartbeats.delivery")}</span>
+                      <strong>{editorPolicy.delivery_kind === "desktop_chat" ? t("heartbeats.desktopChat") : t("heartbeats.noDelivery")}</strong>
                     </div>
                   </div>
                 </div>
@@ -719,7 +722,7 @@ export function HeartbeatsShell({
               <span />
               <div className="filter-row" style={{ justifyContent: "flex-end" }}>
                 <button type="button" className="ghost-button" onClick={closeEditor}>
-                  Cancel
+                  {t("heartbeats.cancel")}
                 </button>
                 <button
                   type="button"
@@ -727,7 +730,7 @@ export function HeartbeatsShell({
                   disabled={!editorForm.name.trim() || !editorForm.prompt.trim()}
                   onClick={() => void handleSaveEditor()}
                 >
-                  {editorMode === "create" ? "Create heartbeat" : "Save changes"}
+                  {editorMode === "create" ? t("heartbeats.create") : t("heartbeats.save")}
                 </button>
               </div>
             </div>

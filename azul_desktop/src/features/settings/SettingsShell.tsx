@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { SectionTopbarPortal } from "../../components/SectionTopbarPortal";
 import {
@@ -10,6 +11,7 @@ import {
   loadRuntime,
   resetLocalSetupData,
   saveMemorySettings,
+  saveSetupProfile,
 } from "../../lib/api";
 import { profileCanRenewAzureLogin, renewAzureLoginFromProfile } from "../../lib/azure-session";
 import {
@@ -26,6 +28,7 @@ import type {
   SetupProfile,
 } from "../../lib/contracts";
 import { defaultSetupProfile, memorySettings as defaultMemorySettings, runtimeOverview } from "../../lib/mock-data";
+import i18n from "../../lib/i18n";
 
 interface SettingsShellProps {
   headerPortalTarget?: HTMLElement | null;
@@ -53,17 +56,8 @@ const initialBackendStatus: BackendStatus = {
   logs: [],
 };
 
-const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
-  { id: "azure", label: "Azure" },
-  { id: "desktop", label: "Desktop" },
-  { id: "runtime", label: "Runtime" },
-  { id: "memory", label: "Memory" },
-  { id: "identity", label: "Identity" },
-  { id: "security", label: "Workspace & Security" },
-  { id: "data", label: "Data" },
-];
-
 export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: SettingsShellProps) {
+  const { t } = useTranslation();
   const [runtime, setRuntime] = useState<RuntimeOverview>(runtimeOverview);
   const [backendStatus, setBackendStatus] = useState<BackendStatus>(initialBackendStatus);
   const [isSaving, setIsSaving] = useState(false);
@@ -88,6 +82,19 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
   const [azureWizardOpen, setAzureWizardOpen] = useState(false);
   const [settingsWizardStep, setSettingsWizardStep] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<SettingsTab>("azure");
+  const [languageDraft, setLanguageDraft] = useState<string>("auto");
+  const [languageBusy, setLanguageBusy] = useState(false);
+  const [languageMessage, setLanguageMessage] = useState("");
+
+  const SETTINGS_TABS: Array<{ id: SettingsTab; labelKey: string }> = [
+    { id: "azure", labelKey: "settings.tabs.azure" },
+    { id: "desktop", labelKey: "settings.tabs.desktop" },
+    { id: "runtime", labelKey: "settings.tabs.runtime" },
+    { id: "memory", labelKey: "settings.tabs.memory" },
+    { id: "identity", labelKey: "settings.tabs.identity" },
+    { id: "security", labelKey: "settings.tabs.security" },
+    { id: "data", labelKey: "settings.tabs.data" },
+  ];
 
   const azureConfig = profile.skill_configs?.Azure ?? {};
   const azureAuthMethod = azureConfig.authMethod === "api_key" ? "api_key" : "entra";
@@ -101,8 +108,8 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
   const headerContent = (
     <div className="section-topbar">
       <div className="section-topbar-copy">
-        <p className="eyebrow">Settings</p>
-        <h2 className="section-topbar-title">Preferences and configuration</h2>
+        <p className="eyebrow">{t("settings.eyebrow")}</p>
+        <h2 className="section-topbar-title">{t("settings.preferencesAndConfig")}</h2>
       </div>
       <div className="section-topbar-actions filter-row">
         <span className="status-pill">{runtime.default_lane}</span>
@@ -122,6 +129,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
     setRuntime(runtimeData);
     setBackendStatus(backendData);
     setProfile(profileData);
+    setLanguageDraft(profileData.language ?? "auto");
     setMemorySettings(memoryData);
     setMemoryPathDraft(memoryData.memory_db_path_override || "");
     setDesktopShellPreferences(shellData);
@@ -144,6 +152,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
       setRuntime(runtimeData);
       setBackendStatus(backendData);
       setProfile(profileData);
+      setLanguageDraft(profileData.language ?? "auto");
       setMemorySettings(memoryData);
       setMemoryPathDraft((current) => current || memoryData.memory_db_path_override || "");
       setDesktopShellPreferences(shellData);
@@ -194,7 +203,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
       });
       setMemorySettings(saved);
       setMemoryPathDraft(saved.memory_db_path_override || "");
-      setMemorySettingsMessage(saved.reload_error ? `Saved, but reload failed: ${saved.reload_error}` : "Memory settings saved.");
+      setMemorySettingsMessage(saved.reload_error ? t("settings.memory.savedWithError", { error: saved.reload_error }) : t("settings.memory.saved"));
     } catch (error) {
       setMemorySettingsError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -215,11 +224,27 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
     try {
       const saved = await saveDesktopShellPreferences(desktopShellPreferences);
       setDesktopShellPreferences(saved);
-      setDesktopShellMessage("Desktop access settings saved.");
+      setDesktopShellMessage(t("settings.desktop.saved"));
     } catch (error) {
       setDesktopShellError(error instanceof Error ? error.message : String(error));
     } finally {
       setDesktopShellBusy(false);
+    }
+  }
+
+  async function handleSaveLanguage() {
+    setLanguageBusy(true);
+    setLanguageMessage("");
+    try {
+      const updated = await saveSetupProfile({ ...profile, language: languageDraft });
+      setProfile(updated);
+      const resolved = languageDraft !== "auto" ? languageDraft : (navigator.language ?? "").slice(0, 2).toLowerCase() === "es" ? "es" : "en";
+      await i18n.changeLanguage(resolved);
+      setLanguageMessage(t("settings.desktop.saved"));
+    } catch {
+      /* keep silent, user can retry */
+    } finally {
+      setLanguageBusy(false);
     }
   }
 
@@ -279,63 +304,61 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
             <span>AZ</span>
           </div>
           <div>
-            <p className="eyebrow">Azure</p>
-            <h3 className="settings-card-title">Azure OpenAI connection</h3>
+            <p className="eyebrow">{t("settings.azure.eyebrow")}</p>
+            <h3 className="settings-card-title">{t("settings.azure.title")}</h3>
           </div>
         </div>
 
-        <p className="settings-card-desc">
-          Re-run the same Azure connection flow used during onboarding: sign in, discover resources, choose deployments and authorize Azure OpenAI access.
-        </p>
+        <p className="settings-card-desc">{t("settings.azure.desc")}</p>
 
         <div className="runtime-kv-list">
-          <p className="runtime-kv-section-title">Azure OpenAI access</p>
+          <p className="runtime-kv-section-title">{t("settings.azure.access")}</p>
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Status</span>
+            <span className="runtime-kv-key">{t("settings.azure.status")}</span>
             <span className={`status-tag ${profile.skill_configs?.Azure?.connected === "true" ? "status-done" : "status-waiting"}`}>
               {profile.skill_configs?.Azure?.connected === "true"
                 ? azureAuthMethod === "api_key"
-                  ? "Connected with API key"
-                  : "Connected"
-                : "Not connected"}
+                  ? t("settings.azure.connectedApiKey")
+                  : t("settings.azure.connected")
+                : t("settings.azure.notConnected")}
             </span>
           </div>
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Connection mode</span>
+            <span className="runtime-kv-key">{t("settings.azure.connectionMode")}</span>
             <span className="runtime-kv-val" style={{ display: "inline-flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-              <span>{azureAuthMethod === "api_key" ? "API key" : "Microsoft Entra"}</span>
+              <span>{azureAuthMethod === "api_key" ? t("settings.azure.apiKey") : t("settings.azure.microsoftEntra")}</span>
               <span className={`hw-choice-badge ${azureAuthMethod === "api_key" ? "hw-choice-badge-fallback" : "hw-choice-badge-recommended"}`}>
-                {azureAuthMethod === "api_key" ? "Fallback" : "Recommended"}
+                {azureAuthMethod === "api_key" ? t("settings.azure.fallback") : t("settings.azure.recommended")}
               </span>
             </span>
           </div>
           {profile.skill_configs?.Azure?.endpoint && (
             <div className="runtime-kv-row">
-              <span className="runtime-kv-key">Endpoint</span>
+              <span className="runtime-kv-key">{t("settings.azure.endpoint")}</span>
               <code className="runtime-kv-code">{profile.skill_configs.Azure.endpoint}</code>
             </div>
           )}
           {profile.skill_configs?.Azure?.deployment && (
             <div className="runtime-kv-row">
-              <span className="runtime-kv-key">Main deployment</span>
+              <span className="runtime-kv-key">{t("settings.azure.mainDeployment")}</span>
               <code className="runtime-kv-code">{profile.skill_configs.Azure.deployment}</code>
             </div>
           )}
           {profile.skill_configs?.Azure?.fastDeployment && (
             <div className="runtime-kv-row">
-              <span className="runtime-kv-key">Fast deployment</span>
+              <span className="runtime-kv-key">{t("settings.azure.fastDeployment")}</span>
               <code className="runtime-kv-code">{profile.skill_configs.Azure.fastDeployment}</code>
             </div>
           )}
           {profile.skill_configs?.Azure?.embeddingDeployment && (
             <div className="runtime-kv-row">
-              <span className="runtime-kv-key">Embedding deployment</span>
+              <span className="runtime-kv-key">{t("settings.azure.embeddingDeployment")}</span>
               <code className="runtime-kv-code">{profile.skill_configs.Azure.embeddingDeployment}</code>
             </div>
           )}
           {profile.skill_configs?.Azure?.lastConnectedAt && (
             <div className="runtime-kv-row">
-              <span className="runtime-kv-key">{profile.skill_configs?.Azure?.authMethod === "api_key" ? "Last connected" : "Last authorized"}</span>
+              <span className="runtime-kv-key">{profile.skill_configs?.Azure?.authMethod === "api_key" ? t("settings.azure.lastConnected") : t("settings.azure.lastAuthorized")}</span>
               <code className="runtime-kv-code">{new Date(profile.skill_configs.Azure.lastConnectedAt).toLocaleString()}</code>
             </div>
           )}
@@ -343,10 +366,10 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
 
         {profile.skill_configs?.Azure?.authMethod !== "api_key" && (
           <div className="runtime-kv-list">
-            <p className="runtime-kv-section-title">Microsoft runtime and channels</p>
+            <p className="runtime-kv-section-title">{t("settings.azure.microsoftRuntime")}</p>
             {profile.skill_configs?.Azure?.keyVaultUrl && (
               <div className="runtime-kv-row">
-                <span className="runtime-kv-key">Key Vault</span>
+                <span className="runtime-kv-key">{t("settings.azure.keyVault")}</span>
                 <code className="runtime-kv-code">{profile.skill_configs.Azure.keyVaultUrl}</code>
               </div>
             )}
@@ -354,7 +377,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
               profile.skill_configs?.Azure?.microsoftAppPasswordSecretName ||
               profile.skill_configs?.Azure?.microsoftAppTenantIdSecretName) && (
               <div className="runtime-kv-row">
-                <span className="runtime-kv-key">Bot secrets</span>
+                <span className="runtime-kv-key">{t("settings.azure.botSecrets")}</span>
                 <code className="runtime-kv-code">
                   {[
                     profile.skill_configs.Azure.microsoftAppIdSecretName || "MicrosoftAppId",
@@ -376,7 +399,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
               setAzureWizardOpen((open) => !open);
             }}
           >
-            {azureWizardOpen ? "Close Azure setup" : "Configure Azure connection"}
+            {azureWizardOpen ? t("settings.azure.closeSetup") : t("settings.azure.configure")}
           </button>
         </div>
 
@@ -406,37 +429,35 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
             <span>UI</span>
           </div>
           <div>
-            <p className="eyebrow">Desktop shell</p>
-            <h3 className="settings-card-title">Quick access</h3>
+            <p className="eyebrow">{t("settings.desktop.eyebrow")}</p>
+            <h3 className="settings-card-title">{t("settings.desktop.title")}</h3>
           </div>
         </div>
 
-        <p className="settings-card-desc">
-          Add a Claude-style desktop access layer: tray icon, a global shortcut and optional close-to-tray behavior.
-        </p>
+        <p className="settings-card-desc">{t("settings.desktop.desc")}</p>
 
         <div className="runtime-kv-list">
-          <p className="runtime-kv-section-title">Activation</p>
+          <p className="runtime-kv-section-title">{t("settings.desktop.activation")}</p>
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Global shortcut</span>
+            <span className="runtime-kv-key">{t("settings.desktop.globalShortcut")}</span>
             <code className="runtime-kv-code">{desktopShellPreferences.global_shortcut}</code>
           </div>
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Shortcut status</span>
+            <span className="runtime-kv-key">{t("settings.desktop.shortcutStatus")}</span>
             <span className={`status-tag ${desktopShellPreferences.global_shortcut_enabled ? "status-done" : "status-waiting"}`}>
-              {desktopShellPreferences.global_shortcut_enabled ? "Enabled" : "Disabled"}
+              {desktopShellPreferences.global_shortcut_enabled ? t("common.enabled") : t("common.disabled")}
             </span>
           </div>
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Tray icon</span>
+            <span className="runtime-kv-key">{t("settings.desktop.trayIcon")}</span>
             <span className={`status-tag ${desktopShellPreferences.tray_icon_enabled ? "status-done" : "status-waiting"}`}>
-              {desktopShellPreferences.tray_icon_enabled ? "Visible" : "Hidden"}
+              {desktopShellPreferences.tray_icon_enabled ? t("settings.desktop.visible") : t("settings.desktop.hidden")}
             </span>
           </div>
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Close action</span>
+            <span className="runtime-kv-key">{t("settings.desktop.closeAction")}</span>
             <span className="runtime-kv-val">
-              {desktopShellPreferences.close_to_tray_enabled ? "Hide to tray" : "Close normally"}
+              {desktopShellPreferences.close_to_tray_enabled ? t("settings.desktop.hideToTray") : t("settings.desktop.closeNormally")}
             </span>
           </div>
         </div>
@@ -444,8 +465,8 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
         <div className="settings-shell-grid">
           <label className="settings-shell-toggle-card">
             <div>
-              <strong>Enable shortcut</strong>
-              <p>Press {desktopShellPreferences.global_shortcut} to bring AzulClaw to the front and focus chat.</p>
+              <strong>{t("settings.desktop.enableShortcut")}</strong>
+              <p>{t("settings.desktop.enableShortcutDesc", { shortcut: desktopShellPreferences.global_shortcut })}</p>
             </div>
             <input
               type="checkbox"
@@ -463,8 +484,8 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
 
           <label className="settings-shell-toggle-card">
             <div>
-              <strong>Show tray icon</strong>
-              <p>Keep AzulClaw available from the system tray with open, hide and quit actions.</p>
+              <strong>{t("settings.desktop.showTrayIcon")}</strong>
+              <p>{t("settings.desktop.showTrayIconDesc")}</p>
             </div>
             <input
               type="checkbox"
@@ -484,8 +505,8 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
 
           <label className="settings-shell-toggle-card">
             <div>
-              <strong>Close to tray</strong>
-              <p>When the window close button is pressed, hide AzulClaw instead of exiting.</p>
+              <strong>{t("settings.desktop.closeToTray")}</strong>
+              <p>{t("settings.desktop.closeToTrayDesc")}</p>
             </div>
             <input
               type="checkbox"
@@ -517,7 +538,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
             onClick={() => void handleSaveDesktopShellPreferences()}
             disabled={desktopShellBusy}
           >
-            {desktopShellBusy ? "Saving..." : "Save desktop access"}
+            {desktopShellBusy ? t("common.saving") : t("settings.desktop.save")}
           </button>
           <button
             type="button"
@@ -525,8 +546,44 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
             onClick={() => void loadDesktopShellPreferences().then(setDesktopShellPreferences)}
             disabled={desktopShellBusy}
           >
-            Reload
+            {t("common.reload")}
           </button>
+        </div>
+
+        <div className="runtime-kv-list" style={{ marginTop: "20px" }}>
+          <p className="runtime-kv-section-title">{t("settings.desktop.language")}</p>
+          <p className="hint-text">{t("settings.desktop.languageDesc")}</p>
+          <div className="settings-shell-grid" style={{ marginTop: "10px" }}>
+            {(["auto", "en", "es"] as const).map((lang) => (
+              <label key={lang} className="settings-shell-toggle-card" style={{ cursor: "pointer" }}>
+                <div>
+                  <strong>
+                    {lang === "auto" ? t("settings.desktop.languageAuto") : lang === "en" ? t("settings.desktop.languageEn") : t("settings.desktop.languageEs")}
+                  </strong>
+                </div>
+                <input
+                  type="radio"
+                  name="language"
+                  value={lang}
+                  checked={languageDraft === lang}
+                  onChange={() => { setLanguageDraft(lang); setLanguageMessage(""); }}
+                />
+              </label>
+            ))}
+          </div>
+          {languageMessage && (
+            <p className="hw-inline-note" style={{ marginTop: "10px" }}>{languageMessage}</p>
+          )}
+          <div style={{ marginTop: "12px" }}>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => void handleSaveLanguage()}
+              disabled={languageBusy}
+            >
+              {languageBusy ? t("common.saving") : t("settings.desktop.saveLanguage")}
+            </button>
+          </div>
         </div>
       </section>
     );
@@ -541,36 +598,36 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
               <span>{backendStatus.status === "running" ? "OK" : "!"}</span>
             </div>
             <div>
-              <p className="eyebrow">Backend</p>
-              <h3 className="settings-card-title">Local brain process</h3>
+              <p className="eyebrow">{t("settings.runtime.eyebrow")}</p>
+              <h3 className="settings-card-title">{t("settings.runtime.title")}</h3>
             </div>
           </div>
 
           <div className="runtime-kv-list">
             <div className="runtime-kv-row">
-              <span className="runtime-kv-key">API</span>
+              <span className="runtime-kv-key">{t("settings.runtime.api")}</span>
               <span className={`status-tag ${backendStatus.status === "running" ? "status-done" : "status-failed"}`}>
-                {backendStatus.status === "running" ? "Active" : "Offline"}
+                {backendStatus.status === "running" ? t("settings.runtime.active") : t("settings.runtime.offline")}
               </span>
             </div>
             <div className="runtime-kv-row">
-              <span className="runtime-kv-key">Base URL</span>
+              <span className="runtime-kv-key">{t("settings.runtime.baseUrl")}</span>
               <code className="runtime-kv-code">{backendStatus.api_base || "http://localhost:3978"}</code>
             </div>
             <div className="runtime-kv-row">
-              <span className="runtime-kv-key">Models</span>
+              <span className="runtime-kv-key">{t("settings.runtime.models")}</span>
               <span className={backendStatus.models_enabled > 0 ? "runtime-kv-val" : "status-tag status-waiting"}>
                 {backendStatus.models_enabled} enabled / {backendStatus.models_total} total
               </span>
             </div>
             <div className="runtime-kv-row">
-              <span className="runtime-kv-key">Scheduler</span>
+              <span className="runtime-kv-key">{t("settings.runtime.scheduler")}</span>
               <span className={`status-tag ${backendStatus.scheduler_running ? "status-done" : "status-waiting"}`}>
-                {backendStatus.scheduler_running ? "Running" : "Stopped"}
+                {backendStatus.scheduler_running ? t("settings.runtime.running") : t("settings.runtime.stopped")}
               </span>
             </div>
             <div className="runtime-kv-row">
-              <span className="runtime-kv-key">Auth</span>
+              <span className="runtime-kv-key">{t("settings.runtime.auth")}</span>
               <span
                 className={`status-tag ${
                   backendStatus.auth.status === "authenticated"
@@ -584,34 +641,34 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
               </span>
             </div>
             <div className="runtime-kv-row">
-              <span className="runtime-kv-key">Auth mode</span>
+              <span className="runtime-kv-key">{t("settings.runtime.authMode")}</span>
               <span className="runtime-kv-val">{backendStatus.auth.mode}</span>
             </div>
             <div className="runtime-kv-row">
-              <span className="runtime-kv-key">Auth detail</span>
+              <span className="runtime-kv-key">{t("settings.runtime.authDetail")}</span>
               <span className="runtime-kv-val">{backendStatus.auth.detail}</span>
             </div>
             {backendStatus.auth.last_success_at && (
               <div className="runtime-kv-row">
-                <span className="runtime-kv-key">Last sign-in</span>
+                <span className="runtime-kv-key">{t("settings.runtime.lastSignIn")}</span>
                 <code className="runtime-kv-code">{backendStatus.auth.last_success_at}</code>
               </div>
             )}
             {backendStatus.auth.last_error && (
               <div className="runtime-kv-row">
-                <span className="runtime-kv-key">Auth error</span>
+                <span className="runtime-kv-key">{t("settings.runtime.authError")}</span>
                 <code className="runtime-kv-code">{backendStatus.auth.last_error}</code>
               </div>
             )}
             {backendStatus.runtime_dir && (
               <div className="runtime-kv-row">
-                <span className="runtime-kv-key">Runtime dir</span>
+                <span className="runtime-kv-key">{t("settings.runtime.runtimeDir")}</span>
                 <code className="runtime-kv-code">{backendStatus.runtime_dir}</code>
               </div>
             )}
             {backendStatus.log_dir && (
               <div className="runtime-kv-row">
-                <span className="runtime-kv-key">Log dir</span>
+                <span className="runtime-kv-key">{t("settings.runtime.logDir")}</span>
                 <code className="runtime-kv-code">{backendStatus.log_dir}</code>
               </div>
             )}
@@ -619,29 +676,29 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
 
           {backendStatus.status === "running" && backendStatus.models_enabled === 0 && (
             <p className="hw-inline-note hw-inline-note-warning" style={{ marginTop: "12px" }}>
-              Backend is running, but no model profile is enabled. Chat will answer with the runtime configuration warning until a provider is configured.
+              {t("settings.runtime.noModelsWarning")}
             </p>
           )}
           {backendStatus.status === "offline" && (
             <p className="hw-inline-note hw-inline-note-warning" style={{ marginTop: "12px" }}>
-              The desktop UI cannot reach the backend. Check the packaged app logs or rebuild the installer after backend changes.
+              {t("settings.runtime.offlineWarning")}
             </p>
           )}
 
           <div className="settings-card-footer" style={{ gap: "10px", justifyContent: "flex-start" }}>
             <button type="button" className="ghost-button" onClick={() => void loadBackendStatus().then(setBackendStatus)}>
-              Refresh status
+              {t("settings.runtime.refreshStatus")}
             </button>
             <button type="button" className="ghost-button" onClick={() => void handleEnsureAuth()} disabled={authBusy}>
-              {authBusy ? "Authenticating..." : "Authenticate now"}
+              {authBusy ? t("settings.runtime.authenticating") : t("settings.runtime.authenticateNow")}
             </button>
             <button type="button" className="ghost-button" onClick={handleCopyLogs}>
-              {logsCopied ? "Logs copied" : "Copy logs"}
+              {logsCopied ? t("settings.runtime.logsCopied") : t("settings.runtime.copyLogs")}
             </button>
           </div>
           {authError && (
             <p className="hw-inline-note hw-inline-note-warning" style={{ marginTop: "12px" }}>
-              Authentication failed: {authError}
+              {t("settings.runtime.authFailed", { error: authError })}
             </p>
           )}
 
@@ -650,10 +707,10 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
               {backendStatus.logs.map((log) => (
                 <details key={log.name}>
                   <summary className="runtime-kv-key">
-                    {log.name} {log.exists ? "" : "(missing)"}
+                    {log.name} {log.exists ? "" : t("settings.runtime.missing")}
                   </summary>
                   <pre className="error-code" style={{ marginTop: "8px", maxHeight: "220px", overflow: "auto", whiteSpace: "pre-wrap" }}>
-                    {log.content || "No log content."}
+                    {log.content || t("settings.runtime.noLogContent")}
                   </pre>
                 </details>
               ))}
@@ -667,47 +724,45 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
               <span>⬡</span>
             </div>
             <div>
-              <p className="eyebrow">Models</p>
-              <h3 className="settings-card-title">Providers</h3>
+              <p className="eyebrow">{t("settings.runtime.modelsEyebrow")}</p>
+              <h3 className="settings-card-title">{t("settings.runtime.modelsTitle")}</h3>
             </div>
           </div>
 
-          <p className="settings-card-desc">
-            Configure AI providers, deployments and fallback strategy for fast and slow lanes.
-          </p>
+          <p className="settings-card-desc">{t("settings.runtime.modelsDesc")}</p>
 
           <div className="runtime-kv-list">
             <div className="runtime-kv-row">
-              <span className="runtime-kv-key">Fast lane</span>
-              <code className="runtime-kv-code">{fastModel?.deployment || azureConfig.fastDeployment || "Not configured"}</code>
+              <span className="runtime-kv-key">{t("settings.runtime.fastLane")}</span>
+              <code className="runtime-kv-code">{fastModel?.deployment || azureConfig.fastDeployment || t("common.notConfigured")}</code>
             </div>
             <div className="runtime-kv-row">
-              <span className="runtime-kv-key">Slow lane</span>
-              <code className="runtime-kv-code">{slowModel?.deployment || azureConfig.deployment || "Not configured"}</code>
+              <span className="runtime-kv-key">{t("settings.runtime.slowLane")}</span>
+              <code className="runtime-kv-code">{slowModel?.deployment || azureConfig.deployment || t("common.notConfigured")}</code>
             </div>
             <div className="runtime-kv-row">
-              <span className="runtime-kv-key">Provider</span>
+              <span className="runtime-kv-key">{t("settings.runtime.provider")}</span>
               <span className="runtime-kv-val">{providerLabel}</span>
             </div>
             <div className="runtime-kv-row">
-              <span className="runtime-kv-key">Embedding</span>
-              <code className="runtime-kv-code">{azureConfig.embeddingDeployment || "Not configured"}</code>
+              <span className="runtime-kv-key">{t("settings.runtime.embedding")}</span>
+              <code className="runtime-kv-code">{azureConfig.embeddingDeployment || t("common.notConfigured")}</code>
             </div>
             <div className="runtime-kv-row">
-              <span className="runtime-kv-key">Default lane</span>
+              <span className="runtime-kv-key">{t("settings.runtime.defaultLane")}</span>
               <code className="runtime-kv-code">{runtime.default_lane}</code>
             </div>
             <div className="runtime-kv-row">
-              <span className="runtime-kv-key">Streaming</span>
+              <span className="runtime-kv-key">{t("settings.runtime.streaming")}</span>
               <span className="runtime-kv-val">
-                {runtime.models.filter((model) => model.streaming_enabled).map((model) => model.label).join(", ") || "Disabled"}
+                {runtime.models.filter((model) => model.streaming_enabled).map((model) => model.label).join(", ") || t("settings.runtime.streamingDisabled")}
               </span>
             </div>
           </div>
 
           <div className="settings-card-footer">
             <button type="button" className="skill-action-btn" onClick={openAzureWizard}>
-              Configure Azure models
+              {t("settings.runtime.configureAzure")}
             </button>
           </div>
         </section>
@@ -723,35 +778,33 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
             <span>DB</span>
           </div>
           <div>
-            <p className="eyebrow">Memory</p>
-            <h3 className="settings-card-title">Storage and retrieval</h3>
+            <p className="eyebrow">{t("settings.memory.eyebrow")}</p>
+            <h3 className="settings-card-title">{t("settings.memory.title")}</h3>
           </div>
         </div>
 
-        <p className="settings-card-desc">
-          Persistent memory uses a SQLite database under the workspace by default. Override it only when you want to keep memory in a different local folder.
-        </p>
+        <p className="settings-card-desc">{t("settings.memory.desc")}</p>
 
         <div className="runtime-kv-list">
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Active database</span>
+            <span className="runtime-kv-key">{t("settings.memory.activeDatabase")}</span>
             <code className="runtime-kv-code">{memorySettings.memory_db_path}</code>
           </div>
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Default database</span>
+            <span className="runtime-kv-key">{t("settings.memory.defaultDatabase")}</span>
             <code className="runtime-kv-code">{memorySettings.default_memory_db_path}</code>
           </div>
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Vector memory</span>
+            <span className="runtime-kv-key">{t("settings.memory.vectorMemory")}</span>
             <span className={`status-tag ${memorySettings.vector_memory_enabled ? "status-done" : "status-waiting"}`}>
-              {memorySettings.vector_memory_enabled ? "Enabled" : "Disabled"}
+              {memorySettings.vector_memory_enabled ? t("common.enabled") : t("common.disabled")}
             </span>
           </div>
         </div>
 
         <div style={{ display: "grid", gap: "12px", marginTop: "14px" }}>
           <label className="hw-modal-field">
-            <span className="hw-field-label">Memory database override</span>
+            <span className="hw-field-label">{t("settings.memory.dbOverride")}</span>
             <input
               className="hw-modal-input hw-input-mono"
               type="text"
@@ -763,7 +816,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
                 setMemorySettingsError("");
               }}
             />
-            <span className="hw-inline-note">Leave empty to use the workspace default.</span>
+            <span className="hw-inline-note">{t("settings.memory.dbOverrideNote")}</span>
           </label>
 
           <label className="toggle-row runtime-toggle" style={{ marginTop: 0 }}>
@@ -776,7 +829,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
                 setMemorySettingsError("");
               }}
             />
-            Semantic memory retrieval
+            {t("settings.memory.semanticRetrieval")}
           </label>
         </div>
 
@@ -789,10 +842,10 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
 
         <div className="settings-card-footer" style={{ gap: "10px", justifyContent: "flex-start" }}>
           <button type="button" className="primary-button" onClick={() => void handleSaveMemorySettings()} disabled={memorySettingsBusy}>
-            {memorySettingsBusy ? "Saving..." : "Save memory settings"}
+            {memorySettingsBusy ? t("common.saving") : t("settings.memory.save")}
           </button>
           <button type="button" className="ghost-button" onClick={handleResetMemoryPath} disabled={memorySettingsBusy}>
-            Use workspace default
+            {t("settings.memory.useDefault")}
           </button>
         </div>
       </section>
@@ -807,41 +860,39 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
             <span>✦</span>
           </div>
           <div>
-            <p className="eyebrow">Identity</p>
-            <h3 className="settings-card-title">Personality</h3>
+            <p className="eyebrow">{t("settings.identity.eyebrow")}</p>
+            <h3 className="settings-card-title">{t("settings.identity.title")}</h3>
           </div>
         </div>
 
-        <p className="settings-card-desc">
-          Configure how AzulClaw presents itself - its name, tone, style and base role.
-        </p>
+        <p className="settings-card-desc">{t("settings.identity.desc")}</p>
 
         <div className="runtime-kv-list">
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Name</span>
-            <span className="runtime-kv-val">{profile.name || "Not configured"}</span>
+            <span className="runtime-kv-key">{t("settings.identity.name")}</span>
+            <span className="runtime-kv-val">{profile.name || t("common.notConfigured")}</span>
           </div>
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Archetype</span>
-            <span className="runtime-kv-val">{profile.archetype || "Not configured"}</span>
+            <span className="runtime-kv-key">{t("settings.identity.archetype")}</span>
+            <span className="runtime-kv-val">{profile.archetype || t("common.notConfigured")}</span>
           </div>
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Tone</span>
-            <span className="runtime-kv-val">{profile.tone || "Not configured"}</span>
+            <span className="runtime-kv-key">{t("settings.identity.tone")}</span>
+            <span className="runtime-kv-val">{profile.tone || t("common.notConfigured")}</span>
           </div>
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Style</span>
-            <span className="runtime-kv-val">{profile.style || "Not configured"}</span>
+            <span className="runtime-kv-key">{t("settings.identity.style")}</span>
+            <span className="runtime-kv-val">{profile.style || t("common.notConfigured")}</span>
           </div>
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Autonomy</span>
-            <span className="runtime-kv-val">{profile.autonomy || "Not configured"}</span>
+            <span className="runtime-kv-key">{t("settings.identity.autonomy")}</span>
+            <span className="runtime-kv-val">{profile.autonomy || t("common.notConfigured")}</span>
           </div>
         </div>
 
         <div className="settings-card-footer">
           <button type="button" className="skill-action-btn" onClick={() => setSettingsWizardStep(0)}>
-            Edit identity
+            {t("settings.identity.editIdentity")}
           </button>
         </div>
       </section>
@@ -856,45 +907,43 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
             <span>◈</span>
           </div>
           <div>
-            <p className="eyebrow">Security</p>
-            <h3 className="settings-card-title">Workspace and approvals</h3>
+            <p className="eyebrow">{t("settings.security.eyebrow")}</p>
+            <h3 className="settings-card-title">{t("settings.security.title")}</h3>
           </div>
         </div>
 
-        <p className="settings-card-desc">
-          Manage confirmation boundaries, workspace location and the local guardrails around file and tool access.
-        </p>
+        <p className="settings-card-desc">{t("settings.security.desc")}</p>
 
         <div className="runtime-kv-list">
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Confirm sensitive</span>
+            <span className="runtime-kv-key">{t("settings.security.confirmSensitive")}</span>
             <span className={`status-tag ${profile.confirm_sensitive_actions ? "status-done" : "status-waiting"}`}>
-              {profile.confirm_sensitive_actions ? "Enabled" : "Disabled"}
+              {profile.confirm_sensitive_actions ? t("common.enabled") : t("common.disabled")}
             </span>
           </div>
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Workspace</span>
-            <code className="runtime-kv-code">{profile.workspace_root || "Not configured"}</code>
+            <span className="runtime-kv-key">{t("settings.security.workspace")}</span>
+            <code className="runtime-kv-code">{profile.workspace_root || t("common.notConfigured")}</code>
           </div>
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Path escaping</span>
-            <span className="status-tag status-done">Blocked</span>
+            <span className="runtime-kv-key">{t("settings.security.pathEscaping")}</span>
+            <span className="status-tag status-done">{t("settings.security.blocked")}</span>
           </div>
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Destructive ops</span>
-            <span className="status-tag status-done">Guarded</span>
+            <span className="runtime-kv-key">{t("settings.security.destructiveOps")}</span>
+            <span className="status-tag status-done">{t("settings.security.guarded")}</span>
           </div>
           <div className="runtime-kv-row">
-            <span className="runtime-kv-key">Credentials</span>
+            <span className="runtime-kv-key">{t("settings.security.credentials")}</span>
             <span className={`status-tag ${azureConfig.connected === "true" ? "status-done" : "status-waiting"}`}>
-              {azureConfig.connected === "true" ? "Azure connected" : "Needs Azure"}
+              {azureConfig.connected === "true" ? t("settings.security.azureConnected") : t("settings.security.needsAzure")}
             </span>
           </div>
         </div>
 
         <div className="settings-card-footer">
           <button type="button" className="skill-action-btn" onClick={() => setSettingsWizardStep(7)}>
-            Review workspace and approvals
+            {t("settings.security.review")}
           </button>
         </div>
       </section>
@@ -907,12 +956,9 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
     }
     return (
       <section className="subcard settings-card panel-tab-panel" style={{ borderColor: "var(--danger, #b42318)" }}>
-        <p className="eyebrow" style={{ color: "var(--danger, #b42318)" }}>Data &amp; Hatching</p>
-        <h3 className="settings-card-title">Erase local AzulClaw data</h3>
-        <p className="settings-card-desc">
-          Removes the SQLite memory database and resets your profile setup. You will go through Hatching again.
-          Restart the brain process afterward so memory reopens cleanly.
-        </p>
+        <p className="eyebrow" style={{ color: "var(--danger, #b42318)" }}>{t("settings.data.eyebrow")}</p>
+        <h3 className="settings-card-title">{t("settings.data.title")}</h3>
+        <p className="settings-card-desc">{t("settings.data.desc")}</p>
         <div className="settings-card-footer" style={{ justifyContent: "flex-start" }}>
           <button
             type="button"
@@ -920,7 +966,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
             style={{ background: "var(--danger, #b42318)", borderColor: "var(--danger, #b42318)" }}
             onClick={openWipeModal}
           >
-            Erase data and reset Hatching
+            {t("settings.data.erase")}
           </button>
         </div>
       </section>
@@ -936,7 +982,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
         {headerContent}
       </SectionTopbarPortal>
       <div className="card panel-stack">
-        <div className="panel-tabs" role="tablist" aria-label="Settings categories">
+        <div className="panel-tabs" role="tablist" aria-label={t("settings.categories")}>
           {SETTINGS_TABS.map((tab) => (
             <button
               key={tab.id}
@@ -946,7 +992,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
               className={`panel-tab${activeTab === tab.id ? " panel-tab-active" : ""}`}
               onClick={() => setActiveTab(tab.id)}
             >
-              {tab.label}
+              {t(tab.labelKey)}
             </button>
           ))}
         </div>
@@ -963,11 +1009,11 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
           <section className="subcard settings-card">
             <div className="settings-card-header">
               <div>
-                <p className="eyebrow">Edit profile</p>
-                <h3 className="settings-card-title">Profile setup</h3>
+                <p className="eyebrow">{t("settings.profile.eyebrow")}</p>
+                <h3 className="settings-card-title">{t("settings.profile.title")}</h3>
               </div>
               <button type="button" className="ghost-button" onClick={() => setSettingsWizardStep(null)}>
-                Close
+                {t("settings.profile.close")}
               </button>
             </div>
             <div className="settings-azure-wizard">
@@ -996,14 +1042,14 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
             >
               <div className="hw-modal-head">
                 <div>
-                  <p className="hw-label" style={{ color: "var(--danger, #b42318)" }}>DESTRUCTIVE ACTION</p>
-                  <h3 className="hw-modal-title">Confirm data erasure</h3>
+                  <p className="hw-label" style={{ color: "var(--danger, #b42318)" }}>{t("settings.data.modal.label")}</p>
+                  <h3 className="hw-modal-title">{t("settings.data.modal.title")}</h3>
                 </div>
-                <button type="button" className="hw-btn-ghost" onClick={closeWipeModal} disabled={wipeBusy}>Close</button>
+                <button type="button" className="hw-btn-ghost" onClick={closeWipeModal} disabled={wipeBusy}>{t("settings.data.modal.cancel")}</button>
               </div>
 
               <p className="hw-inline-note" style={{ marginBottom: "16px" }}>
-                This will permanently delete all memory and reset your profile. To confirm, copy and type the phrase below.
+                {t("settings.data.modal.desc")}
               </p>
 
               <div style={{ display: "flex", alignItems: "center", gap: "10px", background: "var(--surface-2, #1e1e2e)", borderRadius: "6px", padding: "10px 14px", marginBottom: "16px" }}>
@@ -1011,17 +1057,17 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
                   {DATA_WIPE_CONFIRM_PHRASE}
                 </code>
                 <button type="button" className="ghost-button" style={{ flexShrink: 0 }} onClick={handleCopyPhrase}>
-                  {wipeCopied ? "Copied" : "Copy"}
+                  {wipeCopied ? t("settings.data.modal.copied") : t("settings.data.modal.copy")}
                 </button>
               </div>
 
               <label className="hw-modal-field">
-                <span className="hw-field-label">Type the phrase to confirm</span>
+                <span className="hw-field-label">{t("settings.data.modal.typePhrase")}</span>
                 <input
                   className="hw-modal-input hw-input-mono"
                   type="text"
                   autoComplete="off"
-                  placeholder="Paste or type here..."
+                  placeholder={t("settings.data.modal.placeholder")}
                   value={wipePhrase}
                   onChange={(e) => setWipePhrase(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && !wipeBusy) void handleWipeLocalData(); }}
@@ -1034,7 +1080,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
               )}
 
               <div className="hw-modal-actions" style={{ marginTop: "16px" }}>
-                <button type="button" className="hw-btn-ghost" onClick={closeWipeModal} disabled={wipeBusy}>Cancel</button>
+                <button type="button" className="hw-btn-ghost" onClick={closeWipeModal} disabled={wipeBusy}>{t("settings.data.modal.cancel")}</button>
                 <button
                   type="button"
                   className="hw-btn-primary"
@@ -1042,7 +1088,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
                   disabled={wipeBusy || wipePhrase.trim() !== DATA_WIPE_CONFIRM_PHRASE}
                   onClick={() => void handleWipeLocalData()}
                 >
-                  {wipeBusy ? "Wiping..." : "Erase everything"}
+                  {wipeBusy ? t("settings.data.modal.wiping") : t("settings.data.modal.wipe")}
                 </button>
               </div>
             </section>
@@ -1050,7 +1096,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
         )}
 
         <div className="panel-footer">
-          <p className="hint-text">Heartbeat and scheduled job settings live in the Heartbeats view.</p>
+          <p className="hint-text">{t("settings.footer")}</p>
           <button
             type="button"
             className="ghost-button"
@@ -1060,7 +1106,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
               void refreshSettings().finally(() => setIsSaving(false));
             }}
           >
-            {isSaving ? "Refreshing..." : "Refresh settings"}
+            {isSaving ? t("common.refreshing") : t("settings.refreshSettings")}
           </button>
         </div>
       </div>

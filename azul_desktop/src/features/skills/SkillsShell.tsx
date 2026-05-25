@@ -1,49 +1,41 @@
+import { useTranslation } from "react-i18next";
+
 import { SectionTopbarPortal } from "../../components/SectionTopbarPortal";
 
-const skills = [
-  {
-    name: "Email",
-    risk: "moderate",
-    riskClass: "status-waiting",
-    description: "Read and draft emails from a connected account.",
-    configured: false,
-  },
-  {
-    name: "Telegram",
-    risk: "moderate",
-    riskClass: "status-waiting",
-    description: "Send notifications and operate through a bot.",
-    configured: false,
-  },
-  {
-    name: "Workspace",
-    risk: "safe",
-    riskClass: "status-done",
-    description: "Read, write and organise files within the sandbox.",
-    configured: true,
-  },
-  {
-    name: "Terminal",
-    risk: "sensitive",
-    riskClass: "status-failed",
-    description: "Execute controlled local actions — requires confirmation.",
-    configured: false,
-  },
-];
+const SKILL_NAMES = ["Email", "Telegram", "Workspace", "Terminal"] as const;
+const SKILL_RISK: Record<string, string> = {
+  Email: "moderate",
+  Telegram: "moderate",
+  Workspace: "safe",
+  Terminal: "sensitive",
+};
+const SKILL_RISK_CLASS: Record<string, string> = {
+  moderate: "status-waiting",
+  safe: "status-done",
+  sensitive: "status-failed",
+};
+const SKILL_CONFIGURED: Record<string, boolean> = {
+  Email: false,
+  Telegram: false,
+  Workspace: true,
+  Terminal: false,
+};
 
 export function SkillsShell({
   headerPortalTarget = null,
 }: {
   headerPortalTarget?: HTMLElement | null;
 }) {
+  const { t } = useTranslation();
+
   const headerContent = (
     <div className="section-topbar">
       <div className="section-topbar-copy">
-        <p className="eyebrow">Skills</p>
-        <h2 className="section-topbar-title">Agent capabilities</h2>
+        <p className="eyebrow">{t("skills.eyebrow")}</p>
+        <h2 className="section-topbar-title">{t("skills.agentCapabilities")}</h2>
       </div>
       <div className="section-topbar-actions">
-        <button type="button" className="primary-button">Add skill</button>
+        <button type="button" className="primary-button">{t("skills.addSkill")}</button>
       </div>
     </div>
   );
@@ -58,21 +50,26 @@ export function SkillsShell({
       </SectionTopbarPortal>
       <div className="card panel-stack">
         <div className="skill-grid">
-          {skills.map((skill) => (
-            <article key={skill.name} className={`subcard skill-card${skill.configured ? " skill-card-configured" : ""}`}>
-              <div className="skill-card-top">
-                <span className={`status-tag ${skill.riskClass}`}>{skill.risk}</span>
-                {skill.configured ? <span className="skill-badge-active">Active</span> : null}
-              </div>
-              <h3 className="skill-card-name">{skill.name}</h3>
-              <p className="skill-card-desc">{skill.description}</p>
-              <div className="skill-card-action">
-                <button type="button" className="skill-action-btn">
-                  {skill.configured ? "Reconfigure" : "Configure"} →
-                </button>
-              </div>
-            </article>
-          ))}
+          {SKILL_NAMES.map((name) => {
+            const risk = SKILL_RISK[name];
+            const riskClass = SKILL_RISK_CLASS[risk];
+            const configured = SKILL_CONFIGURED[name];
+            return (
+              <article key={name} className={`subcard skill-card${configured ? " skill-card-configured" : ""}`}>
+                <div className="skill-card-top">
+                  <span className={`status-tag ${riskClass}`}>{t(`skills.risk.${risk}`)}</span>
+                  {configured ? <span className="skill-badge-active">{t("common.active")}</span> : null}
+                </div>
+                <h3 className="skill-card-name">{name}</h3>
+                <p className="skill-card-desc">{t(`skills.descriptions.${name}`)}</p>
+                <div className="skill-card-action">
+                  <button type="button" className="skill-action-btn">
+                    {configured ? t("common.reconfigure") : t("common.configure")} →
+                  </button>
+                </div>
+              </article>
+            );
+          })}
         </div>
       </div>
     </section>

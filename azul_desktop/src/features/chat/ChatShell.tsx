@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   deleteDraftAttachment,
@@ -18,6 +19,7 @@ import type { AttachmentSummary, ChatExchange, ConversationSummary, ThinkingProg
 import { isTauri } from "@tauri-apps/api/core";
 import { listen, TauriEvent } from "@tauri-apps/api/event";
 import { MessageContent } from "./MessageContent";
+import i18n from "../../lib/i18n";
 
 type ChatMessageItem = ChatExchange & {
   kind: "text" | "thinking" | "pending";
@@ -46,8 +48,7 @@ function createWelcomeMessage(): ChatMessageItem {
   return {
     id: WELCOME_MESSAGE_ID,
     role: "assistant",
-    content:
-      "Hey there! I'm glad you're here. Tell me what you're working on, or ask me anything — I'm all ears. How can I help today?",
+    content: i18n.t("chat.welcomeMessage"),
     created_at: new Date().toISOString(),
     kind: "text",
   };
@@ -115,25 +116,25 @@ function attachmentPreviewUrl(attachment: AttachmentSummary): string {
 
 function attachmentStatusLabel(attachment: AttachmentSummary): string {
   if (attachment.extraction_status === "low_text_quality") {
-    return "Visual analysis";
+    return i18n.t("chat.attachmentVisualAnalysis");
   }
   if (attachment.kind === "image") {
-    return "Image";
+    return i18n.t("chat.attachmentImage");
   }
   if (attachment.page_count > 1) {
-    return `${attachment.page_count} pages`;
+    return i18n.t("chat.attachmentPages", { count: attachment.page_count });
   }
-  return attachment.kind === "text" ? "Text" : "Document";
+  return attachment.kind === "text" ? i18n.t("chat.attachmentText") : i18n.t("chat.attachmentDocument");
 }
 
 function phaseStatusLabel(status: "pending" | "active" | "done") {
   if (status === "done") {
-    return "Done";
+    return i18n.t("chat.phaseStatusDone");
   }
   if (status === "active") {
-    return "In progress";
+    return i18n.t("chat.phaseStatusActive");
   }
-  return "Pending";
+  return i18n.t("chat.phaseStatusPending");
 }
 
 function parseHeartbeatConfirmation(content: string): HeartbeatConfirmationDetails | null {
@@ -173,24 +174,25 @@ function HeartbeatConfirmationCard({
   onCreate: () => void;
   onCancel: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <article className="message-bubble message-assistant message-heartbeat-card">
-      <span className="message-role">AzulClaw</span>
+      <span className="message-role">{t("chat.assistant")}</span>
       <div className="heartbeat-confirm-card">
         <div className="heartbeat-confirm-head">
           <div>
-            <p className="heartbeat-confirm-eyebrow">Heartbeat draft</p>
+            <p className="heartbeat-confirm-eyebrow">{t("chat.heartbeatDraft")}</p>
             <h3>{details.name}</h3>
           </div>
           <span className="heartbeat-confirm-schedule">{details.schedule}</span>
         </div>
         <div className="heartbeat-confirm-body">
           <div>
-            <span>Action</span>
+            <span>{t("chat.heartbeatAction")}</span>
             <p>{details.action}</p>
           </div>
           <div>
-            <span>Delivery</span>
+            <span>{t("chat.heartbeatDelivery")}</span>
             <p>{details.delivery}</p>
           </div>
         </div>
@@ -201,7 +203,7 @@ function HeartbeatConfirmationCard({
             onClick={onCancel}
             disabled={disabled}
           >
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -209,7 +211,7 @@ function HeartbeatConfirmationCard({
             onClick={onCreate}
             disabled={disabled}
           >
-            Create heartbeat
+            {t("heartbeats.create")}
           </button>
         </div>
       </div>
@@ -218,6 +220,7 @@ function HeartbeatConfirmationCard({
 }
 
 function ThinkingCard({ message }: { message: ChatMessageItem }) {
+  const { t } = useTranslation();
   const progress = message.progress;
   const [expanded, setExpanded] = useState(true);
   const [openPhases, setOpenPhases] = useState<string[]>(() =>
@@ -245,14 +248,14 @@ function ThinkingCard({ message }: { message: ChatMessageItem }) {
 
   const statusText =
     progress.active_count > 0
-      ? `${progress.active_count} open subtasks`
-      : "process complete";
+      ? t("chat.openSubtasks", { count: progress.active_count })
+      : t("chat.processComplete");
 
   return (
     <article className="message-bubble message-assistant message-thinking">
       <div className="thinking-card">
         <div className="thinking-topline">
-          <span className="message-role">AzulClaw</span>
+          <span className="message-role">{t("chat.assistant")}</span>
           <span className="thinking-badge">{progress.badge}</span>
         </div>
 
@@ -266,7 +269,7 @@ function ThinkingCard({ message }: { message: ChatMessageItem }) {
             className="thinking-toggle"
             onClick={() => setExpanded((current) => !current)}
           >
-            {expanded ? "Hide" : "Expand"}
+            {expanded ? t("chat.hide") : t("chat.expand")}
           </button>
         </div>
 
@@ -432,6 +435,7 @@ export function ChatShell({
   unreadByConversationId?: Record<string, boolean>;
   externalConversationRequest?: { conversationId: string; title: string; nonce: number } | null;
 }) {
+  const { t } = useTranslation();
   const [messages, setMessages] = useState<ChatMessageItem[]>([]);
   const [draft, setDraft] = useState("");
   const [draftAttachments, setDraftAttachments] = useState<AttachmentSummary[]>([]);
@@ -1186,8 +1190,8 @@ export function ChatShell({
   const hasUserMessage = messages.some((m) => m.role === "user");
   const isSearchingConversations = conversationSearch.trim().length > 0;
   const searchSummary = isSearchingConversations
-    ? `${conversationRows.length} result${conversationRows.length === 1 ? "" : "s"}`
-    : `${recentChats.length} saved`;
+    ? `${conversationRows.length} ${conversationRows.length === 1 ? t("chat.result") : t("chat.results")}`
+    : `${recentChats.length} ${t("chat.saved")}`;
 
   return (
     <section className={`chat-layout${isConversationPanelCollapsed ? " chat-layout-sidebar-collapsed" : ""}`}>
@@ -1258,7 +1262,7 @@ export function ChatShell({
               >
                 <div className="message-meta">
                   <span className="message-role">
-                    {message.role === "user" ? "You" : "AzulClaw"}
+                    {message.role === "user" ? t("chat.you") : t("chat.assistant")}
                   </span>
                   {formatMessageTimestamp(message.created_at) ? (
                     <time className="message-timestamp" dateTime={message.created_at}>
@@ -1292,10 +1296,10 @@ export function ChatShell({
             />
             <AttachmentList attachments={draftAttachments} onRemove={(attachmentId) => void handleRemoveDraftAttachment(attachmentId)} />
             <label className="composer-field">
-              <span className="sr-only">Message AzulClaw</span>
+              <span className="sr-only">{t("chat.messageAzulClaw")}</span>
               <textarea
                 ref={composerInputRef}
-                placeholder="Type a message... (Enter to send, Shift+Enter for new line)"
+                placeholder={t("chat.typeMessage")}
                 rows={1}
                 value={draft}
                 onChange={(event) => {
@@ -1315,12 +1319,12 @@ export function ChatShell({
                 <button
                   type="button"
                   className="ghost-button-mini"
-                  title="Attach a local file"
-                  aria-label="Attach file"
+                  title={t("chat.attachFile")}
+                  aria-label={t("chat.attachFileLabel")}
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isSending || isUploadingAttachments}
                 >
-                  {isUploadingAttachments ? "Adding..." : "File"}
+                  {isUploadingAttachments ? t("chat.addingFile") : t("chat.file")}
                 </button>
               </div>
               <button
@@ -1330,12 +1334,12 @@ export function ChatShell({
                 disabled={isSending || isUploadingAttachments || (!draft.trim() && draftAttachments.length === 0)}
                 aria-busy={isSending}
               >
-                Send
+                {t("chat.send")}
               </button>
             </div>
           </div>
           <div className="composer-footer">
-            <span className="hint-text">AzulClaw can make mistakes. Consider verifying important information.</span>
+            <span className="hint-text">{t("chat.disclaimer")}</span>
           </div>
         </div>
       </div>
@@ -1343,7 +1347,7 @@ export function ChatShell({
       <aside className={`context-panel card${isConversationPanelCollapsed ? " context-panel-collapsed" : ""}`}>
         <div className="context-panel-header">
           <div className="context-panel-header-copy">
-            <p className="eyebrow context-panel-title-eyebrow">Conversations</p>
+            <p className="eyebrow context-panel-title-eyebrow">{t("chat.conversations")}</p>
             {!isConversationPanelCollapsed ? (
               <span className="context-panel-title-meta">{searchSummary}</span>
             ) : null}
@@ -1351,9 +1355,9 @@ export function ChatShell({
           <button
             type="button"
             className={`context-panel-toggle${isConversationPanelCollapsed ? " context-panel-toggle-collapsed" : ""}`}
-            aria-label={isConversationPanelCollapsed ? "Expand conversations panel" : "Collapse conversations panel"}
+            aria-label={isConversationPanelCollapsed ? t("chat.expandConversations") : t("chat.collapseConversations")}
             aria-expanded={!isConversationPanelCollapsed}
-            title={isConversationPanelCollapsed ? "Expand conversations" : "Collapse conversations"}
+            title={isConversationPanelCollapsed ? t("chat.expandConversationsTitle") : t("chat.collapseConversationsTitle")}
             onClick={() => setIsConversationPanelCollapsed((current) => !current)}
           >
             <span
@@ -1367,13 +1371,13 @@ export function ChatShell({
           <div className="context-panel-collapsed-body">
             <div className="context-panel-collapsed-tally" aria-hidden="true">
               <span className="context-panel-collapsed-count">{conversationRows.length}</span>
-              <span className="context-panel-collapsed-label">chats</span>
+              <span className="context-panel-collapsed-label">{t("chat.chats")}</span>
             </div>
             <button
               type="button"
               className="context-panel-collapsed-new"
-              title="New conversation"
-              aria-label="New conversation"
+              title={t("chat.newConversation")}
+              aria-label={t("chat.newConversation")}
               disabled={onlyWelcomeGreeting || messages.length === 0}
               onClick={() => void handleNewChatRef.current()}
             >
@@ -1388,7 +1392,7 @@ export function ChatShell({
             className="search-conversations-input"
             value={conversationSearch}
             onChange={(event) => setConversationSearch(event.target.value)}
-            placeholder="Search conversations..."
+            placeholder={t("chat.searchConversations")}
           />
         </div>
 
@@ -1396,13 +1400,13 @@ export function ChatShell({
         <section className="context-section context-section-grow">
           <div className="context-section-heading">
             <p className="eyebrow context-section-eyebrow">
-              <span>{isSearchingConversations ? "Matching conversations" : "Recent conversations"}</span>
+              <span>{isSearchingConversations ? t("chat.matchingConversations") : t("chat.recentConversations")}</span>
               {isFetchingSearch && <span className="search-spinner" />}
             </p>
           </div>
           <div className="recent-chats-list">
             {conversationRows.length === 0 && conversationSearch.trim() ? (
-              <p className="recent-chat-empty">No conversations match this search.</p>
+              <p className="recent-chat-empty">{t("chat.noConversationsMatch")}</p>
             ) : conversationRows.map((c) => {
               const isDraft = c.id === DRAFT_SESSION_ID;
               const isActive =
@@ -1432,7 +1436,7 @@ export function ChatShell({
                     ) : null}
                     {isDraft ? (
                       !hasUserMessage ? (
-                        <span className="recent-chat-date">just now</span>
+                        <span className="recent-chat-date">{t("chat.justNow")}</span>
                       ) : null
                     ) : relativeDate ? (
                       <span className="recent-chat-date">{relativeDate}</span>
@@ -1442,7 +1446,7 @@ export function ChatShell({
                     <button
                       type="button"
                       className="recent-chat-delete"
-                      title="Delete conversation"
+                      title={t("chat.deleteConversation")}
                       onClick={(e) => { e.stopPropagation(); void handleDeleteConversation(c.id); }}
                     >
                       ✕
@@ -1460,9 +1464,9 @@ export function ChatShell({
             className="new-chat-btn new-chat-btn-full"
             onClick={() => void handleNewChatRef.current()}
             disabled={messages.length === 0 || onlyWelcomeGreeting}
-            title={onlyWelcomeGreeting || messages.length === 0 ? "Send a message first" : "Start a new conversation"}
+            title={onlyWelcomeGreeting || messages.length === 0 ? t("chat.sendFirst") : t("chat.newConversation")}
           >
-            {DEFAULT_CONVERSATION_TITLE}
+            {t("chat.newConversation")}
           </button>
         </div>
           </>

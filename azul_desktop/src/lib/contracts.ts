@@ -142,6 +142,7 @@ export interface SetupProfile {
   archetype: string;
   workspace_root: string;
   confirm_sensitive_actions: boolean;
+  language?: string;
   is_hatched: boolean;
   completed_at: string;
   skills: string[];

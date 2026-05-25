@@ -1,6 +1,7 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import adultMascot from "../../../../img/azulclaw.png";
 import babyMascot from "../../../../img/hatching_azulclaw.png";
@@ -342,6 +343,7 @@ export function SetupWizardShell({
   initialStep = 0,
   onProfileSaved,
 }: SetupWizardShellProps) {
+  const { t } = useTranslation();
   const initial = incomingProfile ?? defaultSetupProfile;
   const initialState = buildWizardState(initial, onboardingRequired);
   const initialCurrentStep = Math.min(Math.max(initialStep, 0), wizardQuestions.length);
@@ -621,11 +623,11 @@ export function SetupWizardShell({
   async function handleStartAzureDiscovery() {
     setAzureError("");
     if (!azureConfig.clientId.trim()) {
-      setAzureError("Enter the Azure app registration client ID.");
+      setAzureError(t("hatching.azure.enterClientId"));
       return;
     }
     if (azureConfig.accountKind === "personal" && !azureConfig.tenantId.trim()) {
-      setAzureError("Paste the Directory (tenant) ID for the Azure directory that contains your subscription.");
+      setAzureError(t("hatching.azure.pasteTenantId"));
       return;
     }
     setAzureDiscoveryBusy(true);
@@ -810,15 +812,15 @@ export function SetupWizardShell({
       return;
     }
     if (authMethod === "entra" && !azureConfig.clientId.trim()) {
-      setAzureError("Enter the Azure app registration client ID.");
+      setAzureError(t("hatching.azure.enterClientId"));
       return;
     }
     if (!endpoint) {
-      setAzureError("Select an Azure OpenAI resource or enter the endpoint manually.");
+      setAzureError(t("hatching.azure.selectResourceOrEndpoint"));
       return;
     }
     if (!azureConfig.deployment.trim()) {
-      setAzureError("Choose the main deployment.");
+      setAzureError(t("hatching.azure.chooseMainDeployment"));
       return;
     }
 
@@ -874,8 +876,8 @@ export function SetupWizardShell({
             setStoredApiKeyNeedsReplacement(true);
             setStoredApiKeyIssue(
               error instanceof Error
-                ? `AzulClaw could not read the API key stored on this machine. Paste a new key to reconnect. ${error.message}`
-                : "AzulClaw could not read the API key stored on this machine. Paste a new key to reconnect.",
+                ? `${t("hatching.azure.couldNotReadKey")} ${error.message}`
+                : t("hatching.azure.couldNotReadKey"),
             );
             setAzureError("");
             return;
@@ -885,12 +887,12 @@ export function SetupWizardShell({
           if (azureConfig.apiKeyStored && !editingStoredApiKey) {
             setEditingStoredApiKey(true);
             setStoredApiKeyNeedsReplacement(true);
-            setStoredApiKeyIssue("The previously stored Azure OpenAI API key is no longer available on this machine. Paste a new key to reconnect.");
+            setStoredApiKeyIssue(t("hatching.azure.storedKeyUnavailable"));
             setAzureConfig((current) => ({ ...current, apiKeyStored: false }));
             setAzureError("");
             return;
           }
-          setAzureError("Enter the Azure OpenAI API key.");
+          setAzureError(t("hatching.azure.enterApiKey"));
           return;
         }
         setAzureBusy(true);
@@ -953,7 +955,8 @@ export function SetupWizardShell({
     if (!activeSkill) return;
     const missingField = activeSkill.fields.find((field) => !skillDraft[field.id]?.trim());
     if (missingField) {
-      setSkillModalError(`Please complete "${missingField.label}".`);
+      const fieldLabel = t(`hatching.skills.catalog.${activeSkill.id}.fields.${missingField.id}.label`);
+      setSkillModalError(t("hatching.skills.pleaseComplete", { field: fieldLabel }));
       return;
     }
 
@@ -975,7 +978,7 @@ export function SetupWizardShell({
   async function handlePickWorkspace() {
     setWorkspacePickerError("");
     if (!isTauri()) {
-      setWorkspacePickerError("The native selector is only available inside the Tauri desktop app.");
+      setWorkspacePickerError(t("hatching.workspaceErrors.nativeSelectorOnly"));
       return;
     }
 
@@ -985,13 +988,13 @@ export function SetupWizardShell({
         directory: true,
         multiple: false,
         defaultPath: workspaceRoot || undefined,
-        title: "Select the AzulClaw workspace folder",
+        title: t("hatching.workspaceErrors.selectFolder"),
       });
       if (typeof selected === "string" && selected.trim()) setWorkspaceRoot(selected);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       console.error("Workspace picker failed", error);
-      setWorkspacePickerError(`Could not open the native selector. ${detail}`);
+      setWorkspacePickerError(`${t("hatching.workspaceErrors.couldNotOpen")} ${detail}`);
     } finally {
       setIsPickingWorkspace(false);
     }
@@ -1036,8 +1039,8 @@ export function SetupWizardShell({
 
   const shellClass = onboardingRequired ? "hw-fullscreen" : "hw-contained card";
   const canSkipStep = (activeQuestion?.type === "skills" && configuredSkills.length === 0) || activeQuestion?.type === "superpowers" || (activeQuestion?.type === "azure" && !azureConfig.connected);
-  const nextButtonLabel = canSkipStep ? "Skip for now ->" : "Next ->";
-  const nextHint = canSkipStep ? "Press Enter to skip for now" : "Press Enter to continue";
+  const nextButtonLabel = canSkipStep ? t("hatching.skipForNow") : t("hatching.nextBtn");
+  const nextHint = canSkipStep ? t("hatching.pressEnterToSkip") : t("hatching.pressEnterToContinue");
 
   if (isPreparing) {
     return (
@@ -1049,9 +1052,9 @@ export function SetupWizardShell({
           style={{ animation: "hw-pulse 1.4s ease-in-out infinite" }}
         />
         <div>
-          <p className="hw-label">PREPARING</p>
-          <h1 className="hw-title" style={{ marginBottom: "8px" }}>Setting up your environment</h1>
-          <p className="hw-helper">Creating workspace folders, initialising memory database...</p>
+          <p className="hw-label">{t("hatching.preparing")}</p>
+          <h1 className="hw-title" style={{ marginBottom: "8px" }}>{t("hatching.settingUp")}</h1>
+          <p className="hw-helper">{t("hatching.settingUpDesc")}</p>
         </div>
         {isAllSet && (
           <div style={{ position: "absolute", bottom: "48px", display: "flex", alignItems: "center", gap: "10px", animation: "hwEnterFwd 0.4s ease both" }}>
@@ -1059,7 +1062,7 @@ export function SetupWizardShell({
               <circle cx="11" cy="11" r="11" fill="#2563eb" />
               <path d="M6 11.5l3.5 3.5 6.5-7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            <span style={{ fontSize: "1rem", fontWeight: 600, color: "#e2e8f0", letterSpacing: "0.01em" }}>All set</span>
+            <span style={{ fontSize: "1rem", fontWeight: 600, color: "#e2e8f0", letterSpacing: "0.01em" }}>{t("hatching.allSet")}</span>
           </div>
         )}
       </div>
@@ -1072,18 +1075,18 @@ export function SetupWizardShell({
         <div className="card panel-stack">
           <div className="panel-heading" style={{ borderBottom: "1px solid var(--line)", paddingBottom: "20px", marginBottom: "4px" }}>
             <div>
-              <p className="eyebrow">Identity</p>
-              <h2>Profile setup</h2>
-              <p className="hint-text" style={{ margin: "4px 0 0" }}>Adjust your agent's core personality and environment at any time.</p>
+              <p className="eyebrow">{t("hatching.identity.eyebrow")}</p>
+              <h2>{t("hatching.identity.title")}</h2>
+              <p className="hint-text" style={{ margin: "4px 0 0" }}>{t("hatching.identity.hint")}</p>
             </div>
             <button type="button" className="primary-button" onClick={() => void handleSave(true)} disabled={isSaving}>
-              {isSaving ? "Saving..." : "Apply changes"}
+              {isSaving ? t("hatching.identity.saving") : t("hatching.identity.save")}
             </button>
           </div>
 
           <div className="two-column-grid">
             <label className="form-field">
-              <span>Agent name</span>
+              <span>{t("hatching.identity.agentName")}</span>
               <input
                 type="text"
                 value={answers[0] ?? ""}
@@ -1091,7 +1094,7 @@ export function SetupWizardShell({
               />
             </label>
             <label className="form-field">
-              <span>Behaviour and tone</span>
+              <span>{t("hatching.identity.behaviourTone")}</span>
               <input
                 type="text"
                 value={answers[3] ?? ""}
@@ -1102,7 +1105,7 @@ export function SetupWizardShell({
 
           <div className="two-column-grid">
             <label className="form-field">
-              <span>Main role</span>
+              <span>{t("hatching.identity.mainRole")}</span>
               <textarea
                 rows={4}
                 value={answers[1] ?? ""}
@@ -1110,7 +1113,7 @@ export function SetupWizardShell({
               />
             </label>
             <label className="form-field">
-              <span>Mission or goal</span>
+              <span>{t("hatching.identity.missionGoal")}</span>
               <textarea
                 rows={4}
                 value={answers[2] ?? ""}
@@ -1120,17 +1123,17 @@ export function SetupWizardShell({
           </div>
 
           <div className="subcard form-section">
-            <p className="eyebrow">Secure workspace</p>
+            <p className="eyebrow">{t("hatching.identity.secureWorkspace")}</p>
             <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
               <Tooltip text={workspaceRoot} className="workspace-banner-path">
                 {workspaceRoot}
               </Tooltip>
               <button type="button" className="ghost-button" onClick={() => void handlePickWorkspace()}>
-                Choose folder
+                {t("hatching.identity.chooseFolder")}
               </button>
             </div>
             <label className="form-field" style={{ marginTop: "8px" }}>
-              <span>Path</span>
+              <span>{t("hatching.identity.path")}</span>
               <input
                 type="text"
                 value={workspaceRoot}
@@ -1141,13 +1144,13 @@ export function SetupWizardShell({
             {workspacePickerError && <p style={{ margin: 0, color: "#fca5a5", fontSize: "0.85rem" }}>{workspacePickerError}</p>}
 
             <div style={{ marginTop: "8px" }}>
-              <p className="eyebrow" style={{ marginBottom: "10px" }}>Sensitive action confirmation</p>
+              <p className="eyebrow" style={{ marginBottom: "10px" }}>{t("hatching.identity.sensitiveActions")}</p>
               <div className="filter-row">
                 <button type="button" className={confirmSensitiveActions ? "primary-button" : "ghost-button"} onClick={() => setConfirmSensitiveActions(true)}>
-                  Ask before acting
+                  {t("hatching.identity.askBefore")}
                 </button>
                 <button type="button" className={!confirmSensitiveActions ? "primary-button" : "ghost-button"} onClick={() => setConfirmSensitiveActions(false)}>
-                  Full autonomy
+                  {t("hatching.identity.fullAutonomy")}
                 </button>
               </div>
             </div>
@@ -1163,11 +1166,11 @@ export function SetupWizardShell({
         <div className="hw-brand">
           <img className="hw-mascot" src={mascotImage} alt="AzulClaw" />
           <div>
-            <p className="hw-eyebrow">{onboardingRequired ? "Hatching" : "Setup"}</p>
-            <h2 className="hw-brand-title">{onboardingRequired ? "Create your AzulClaw" : "Update your AzulClaw setup"}</h2>
+            <p className="hw-eyebrow">{onboardingRequired ? t("hatching.hatching") : t("hatching.setup")}</p>
+            <h2 className="hw-brand-title">{onboardingRequired ? t("hatching.createTitle") : t("hatching.updateTitle")}</h2>
           </div>
         </div>
-        <div className="hw-dots" aria-label={`Step ${stepNumber} of ${wizardQuestions.length}`}>
+        <div className="hw-dots" aria-label={t("hatching.stepLabel", { step: stepNumber, total: wizardQuestions.length })}>
           {wizardQuestions.map((_, index) => (
             <span key={index} className={`hw-dot${index < currentStep ? " hw-dot-done" : index === currentStep ? " hw-dot-active" : ""}`} />
           ))}
@@ -1184,17 +1187,17 @@ export function SetupWizardShell({
             <div className="hw-question">
               <span className="hw-emoji">{getStepEmoji(activeQuestion.emoji)}</span>
               <p className="hw-label">{activeQuestion.id}</p>
-              <h1 className="hw-title">{activeQuestion.title}</h1>
-              <p className="hw-helper">{activeQuestion.helper}</p>
+              <h1 className="hw-title">{t(`hatching.questions.${activeQuestion.id.toLowerCase()}.title`)}</h1>
+              <p className="hw-helper">{t(`hatching.questions.${activeQuestion.id.toLowerCase()}.helper`, { defaultValue: "" })}</p>
             </div>
 
             <div className="hw-answer-wrap">
               {activeQuestion.type === "text" && (
-                <input id={`hw-answer-${currentStep}`} className="hw-input-line" type="text" value={answers[currentStep] ?? ""} placeholder={activeQuestion.placeholder} onChange={(event) => handleAnswerChange(event.target.value)} autoFocus />
+                <input id={`hw-answer-${currentStep}`} className="hw-input-line" type="text" value={answers[currentStep] ?? ""} placeholder={t(`hatching.questions.${activeQuestion.id.toLowerCase()}.placeholder`, { defaultValue: activeQuestion.placeholder })} onChange={(event) => handleAnswerChange(event.target.value)} autoFocus />
               )}
 
               {activeQuestion.type === "textarea" && (
-                <textarea id={`hw-answer-${currentStep}`} className="hw-textarea" value={answers[currentStep] ?? ""} placeholder={activeQuestion.placeholder} onChange={(event) => handleAnswerChange(event.target.value)} autoFocus />
+                <textarea id={`hw-answer-${currentStep}`} className="hw-textarea" value={answers[currentStep] ?? ""} placeholder={t(`hatching.questions.${activeQuestion.id.toLowerCase()}.placeholder`, { defaultValue: activeQuestion.placeholder })} onChange={(event) => handleAnswerChange(event.target.value)} autoFocus />
               )}
 
               {activeQuestion.type === "azure" && (
@@ -1205,16 +1208,16 @@ export function SetupWizardShell({
                       <div>
                         <div className="hw-azure-status-row">
                           <span className={`hw-azure-status${azureConfig.connected ? " hw-azure-status-connected" : ""}`}>
-                            {azureConfig.connected ? "Connected" : "Action required"}
+                            {azureConfig.connected ? t("hatching.azure.connected") : t("hatching.azure.actionRequired")}
                           </span>
                           {azureConfig.lastConnectedAt && (
-                            <span className="hw-inline-note">Last login {new Date(azureConfig.lastConnectedAt).toLocaleString()}</span>
+                            <span className="hw-inline-note">{t("hatching.azure.lastLogin", { date: new Date(azureConfig.lastConnectedAt).toLocaleString() })}</span>
                           )}
                         </div>
                         <p className="hw-azure-lead">
                           {azureConfig.mode === "manual" && azureConfig.authMethod === "api_key"
-                            ? "Use your Azure OpenAI endpoint, deployment names, and API key to connect directly. Choose this only when Microsoft login is not available for your tenant."
-                            : "Start with Microsoft sign-in using the account that owns your Azure subscription. Work, school and personal Microsoft accounts are supported."}
+                            ? t("hatching.azure.apiKeyModeNote")
+                            : t("hatching.azure.guidedNote")}
                         </p>
                       </div>
                     </div>
@@ -1225,14 +1228,14 @@ export function SetupWizardShell({
                         className={`hw-azure-mode-btn${azureConfig.mode === "guided" ? " hw-azure-mode-btn-active" : ""}`}
                         onClick={() => setAzureConfig((current) => ({ ...current, mode: "guided" }))}
                       >
-                        Discover automatically
+                        {t("hatching.azure.discoverAuto")}
                       </button>
                       <button
                         type="button"
                         className={`hw-azure-mode-btn${azureConfig.mode === "manual" ? " hw-azure-mode-btn-active" : ""}`}
                         onClick={() => setAzureConfig((current) => ({ ...current, mode: "manual" }))}
                       >
-                        Enter manually
+                        {t("hatching.azure.enterManually")}
                       </button>
                     </div>
 
@@ -1241,8 +1244,8 @@ export function SetupWizardShell({
                       <div className="hw-azure-step-body">
                         <div className="hw-azure-step-head">
                           <div>
-                            <p className="hw-field-label">Microsoft login</p>
-                            <h3>Connect to your Azure tenant</h3>
+                            <p className="hw-field-label">{t("hatching.azure.microsoftLoginTitle")}</p>
+                            <h3>{t("hatching.azure.connectTenantTitle")}</h3>
                           </div>
                         </div>
                         {azureConfig.mode === "guided" ? (
@@ -1253,20 +1256,20 @@ export function SetupWizardShell({
                                 className={`hw-azure-choice${azureConfig.accountKind === "work" ? " hw-azure-choice-active" : ""}`}
                                 onClick={() => setAzureConfig((current) => ({ ...current, accountKind: "work", tenantId: "", connected: false, lastConnectedAt: "" }))}
                               >
-                                <span>Work or school account</span>
-                                <small>Use Microsoft sign-in and discover tenants automatically.</small>
+                                <span>{t("hatching.azure.workAccount")}</span>
+                                <small>{t("hatching.azure.workAccountDesc")}</small>
                               </button>
                               <button
                                 type="button"
                                 className={`hw-azure-choice${azureConfig.accountKind === "personal" ? " hw-azure-choice-active" : ""}`}
                                 onClick={() => setAzureConfig((current) => ({ ...current, accountKind: "personal", connected: false, lastConnectedAt: "" }))}
                               >
-                                <span>Personal Outlook Azure</span>
-                                <small>Use this when your subscription is paid with @outlook.com/.es.</small>
+                                <span>{t("hatching.azure.personalAccount")}</span>
+                                <small>{t("hatching.azure.personalAccountDesc")}</small>
                               </button>
                             </div>
                             <label className="hw-modal-field">
-                              <span className="hw-field-label">App registration client ID</span>
+                              <span className="hw-field-label">{t("hatching.azure.clientIdLabel")}</span>
                               <input
                                 className="hw-modal-input"
                                 type="text"
@@ -1278,7 +1281,7 @@ export function SetupWizardShell({
                             </label>
                             {azureConfig.accountKind === "personal" && (
                               <label className="hw-modal-field">
-                                <span className="hw-field-label">Directory (tenant) ID</span>
+                                <span className="hw-field-label">{t("hatching.azure.tenantIdLabel")}</span>
                                 <input
                                   className="hw-modal-input"
                                   type="text"
@@ -1287,17 +1290,17 @@ export function SetupWizardShell({
                                   onChange={(event) => handleAzureConfigChange("tenantId", event.target.value)}
                                   disabled={azureDiscoveryBusy}
                                 />
-                                <span className="hw-inline-note">Find it in Azure Portal under Microsoft Entra ID or in the App Registration overview.</span>
+                                <span className="hw-inline-note">{t("hatching.azure.tenantIdNote")}</span>
                               </label>
                             )}
                             <div className="hw-azure-actions">
                               <button type="button" className="hw-btn-primary" onClick={() => void handleStartAzureDiscovery()} disabled={azureDiscoveryBusy}>
-                                {azureDiscoveryBusy ? "Opening Microsoft..." : azureDiscoveryReady ? "Refresh discovery" : "Sign in with Microsoft"}
+                                {azureDiscoveryBusy ? t("hatching.azure.openingMicrosoft") : azureDiscoveryReady ? t("hatching.azure.refreshDiscovery") : t("hatching.azure.signInMicrosoft")}
                               </button>
                               <span className="hw-inline-note">
                                 {azureConfig.accountKind === "personal"
-                                  ? "Personal Microsoft accounts must authenticate through the Azure tenant that owns the subscription."
-                                  : "Automatic discovery starts with login. Tenant, subscription, resource and deployments unlock after Microsoft confirms your account."}
+                                  ? t("hatching.azure.personalNote")
+                                  : t("hatching.azure.guidedNote")}
                               </span>
                             </div>
                           </>
@@ -1315,10 +1318,10 @@ export function SetupWizardShell({
                                 }}
                               >
                                 <span className="hw-azure-choice-title">
-                                  <span>Microsoft login</span>
-                                  <span className="hw-choice-badge hw-choice-badge-recommended">Recommended</span>
+                                  <span>{t("hatching.azure.microsoftLoginChoice")}</span>
+                                  <span className="hw-choice-badge hw-choice-badge-recommended">{t("settings.azure.recommended")}</span>
                                 </span>
-                                <small>Sign in with Microsoft to discover your Azure resources and keep the standard authorization flow.</small>
+                                <small>{t("hatching.azure.microsoftLoginChoiceDesc")}</small>
                               </button>
                               <button
                                 type="button"
@@ -1327,13 +1330,13 @@ export function SetupWizardShell({
                                 disabled={!apiKeyStorageAvailable}
                               >
                                 <span className="hw-azure-choice-title">
-                                  <span>API key</span>
-                                  <span className="hw-choice-badge hw-choice-badge-fallback">Fallback</span>
+                                  <span>{t("hatching.azure.apiKeyChoice")}</span>
+                                  <span className="hw-choice-badge hw-choice-badge-fallback">{t("settings.azure.fallback")}</span>
                                 </span>
                                 <small>
                                   {apiKeyStorageAvailable
-                                    ? "Connect directly to Azure OpenAI with your endpoint, deployment names, and API key."
-                                    : "Available only where AzulClaw can store the key securely on the desktop."}
+                                    ? t("hatching.azure.apiKeyChoiceDesc")
+                                    : t("hatching.azure.apiKeyNotAvailable")}
                                 </small>
                               </button>
                             </div>
@@ -1341,21 +1344,21 @@ export function SetupWizardShell({
                               {azureConfig.authMethod === "entra" ? (
                                 <>
                                   <label className="hw-modal-field">
-                                    <span className="hw-field-label">Application client ID</span>
+                                    <span className="hw-field-label">{t("hatching.azure.applicationClientId")}</span>
                                     <input className="hw-modal-input" type="text" value={azureConfig.clientId} placeholder="00000000-0000-0000-0000-000000000000" onChange={(event) => handleAzureConfigChange("clientId", event.target.value)} />
                                   </label>
                                   <label className="hw-modal-field">
-                                    <span className="hw-field-label">Tenant scope</span>
+                                    <span className="hw-field-label">{t("hatching.azure.tenantScope")}</span>
                                     <input className="hw-modal-input" type="text" value={azureConfig.tenantId} placeholder="common" onChange={(event) => handleAzureConfigChange("tenantId", event.target.value)} />
                                   </label>
                                 </>
                               ) : (
                                 <label className="hw-modal-field hw-azure-wide">
-                                  <span className="hw-field-label">Azure OpenAI API key</span>
+                                  <span className="hw-field-label">{t("hatching.azure.azureApiKey")}</span>
                                   {azureConfig.apiKeyStored && !editingStoredApiKey && !azureConfig.apiKey.trim() ? (
                                     <>
                                       <div className="hw-azure-secret-state">
-                                        <span className="hw-inline-note">Stored locally on this machine.</span>
+                                        <span className="hw-inline-note">{t("hatching.azure.storedLocally")}</span>
                                         <div className="hw-azure-secret-actions">
                                           <button
                                             type="button"
@@ -1366,19 +1369,19 @@ export function SetupWizardShell({
                                               setStoredApiKeyIssue("");
                                             }}
                                           >
-                                            Replace key
+                                            {t("hatching.azure.replaceKey")}
                                           </button>
-                                          <button type="button" className="hw-btn-ghost" onClick={() => void handleClearStoredApiKey()}>Clear key</button>
+                                          <button type="button" className="hw-btn-ghost" onClick={() => void handleClearStoredApiKey()}>{t("hatching.azure.clearKey")}</button>
                                         </div>
                                       </div>
                                     </>
                                   ) : (
-                                    <input className="hw-modal-input" type="password" value={azureConfig.apiKey} placeholder="Paste the Azure OpenAI key" onChange={(event) => handleAzureConfigChange("apiKey", event.target.value)} />
+                                    <input className="hw-modal-input" type="password" value={azureConfig.apiKey} placeholder={t("hatching.azure.pasteAzureKey")} onChange={(event) => handleAzureConfigChange("apiKey", event.target.value)} />
                                   )}
                                   {storedApiKeyIssue ? (
                                     <span className="hw-inline-note hw-inline-note-warning">{storedApiKeyIssue}</span>
                                   ) : (
-                                    <span className="hw-inline-note hw-inline-note-warning">This key is stored locally on this machine. Use this mode only as a fallback when Microsoft login is not available.</span>
+                                    <span className="hw-inline-note hw-inline-note-warning">{t("hatching.azure.storedKeyWarning")}</span>
                                   )}
                                 </label>
                               )}
@@ -1393,7 +1396,7 @@ export function SetupWizardShell({
                         {!azureDiscoveryReady && (
                           <div className="hw-azure-locked">
                             <span className="hw-azure-lock-dot" aria-hidden="true" />
-                            <p>Sign in first to unlock tenant, subscription and resource discovery.</p>
+                            <p>{t("hatching.azure.signInFirst")}</p>
                           </div>
                         )}
 
@@ -1403,31 +1406,31 @@ export function SetupWizardShell({
                           <div className="hw-azure-step-body">
                             <div className="hw-azure-step-head">
                               <div>
-                                <p className="hw-field-label">Resource</p>
-                                <h3>Choose where AzulClaw will run</h3>
+                                <p className="hw-field-label">{t("hatching.azure.resourceTitle")}</p>
+                                <h3>{t("hatching.azure.chooseWhereRun")}</h3>
                               </div>
                             </div>
                         <div className="hw-azure-grid">
                           <label className="hw-modal-field">
-                            <span className="hw-field-label">Tenant</span>
+                            <span className="hw-field-label">{t("hatching.azure.tenant")}</span>
                             <select className="hw-modal-input" value={azureConfig.tenantId} onChange={(event) => handleAzureConfigChange("tenantId", event.target.value)} disabled={azureTenantOptions.length === 0 || azureDiscoveryBusy}>
-                              {azureTenantOptions.length === 0 && <option value="">Tenant from Microsoft login</option>}
+                              {azureTenantOptions.length === 0 && <option value="">{t("hatching.azure.tenantFromLogin")}</option>}
                               {azureTenantOptions.map((tenant) => (
                                 <option key={tenant.id} value={tenant.id}>{tenant.label}</option>
                               ))}
                             </select>
                           </label>
                           <label className="hw-modal-field">
-                            <span className="hw-field-label">Subscription</span>
+                            <span className="hw-field-label">{t("hatching.azure.subscription")}</span>
                             <select className="hw-modal-input" value={azureConfig.subscriptionId} onChange={(event) => handleAzureSubscriptionChange(event.target.value)} disabled={azureSubscriptions.length === 0 || azureDiscoveryBusy}>
-                              <option value="">Select subscription</option>
+                              <option value="">{t("hatching.azure.selectSubscription")}</option>
                               {azureSubscriptions.map((item) => (
                                 <option key={item.id} value={item.id}>{item.display_name}</option>
                               ))}
                             </select>
                           </label>
                           <label className="hw-modal-field hw-azure-wide">
-                            <span className="hw-field-label">Azure OpenAI resource</span>
+                            <span className="hw-field-label">{t("hatching.azure.aoaiResource")}</span>
                             <select
                               className="hw-modal-input"
                               value={azureConfig.accountName ? `${azureConfig.resourceGroup}/${azureConfig.accountName}` : ""}
@@ -1447,18 +1450,18 @@ export function SetupWizardShell({
                                     }}
                               disabled={azureResources.length === 0 || azureDiscoveryBusy}
                             >
-                              <option value="">Select resource</option>
+                              <option value="">{t("hatching.azure.selectResource")}</option>
                               {azureResources.map((item) => (
                                 <option key={item.id} value={`${item.resource_group}/${item.name}`}>{item.name} · {item.location}</option>
                               ))}
                             </select>
                           </label>
                           <label className="hw-modal-field hw-azure-wide">
-                            <span className="hw-field-label">Endpoint</span>
-                            <input className="hw-modal-input" type="url" value={azureConfig.endpoint} placeholder="Auto-filled from the selected resource" readOnly />
+                            <span className="hw-field-label">{t("hatching.azure.endpoint")}</span>
+                            <input className="hw-modal-input" type="url" value={azureConfig.endpoint} placeholder={t("hatching.azure.autoFilledResource")} readOnly />
                           </label>
                           <label className="hw-modal-field hw-azure-wide">
-                            <span className="hw-field-label">Key Vault</span>
+                            <span className="hw-field-label">{t("hatching.azure.keyVault")}</span>
                             <select
                               className="hw-modal-input"
                               value={azureConfig.keyVaultName ? `${azureConfig.keyVaultResourceGroup}/${azureConfig.keyVaultName}` : ""}
@@ -1470,24 +1473,24 @@ export function SetupWizardShell({
                               }}
                               disabled={azureKeyVaults.length === 0 || azureDiscoveryBusy}
                             >
-                              <option value="">Select Key Vault</option>
+                              <option value="">{t("hatching.azure.selectKeyVault")}</option>
                               {azureKeyVaults.map((item) => (
                                 <option key={item.id} value={`${item.resource_group}/${item.name}`}>{item.name} · {item.location}</option>
                               ))}
                             </select>
-                            <span className="hw-inline-note">Runtime settings and secrets will be loaded from this vault.</span>
+                            <span className="hw-inline-note">{t("hatching.azure.keyVaultNote")}</span>
                           </label>
                           <label className="hw-modal-field hw-azure-wide">
-                            <span className="hw-field-label">Key Vault URL</span>
-                            <input className="hw-modal-input" type="url" value={azureConfig.keyVaultUrl} placeholder="Auto-filled from the selected vault" readOnly />
+                            <span className="hw-field-label">{t("hatching.azure.keyVaultUrl")}</span>
+                            <input className="hw-modal-input" type="url" value={azureConfig.keyVaultUrl} placeholder={t("hatching.azure.autoFilledVault")} readOnly />
                           </label>
                           <label className="hw-modal-field">
-                            <span className="hw-field-label">MicrosoftAppId secret</span>
+                            <span className="hw-field-label">{t("hatching.azure.msAppId")}</span>
                             {azureKeyVaultSecrets.length > 0 ? (
                               <select className="hw-modal-input" value={azureConfig.microsoftAppIdSecretName} onChange={(event) => handleAzureConfigChange("microsoftAppIdSecretName", event.target.value)} disabled={azureDiscoveryBusy}>
-                                <option value="">Default: MicrosoftAppId</option>
+                                <option value="">{t("hatching.azure.msAppIdDefault")}</option>
                                 {azureKeyVaultSecrets.map((item) => (
-                                  <option key={item.id || item.name} value={item.name}>{item.name}{item.enabled ? "" : " (disabled)"}</option>
+                                  <option key={item.id || item.name} value={item.name}>{item.name}{item.enabled ? "" : t("hatching.azure.disabled")}</option>
                                 ))}
                               </select>
                             ) : (
@@ -1495,12 +1498,12 @@ export function SetupWizardShell({
                             )}
                           </label>
                           <label className="hw-modal-field">
-                            <span className="hw-field-label">MicrosoftAppPassword secret</span>
+                            <span className="hw-field-label">{t("hatching.azure.msAppPassword")}</span>
                             {azureKeyVaultSecrets.length > 0 ? (
                               <select className="hw-modal-input" value={azureConfig.microsoftAppPasswordSecretName} onChange={(event) => handleAzureConfigChange("microsoftAppPasswordSecretName", event.target.value)} disabled={azureDiscoveryBusy}>
-                                <option value="">Default: MicrosoftAppPassword</option>
+                                <option value="">{t("hatching.azure.msAppPasswordDefault")}</option>
                                 {azureKeyVaultSecrets.map((item) => (
-                                  <option key={item.id || item.name} value={item.name}>{item.name}{item.enabled ? "" : " (disabled)"}</option>
+                                  <option key={item.id || item.name} value={item.name}>{item.name}{item.enabled ? "" : t("hatching.azure.disabled")}</option>
                                 ))}
                               </select>
                             ) : (
@@ -1508,12 +1511,12 @@ export function SetupWizardShell({
                             )}
                           </label>
                           <label className="hw-modal-field">
-                            <span className="hw-field-label">MicrosoftAppTenantId secret</span>
+                            <span className="hw-field-label">{t("hatching.azure.msAppTenantId")}</span>
                             {azureKeyVaultSecrets.length > 0 ? (
                               <select className="hw-modal-input" value={azureConfig.microsoftAppTenantIdSecretName} onChange={(event) => handleAzureConfigChange("microsoftAppTenantIdSecretName", event.target.value)} disabled={azureDiscoveryBusy}>
-                                <option value="">Default: MicrosoftAppTenantId</option>
+                                <option value="">{t("hatching.azure.msAppTenantIdDefault")}</option>
                                 {azureKeyVaultSecrets.map((item) => (
-                                  <option key={item.id || item.name} value={item.name}>{item.name}{item.enabled ? "" : " (disabled)"}</option>
+                                  <option key={item.id || item.name} value={item.name}>{item.name}{item.enabled ? "" : t("hatching.azure.disabled")}</option>
                                 ))}
                               </select>
                             ) : (
@@ -1530,16 +1533,16 @@ export function SetupWizardShell({
                           <div className="hw-azure-step-body">
                             <div className="hw-azure-step-head">
                               <div>
-                                <p className="hw-field-label">Deployments</p>
-                                <h3>Confirm model routes</h3>
+                                <p className="hw-field-label">{t("hatching.azure.deploymentsTitle")}</p>
+                                <h3>{t("hatching.azure.confirmModelRoutes")}</h3>
                               </div>
                             </div>
                         <div className="hw-azure-grid">
                           <label className="hw-modal-field">
-                            <span className="hw-field-label">Main deployment</span>
+                            <span className="hw-field-label">{t("hatching.azure.mainDeployment")}</span>
                             {hasAzureDeployments ? (
                               <select className="hw-modal-input" value={azureConfig.deployment} onChange={(event) => handleAzureConfigChange("deployment", event.target.value)} disabled={azureDiscoveryBusy}>
-                                <option value="">Select deployment</option>
+                                <option value="">{t("hatching.azure.selectDeployment")}</option>
                                 {azureDeployments.filter((item) => item.capabilities.includes("chat")).map((item) => (
                                   <option key={item.id} value={item.name}>{item.name} · {item.model_name}</option>
                                 ))}
@@ -1549,10 +1552,10 @@ export function SetupWizardShell({
                             )}
                           </label>
                           <label className="hw-modal-field">
-                            <span className="hw-field-label">Fast deployment</span>
+                            <span className="hw-field-label">{t("hatching.azure.fastDeployment")}</span>
                             {hasAzureDeployments ? (
                               <select className="hw-modal-input" value={azureConfig.fastDeployment} onChange={(event) => handleAzureConfigChange("fastDeployment", event.target.value)} disabled={azureDiscoveryBusy}>
-                                <option value="">Select deployment</option>
+                                <option value="">{t("hatching.azure.selectDeployment")}</option>
                                 {azureDeployments.filter((item) => item.capabilities.includes("chat")).map((item) => (
                                   <option key={item.id} value={item.name}>{item.name} · {item.model_name}</option>
                                 ))}
@@ -1562,10 +1565,10 @@ export function SetupWizardShell({
                             )}
                           </label>
                           <label className="hw-modal-field hw-azure-wide">
-                            <span className="hw-field-label">Embedding deployment</span>
+                            <span className="hw-field-label">{t("hatching.azure.embeddingDeployment")}</span>
                             {hasAzureDeployments ? (
                               <select className="hw-modal-input" value={azureConfig.embeddingDeployment} onChange={(event) => handleAzureConfigChange("embeddingDeployment", event.target.value)} disabled={azureDiscoveryBusy}>
-                                <option value="">Select deployment</option>
+                                <option value="">{t("hatching.azure.selectDeployment")}</option>
                                 {azureDeployments.filter((item) => item.capabilities.includes("embedding")).map((item) => (
                                   <option key={item.id} value={item.name}>{item.name} · {item.model_name}</option>
                                 ))}
@@ -1577,7 +1580,7 @@ export function SetupWizardShell({
                         </div>
                             {!hasAzureDeployments && !azureDiscoveryBusy && (
                               <div className="hw-azure-empty">
-                                <p>No deployments were returned for this resource. You can type the deployment names manually, or refresh if you just created them in Azure.</p>
+                                <p>{t("hatching.azure.noDeploymentsNote")}</p>
                                 <button
                                   type="button"
                                   className="hw-btn-ghost"
@@ -1591,7 +1594,7 @@ export function SetupWizardShell({
                                     if (selected) void handleLoadAzureDeployments(selected);
                                   }}
                                 >
-                                  Refresh deployments
+                                  {t("hatching.azure.refreshDeployments")}
                                 </button>
                               </div>
                             )}
@@ -1603,44 +1606,44 @@ export function SetupWizardShell({
                       <>
                         {azureConfig.authMethod === "api_key" && (
                           <p className="hw-inline-note">
-                            This mode sets up direct Azure OpenAI access with one endpoint, one API key, and the deployment names below.
+                            {t("hatching.azure.apiKeyModeNote")}
                           </p>
                         )}
                       <div className="hw-azure-grid">
                         <label className="hw-modal-field hw-azure-wide">
-                          <span className="hw-field-label">Azure OpenAI endpoint</span>
+                          <span className="hw-field-label">{t("hatching.azure.azureEndpoint")}</span>
                           <input className="hw-modal-input" type="url" value={azureConfig.endpoint} placeholder="https://your-resource.openai.azure.com" onChange={(event) => handleAzureConfigChange("endpoint", event.target.value)} />
                         </label>
                         {azureConfig.authMethod === "entra" && (
                           <>
                             <label className="hw-modal-field hw-azure-wide">
-                              <span className="hw-field-label">Key Vault URL</span>
+                              <span className="hw-field-label">{t("hatching.azure.keyVaultUrl")}</span>
                               <input className="hw-modal-input" type="url" value={azureConfig.keyVaultUrl} placeholder="https://your-vault.vault.azure.net" onChange={(event) => handleAzureConfigChange("keyVaultUrl", event.target.value)} />
                             </label>
                             <label className="hw-modal-field">
-                              <span className="hw-field-label">MicrosoftAppId secret</span>
+                              <span className="hw-field-label">{t("hatching.azure.msAppId")}</span>
                               <input className="hw-modal-input" type="text" value={azureConfig.microsoftAppIdSecretName} placeholder="MicrosoftAppId" onChange={(event) => handleAzureConfigChange("microsoftAppIdSecretName", event.target.value)} />
                             </label>
                             <label className="hw-modal-field">
-                              <span className="hw-field-label">MicrosoftAppPassword secret</span>
+                              <span className="hw-field-label">{t("hatching.azure.msAppPassword")}</span>
                               <input className="hw-modal-input" type="text" value={azureConfig.microsoftAppPasswordSecretName} placeholder="MicrosoftAppPassword" onChange={(event) => handleAzureConfigChange("microsoftAppPasswordSecretName", event.target.value)} />
                             </label>
                             <label className="hw-modal-field">
-                              <span className="hw-field-label">MicrosoftAppTenantId secret</span>
+                              <span className="hw-field-label">{t("hatching.azure.msAppTenantId")}</span>
                               <input className="hw-modal-input" type="text" value={azureConfig.microsoftAppTenantIdSecretName} placeholder="MicrosoftAppTenantId" onChange={(event) => handleAzureConfigChange("microsoftAppTenantIdSecretName", event.target.value)} />
                             </label>
                           </>
                         )}
                         <label className="hw-modal-field">
-                          <span className="hw-field-label">Main deployment</span>
+                          <span className="hw-field-label">{t("hatching.azure.mainDeployment")}</span>
                           <input className="hw-modal-input" type="text" value={azureConfig.deployment} placeholder="gpt-4o" onChange={(event) => handleAzureConfigChange("deployment", event.target.value)} />
                         </label>
                         <label className="hw-modal-field">
-                          <span className="hw-field-label">Fast deployment</span>
+                          <span className="hw-field-label">{t("hatching.azure.fastDeployment")}</span>
                           <input className="hw-modal-input" type="text" value={azureConfig.fastDeployment} placeholder="gpt-4o-mini" onChange={(event) => handleAzureConfigChange("fastDeployment", event.target.value)} />
                         </label>
                         <label className="hw-modal-field hw-azure-wide">
-                          <span className="hw-field-label">Embedding deployment</span>
+                          <span className="hw-field-label">{t("hatching.azure.embeddingDeployment")}</span>
                           <input className="hw-modal-input" type="text" value={azureConfig.embeddingDeployment} placeholder="text-embedding-3-large" onChange={(event) => handleAzureConfigChange("embeddingDeployment", event.target.value)} />
                         </label>
                       </div>
@@ -1659,29 +1662,39 @@ export function SetupWizardShell({
                               </svg>
                             </div>
                             <div>
-                              <p className="hw-field-label">Azure connected</p>
+                              <p className="hw-field-label">{t("hatching.azure.connectedTitle")}</p>
                               <p className="hw-inline-note">
                                 {azureConfig.authMethod === "api_key"
-                                  ? `Azure OpenAI is configured with a local API key. ${azureConfig.lastConnectedAt ? `Last connected ${new Date(azureConfig.lastConnectedAt).toLocaleString()}.` : ""}`
-                                  : `Azure OpenAI access is authorized. ${azureConfig.keyVaultName ? `Key Vault: ${azureConfig.keyVaultName}. ` : ""}${azureConfig.lastConnectedAt ? `Last authorized ${new Date(azureConfig.lastConnectedAt).toLocaleString()}.` : ""}`}
+                                  ? (azureConfig.lastConnectedAt
+                                    ? t("hatching.azure.connectedNoteApiWith", { date: new Date(azureConfig.lastConnectedAt).toLocaleString() })
+                                    : t("hatching.azure.connectedNoteApi"))
+                                  : (azureConfig.keyVaultName
+                                    ? t("hatching.azure.connectedNoteEntraKeyVault", { vault: azureConfig.keyVaultName })
+                                    : azureConfig.lastConnectedAt
+                                      ? t("hatching.azure.connectedNoteEntraWith", { date: new Date(azureConfig.lastConnectedAt).toLocaleString() })
+                                      : t("hatching.azure.connectedNoteEntra"))}
                               </p>
                             </div>
                             <button type="button" className="hw-btn-ghost" onClick={() => void handleConnectAzure()} disabled={azureBusy}>
-                              {azureBusy ? (azureConfig.authMethod === "api_key" ? "Connecting..." : "Authorizing...") : (azureConfig.authMethod === "api_key" ? "Reconnect with API key" : "Reauthorize")}
+                              {azureBusy
+                                ? (azureConfig.authMethod === "api_key" ? t("hatching.azure.connecting") : t("hatching.azure.authorizing"))
+                                : (azureConfig.authMethod === "api_key" ? t("hatching.azure.reconnectApiKey") : t("hatching.azure.reauthorize"))}
                             </button>
                           </>
                         ) : (
                           <>
                             <div>
-                              <p className="hw-field-label">Finish</p>
+                              <p className="hw-field-label">{t("hatching.azure.finishTitle")}</p>
                               <p className="hw-inline-note">
                                 {azureConfig.authMethod === "api_key"
-                                  ? "Advanced mode. AzulClaw will use the endpoint, deployment names and API key directly, without Microsoft login."
-                                  : "AzulClaw will request an Azure OpenAI token, apply the selected Key Vault URL locally, and keep the token in memory."}
+                                  ? t("hatching.azure.finishNoteApi")
+                                  : t("hatching.azure.finishNoteEntra")}
                               </p>
                             </div>
                             <button type="button" className="hw-btn-primary" onClick={() => void handleConnectAzure()} disabled={azureBusy}>
-                              {azureBusy ? (azureConfig.authMethod === "api_key" ? "Connecting..." : "Authorizing...") : (azureConfig.authMethod === "api_key" ? "Connect with API key" : "Authorize Azure OpenAI access")}
+                              {azureBusy
+                                ? (azureConfig.authMethod === "api_key" ? t("hatching.azure.connecting") : t("hatching.azure.authorizing"))
+                                : (azureConfig.authMethod === "api_key" ? t("hatching.azure.connectApiKey") : t("hatching.azure.authorizeAccess"))}
                             </button>
                           </>
                         )}
@@ -1694,8 +1707,8 @@ export function SetupWizardShell({
               {activeQuestion.type === "skills" && (
                 <div className="hw-skills-wrap">
                   <div className="hw-skills-copy">
-                    <p className="hw-inline-note">Here you don't type free text. You can only activate skills from the available catalogue.</p>
-                    <p className="hw-inline-note">Clicking a skill opens its configuration. It won't be activated until you complete that popup.</p>
+                    <p className="hw-inline-note">{t("hatching.skills.note")}</p>
+                    <p className="hw-inline-note">{t("hatching.skills.clickNote")}</p>
                   </div>
 
                   <div className="hw-skills-grid">
@@ -1704,23 +1717,23 @@ export function SetupWizardShell({
                       return (
                         <button key={skill.id} type="button" className={`hw-skill-card${isConfigured ? " hw-skill-card-active" : ""}`} onClick={() => openSkillConfig(skill.id)}>
                           <div className="hw-skill-card-top">
-                            <span className="hw-skill-card-title">{skill.title}</span>
-                            <span className={`hw-skill-state${isConfigured ? " hw-skill-state-ready" : ""}`}>{isConfigured ? "Configured" : "Configure"}</span>
+                            <span className="hw-skill-card-title">{t(`hatching.skills.catalog.${skill.id}.title`)}</span>
+                            <span className={`hw-skill-state${isConfigured ? " hw-skill-state-ready" : ""}`}>{isConfigured ? t("hatching.skills.configured") : t("hatching.skills.configure")}</span>
                           </div>
-                          <p className="hw-skill-card-body">{skill.description}</p>
+                          <p className="hw-skill-card-body">{t(`hatching.skills.catalog.${skill.id}.description`)}</p>
                         </button>
                       );
                     })}
                   </div>
 
                   <div className="hw-skill-summary">
-                    <span className="hw-field-label">Currently active skills</span>
+                    <span className="hw-field-label">{t("hatching.skills.currentlyActive")}</span>
                     <div className="hw-skill-tags">
-                      {configuredSkills.length > 0 ? configuredSkills.map((skill) => <span key={skill} className="hw-skill-tag">{skill}</span>) : <span className="hw-inline-note">None for now.</span>}
+                      {configuredSkills.length > 0 ? configuredSkills.map((skill) => <span key={skill} className="hw-skill-tag">{skill}</span>) : <span className="hw-inline-note">{t("hatching.skills.noneForNow")}</span>}
                     </div>
                   </div>
 
-                  <p className="hw-inline-note">If you don't want to activate any yet, continue with Skip for now.</p>
+                  <p className="hw-inline-note">{t("hatching.skills.skipNote")}</p>
                 </div>
               )}
 
@@ -1735,10 +1748,10 @@ export function SetupWizardShell({
                   }}>⚡</div>
                   <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                     <p style={{ margin: 0, fontSize: "1.15rem", fontWeight: 700, letterSpacing: "-0.01em", color: "var(--text, #e2e8f0)", lineHeight: 1.3 }}>
-                      Give your agent superpowers with skills
+                      {t("hatching.questions.superpowers.body")}
                     </p>
                     <p style={{ margin: 0, fontSize: "0.82rem", color: "var(--muted)", lineHeight: 1.6, maxWidth: "340px" }}>
-                      Expand what your assistant knows and can do — across any domain.
+                      {t("hatching.questions.superpowers.bodyDesc")}
                     </p>
                   </div>
                   <span style={{
@@ -1752,28 +1765,28 @@ export function SetupWizardShell({
                     fontWeight: 700,
                     letterSpacing: "0.12em",
                     textTransform: "uppercase",
-                  }}>Coming soon</span>
+                  }}>{t("hatching.questions.superpowers.comingSoon")}</span>
                 </div>
               )}
 
               {activeQuestion.type === "path" && (
                 <div className="hw-workspace-wrap">
                   <div className="hw-workspace-panel">
-                    <p className="hw-inline-note">Think of it as AzulClaw's desk. Everything it reads, creates or organises will live inside that folder.</p>
+                    <p className="hw-inline-note">{t("hatching.workspace.think")}</p>
 
                     <div className="hw-workspace-actions">
                       <button type="button" className="hw-btn-ghost" onClick={() => void handlePickWorkspace()} disabled={isPickingWorkspace}>
-                        {isPickingWorkspace ? "Opening browser..." : "Choose folder..."}
+                        {isPickingWorkspace ? t("hatching.workspace.openingBrowser") : t("hatching.workspace.chooseFolder")}
                       </button>
-                      <span className="hw-inline-note">You can also paste or adjust the path manually.</span>
+                      <span className="hw-inline-note">{t("hatching.workspace.pasteOrAdjust")}</span>
                     </div>
 
-                    <label className="hw-field-label" htmlFor="hw-workspace-root">Workspace folder</label>
-                    <input id="hw-workspace-root" className="hw-input-line hw-input-mono" type="text" value={workspaceRoot} placeholder={activeQuestion.placeholder} onChange={(event) => setWorkspaceRoot(event.target.value)} autoFocus />
+                    <label className="hw-field-label" htmlFor="hw-workspace-root">{t("hatching.workspace.workspaceFolder")}</label>
+                    <input id="hw-workspace-root" className="hw-input-line hw-input-mono" type="text" value={workspaceRoot} placeholder={t("hatching.questions.workspace.placeholder")} onChange={(event) => setWorkspaceRoot(event.target.value)} autoFocus />
 
                     {previewMemoryDbPath(workspaceRoot) && (
                       <div className="hw-workspace-db-preview">
-                        <span className="hw-field-label">Memory database (auto)</span>
+                        <span className="hw-field-label">{t("hatching.workspace.memoryDb")}</span>
                         <p className="hw-inline-note hw-mono">{previewMemoryDbPath(workspaceRoot)}</p>
                       </div>
                     )}
@@ -1781,13 +1794,13 @@ export function SetupWizardShell({
                     {workspacePickerError && <p className="hw-inline-note hw-inline-note-warning">{workspacePickerError}</p>}
 
                     <div className="hw-workspace-confirm">
-                      <p className="hw-field-label">Sensitive actions</p>
+                      <p className="hw-field-label">{t("hatching.workspace.sensitiveActions")}</p>
                       <div className="hw-choice-row">
                         <button type="button" className={`hw-choice${confirmSensitiveActions ? " hw-choice-active" : ""}`} onClick={() => setConfirmSensitiveActions(true)}>
-                          Ask before changing important things
+                          {t("hatching.workspace.askBefore")}
                         </button>
                         <button type="button" className={`hw-choice${!confirmSensitiveActions ? " hw-choice-active" : ""}`} onClick={() => setConfirmSensitiveActions(false)}>
-                          Let it act without prior confirmation
+                          {t("hatching.workspace.actWithout")}
                         </button>
                       </div>
                     </div>
@@ -1807,35 +1820,35 @@ export function SetupWizardShell({
           <div key="final" className={`hw-content hw-celebrate ${contentAnim}`}>
             <img src={mascotImage} alt="AzulClaw" className="hw-celebrate-img" />
             <div className="hw-question" style={{ textAlign: "center" }}>
-              <p className="hw-label">READY</p>
-              <h1 className="hw-title">{draftProfile.name} is ready to get started</h1>
-              <p className="hw-helper">This is the starting point. Everything can be adjusted later from Settings.</p>
+              <p className="hw-label">{t("hatching.readyLabel")}</p>
+              <h1 className="hw-title">{t("hatching.readyTitle", { name: draftProfile.name })}</h1>
+              <p className="hw-helper">{t("hatching.readyDesc")}</p>
             </div>
 
             <div className="hw-summary-grid">
-              <div className="hw-summary-item"><span className="hw-summary-label">Name</span><span className="hw-summary-value">{draftProfile.name}</span></div>
+              <div className="hw-summary-item"><span className="hw-summary-label">{t("hatching.summaryName")}</span><span className="hw-summary-value">{draftProfile.name}</span></div>
 
-              <div className="hw-summary-item"><span className="hw-summary-label">Style</span><span className="hw-summary-value">{draftProfile.tone} · {draftProfile.style}</span></div>
-              <div className="hw-summary-item"><span className="hw-summary-label">Azure</span><span className="hw-summary-value">{azureConfig.connected ? (azureConfig.authMethod === "api_key" ? "API key connected" : "Microsoft login connected") : "Not connected"}</span></div>
-              <div className="hw-summary-item"><span className="hw-summary-label">Key Vault</span><span className="hw-summary-value hw-mono">{azureConfig.keyVaultUrl || "Not selected"}</span></div>
-              <div className="hw-summary-item"><span className="hw-summary-label">Workspace</span><span className="hw-summary-value hw-mono">{draftProfile.workspace_root}</span></div>
-              <div className="hw-summary-item" style={{ gridColumn: "1 / -1" }}><span className="hw-summary-label">Memory database</span><span className="hw-summary-value hw-mono">{previewMemoryDbPath(draftProfile.workspace_root) || "(set workspace folder)"}</span></div>
-              <div className="hw-summary-item" style={{ gridColumn: "1 / -1" }}><span className="hw-summary-label">Capabilities</span><span className="hw-summary-value">{draftProfile.skills.length > 0 ? draftProfile.skills.join(", ") : "None for now"}</span></div>
+              <div className="hw-summary-item"><span className="hw-summary-label">{t("hatching.summaryStyle")}</span><span className="hw-summary-value">{draftProfile.tone} · {draftProfile.style}</span></div>
+              <div className="hw-summary-item"><span className="hw-summary-label">{t("hatching.summaryAzure")}</span><span className="hw-summary-value">{azureConfig.connected ? (azureConfig.authMethod === "api_key" ? t("hatching.azureApiKeyConnected") : t("hatching.azureMicrosoftConnected")) : t("hatching.azureNotConnected")}</span></div>
+              <div className="hw-summary-item"><span className="hw-summary-label">{t("hatching.summaryKeyVault")}</span><span className="hw-summary-value hw-mono">{azureConfig.keyVaultUrl || t("hatching.keyVaultNotSelected")}</span></div>
+              <div className="hw-summary-item"><span className="hw-summary-label">{t("hatching.summaryWorkspace")}</span><span className="hw-summary-value hw-mono">{draftProfile.workspace_root}</span></div>
+              <div className="hw-summary-item" style={{ gridColumn: "1 / -1" }}><span className="hw-summary-label">{t("hatching.summaryMemoryDb")}</span><span className="hw-summary-value hw-mono">{previewMemoryDbPath(draftProfile.workspace_root) || t("hatching.setWorkspaceFolder")}</span></div>
+              <div className="hw-summary-item" style={{ gridColumn: "1 / -1" }}><span className="hw-summary-label">{t("hatching.summaryCapabilities")}</span><span className="hw-summary-value">{draftProfile.skills.length > 0 ? draftProfile.skills.join(", ") : t("hatching.noCapabilities")}</span></div>
             </div>
           </div>
         )}
       </main>
 
       <footer className="hw-footer">
-        <button type="button" className="hw-btn-ghost" onClick={handleBack} disabled={currentStep === 0 || Boolean(activeSkill)}>Back</button>
-        <span className="hw-step-label">{isFinalStep ? "Summary" : `${stepNumber} / ${wizardQuestions.length}`}</span>
+        <button type="button" className="hw-btn-ghost" onClick={handleBack} disabled={currentStep === 0 || Boolean(activeSkill)}>{t("hatching.back")}</button>
+        <span className="hw-step-label">{isFinalStep ? t("hatching.summary") : t("hatching.stepProgress", { step: stepNumber, total: wizardQuestions.length })}</span>
         {saveError && <span className="hw-inline-note hw-inline-note-warning">{saveError}</span>}
 
         {isFinalStep ? (
           <div style={{ display: "flex", gap: "10px" }}>
-            {!onboardingRequired && <button type="button" className="hw-btn-ghost" onClick={() => void handleSave(false)}>{isSaving ? "Saving..." : "Save draft"}</button>}
+            {!onboardingRequired && <button type="button" className="hw-btn-ghost" onClick={() => void handleSave(false)}>{isSaving ? t("hatching.saving") : t("hatching.saveDraft")}</button>}
             <button type="button" className="hw-btn-primary" onClick={() => void handleSave(true)}>
-              {isSaving ? "Saving..." : onboardingRequired ? "Enter the desktop ->" : "Apply changes ->"}
+              {isSaving ? t("hatching.saving") : onboardingRequired ? t("hatching.enterDesktop") : t("hatching.applyChanges")}
             </button>
           </div>
         ) : (
@@ -1849,16 +1862,14 @@ export function SetupWizardShell({
             <div className="hw-skip-icon" aria-hidden="true">!</div>
             <div className="hw-modal-head">
               <div>
-                <p className="hw-field-label">Azure is required</p>
-                <h3 className="hw-modal-title">AzulClaw will not work without Azure</h3>
+                <p className="hw-field-label">{t("hatching.skip.azureRequired")}</p>
+                <h3 className="hw-modal-title">{t("hatching.skip.azureTitle")}</h3>
               </div>
             </div>
-            <p className="hw-inline-note">
-              If you skip this step, the assistant cannot call Azure OpenAI or use your Azure resources. You can continue only to finish the profile and connect Azure later from settings.
-            </p>
+            <p className="hw-inline-note">{t("hatching.skip.azureDesc")}</p>
             <div className="hw-modal-actions">
-              <button type="button" className="hw-btn-ghost" onClick={() => setShowAzureSkipWarning(false)}>Go back and connect</button>
-              <button type="button" className="hw-btn-primary" onClick={confirmAzureSkip}>Skip anyway</button>
+              <button type="button" className="hw-btn-ghost" onClick={() => setShowAzureSkipWarning(false)}>{t("hatching.skip.goBackConnect")}</button>
+              <button type="button" className="hw-btn-primary" onClick={confirmAzureSkip}>{t("hatching.skip.skipAnyway")}</button>
             </div>
           </div>
         </div>
@@ -1870,19 +1881,15 @@ export function SetupWizardShell({
             <div className="hw-skip-icon" aria-hidden="true">!</div>
             <div className="hw-modal-head">
               <div>
-                <p className="hw-field-label">Advanced mode</p>
-                <h3 className="hw-modal-title">Use API key mode only as a fallback</h3>
+                <p className="hw-field-label">{t("hatching.apiKeyWarning.advancedMode")}</p>
+                <h3 className="hw-modal-title">{t("hatching.apiKeyWarning.title")}</h3>
               </div>
             </div>
-            <p className="hw-inline-note">
-              Microsoft login is the recommended path. Use API key mode only when your tenant blocks Microsoft sign-in or when you need a manual Azure OpenAI connection.
-            </p>
-            <p className="hw-inline-note hw-inline-note-warning">
-              This mode stores an Azure OpenAI API key locally on this machine.
-            </p>
+            <p className="hw-inline-note">{t("hatching.apiKeyWarning.desc")}</p>
+            <p className="hw-inline-note hw-inline-note-warning">{t("hatching.apiKeyWarning.storageWarning")}</p>
             <div className="hw-modal-actions">
-              <button type="button" className="hw-btn-ghost" onClick={() => setShowApiKeyModeWarning(false)}>Keep recommended login</button>
-              <button type="button" className="hw-btn-primary" onClick={enableApiKeyMode}>Use API key anyway</button>
+              <button type="button" className="hw-btn-ghost" onClick={() => setShowApiKeyModeWarning(false)}>{t("hatching.apiKeyWarning.keepLogin")}</button>
+              <button type="button" className="hw-btn-primary" onClick={enableApiKeyMode}>{t("hatching.apiKeyWarning.useApiKey")}</button>
             </div>
           </div>
         </div>
@@ -1894,18 +1901,14 @@ export function SetupWizardShell({
             <div className="hw-skip-icon" aria-hidden="true">!</div>
             <div className="hw-modal-head">
               <div>
-                <p className="hw-field-label">Before you connect</p>
-                <h3 className="hw-modal-title">This stores a local Azure OpenAI key</h3>
+                <p className="hw-field-label">{t("hatching.apiKeyConnect.beforeConnect")}</p>
+                <h3 className="hw-modal-title">{t("hatching.apiKeyConnect.title")}</h3>
               </div>
             </div>
-            <p className="hw-inline-note">
-              AzulClaw will connect directly to Azure OpenAI with the endpoint, deployment names, and API key you entered.
-            </p>
-            <p className="hw-inline-note hw-inline-note-warning">
-              This is a fallback path. If Microsoft login is available in your tenant, that remains the recommended configuration.
-            </p>
+            <p className="hw-inline-note">{t("hatching.apiKeyConnect.desc")}</p>
+            <p className="hw-inline-note hw-inline-note-warning">{t("hatching.apiKeyConnect.fallbackWarning")}</p>
             <div className="hw-modal-actions">
-              <button type="button" className="hw-btn-ghost" onClick={() => setShowApiKeyConnectWarning(false)}>Go back</button>
+              <button type="button" className="hw-btn-ghost" onClick={() => setShowApiKeyConnectWarning(false)}>{t("hatching.apiKeyConnect.goBack")}</button>
               <button
                 type="button"
                 className="hw-btn-primary"
@@ -1914,7 +1917,7 @@ export function SetupWizardShell({
                   void handleConnectAzure(true);
                 }}
               >
-                Connect with API key
+                {t("hatching.apiKeyConnect.connect")}
               </button>
             </div>
           </div>
@@ -1926,20 +1929,20 @@ export function SetupWizardShell({
           <section className="hw-modal-card" role="dialog" aria-modal="true" aria-labelledby="hw-skill-modal-title" onClick={(event) => event.stopPropagation()}>
             <div className="hw-modal-head">
               <div>
-                <p className="hw-label">CONFIGURE SKILL</p>
-                <h3 id="hw-skill-modal-title" className="hw-modal-title">{activeSkill.title}</h3>
+                <p className="hw-label">{t("hatching.skills.configureSkill")}</p>
+                <h3 id="hw-skill-modal-title" className="hw-modal-title">{t(`hatching.skills.catalog.${activeSkill.id}.title`)}</h3>
               </div>
-              <button type="button" className="hw-btn-ghost" onClick={closeSkillConfig}>Close</button>
+              <button type="button" className="hw-btn-ghost" onClick={closeSkillConfig}>{t("hatching.skills.close")}</button>
             </div>
 
-            <p className="hw-inline-note">{activeSkill.description}</p>
+            <p className="hw-inline-note">{t(`hatching.skills.catalog.${activeSkill.id}.description`)}</p>
 
             <div className="hw-modal-fields">
               {activeSkill.fields.map((field, index) => (
                 <label key={field.id} className="hw-modal-field">
-                  <span className="hw-field-label">{field.label}</span>
-                  <input className="hw-modal-input" type={field.type} value={skillDraft[field.id] ?? ""} placeholder={field.placeholder} onChange={(event) => handleSkillFieldChange(field.id, event.target.value)} autoFocus={index === 0} />
-                  <span className="hw-inline-note">{field.helper}</span>
+                  <span className="hw-field-label">{t(`hatching.skills.catalog.${activeSkill.id}.fields.${field.id}.label`)}</span>
+                  <input className="hw-modal-input" type={field.type} value={skillDraft[field.id] ?? ""} placeholder={t(`hatching.skills.catalog.${activeSkill.id}.fields.${field.id}.placeholder`)} onChange={(event) => handleSkillFieldChange(field.id, event.target.value)} autoFocus={index === 0} />
+                  <span className="hw-inline-note">{t(`hatching.skills.catalog.${activeSkill.id}.fields.${field.id}.helper`)}</span>
                 </label>
               ))}
             </div>
@@ -1947,8 +1950,8 @@ export function SetupWizardShell({
             {skillModalError && <p className="hw-inline-note hw-inline-note-warning">{skillModalError}</p>}
 
             <div className="hw-modal-actions">
-              {configuredSkills.includes(activeSkill.id) && <button type="button" className="hw-btn-ghost" onClick={() => deactivateSkill(activeSkill.id)}>Deactivate skill</button>}
-              <button type="button" className="hw-btn-primary" onClick={saveSkillConfig}>{configuredSkills.includes(activeSkill.id) ? "Save configuration" : "Activate skill"}</button>
+              {configuredSkills.includes(activeSkill.id) && <button type="button" className="hw-btn-ghost" onClick={() => deactivateSkill(activeSkill.id)}>{t("hatching.skills.deactivate")}</button>}
+              <button type="button" className="hw-btn-primary" onClick={saveSkillConfig}>{configuredSkills.includes(activeSkill.id) ? t("hatching.skills.saveConfiguration") : t("hatching.skills.activate")}</button>
             </div>
           </section>
         </div>
