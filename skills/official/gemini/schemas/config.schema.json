@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "required": ["endpoint"],
+  "properties": {
+    "endpoint": {
+      "type": "string",
+      "title": "Gemini agent endpoint",
+      "format": "uri"
+    }
+  },
+  "additionalProperties": false
+}

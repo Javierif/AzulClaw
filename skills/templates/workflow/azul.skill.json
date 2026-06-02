@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "id": "com.example.workflow",
+  "name": "Example Workflow",
+  "version": "0.1.0",
+  "publisher": "Example",
+  "description": "Adds a reusable workflow built on existing AzulClaw capabilities.",
+  "kind": "workflow",
+  "runtime": {
+    "kind": "none"
+  },
+  "compatibility": {
+    "azulclaw_min_version": "0.1.0"
+  },
+  "categories": ["automation"],
+  "tags": ["workflow"],
+  "presentation": {
+    "icon_text": "WF",
+    "banner": {
+      "variant": "blueprint",
+      "title": "Workflow",
+      "accent": "#f59e0b"
+    }
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "secrets": [],
+  "permissions": {
+    "filesystem": [],
+    "process": false,
+    "network": [],
+    "memory": "none",
+    "channels": [],
+    "sensitive_actions": []
+  },
+  "capabilities": [
+    {
+      "id": "example.workflow",
+      "description": "Run the example workflow."
+    }
+  ],
+  "activation": {
+    "restart_required": false
+  }
+}

@@ -1,4 +1,4 @@
-"""Natural-language heartbeat creation flow for chat turns."""
+﻿"""Natural-language heartbeat creation flow for chat turns."""
 
 from __future__ import annotations
 
@@ -12,10 +12,12 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, field_validator
 
 from ..api.hatching_store import HatchingStore
+from .approval_protocol import render_approval_block
+from .approval_service import ApprovalService, default_approval_lifecycle_path
+from .semantic_judge import SemanticJudgeService
 from .store import RuntimeStore, ScheduledJob, parse_iso_datetime, to_iso_z, utc_now
 
 
-HEARTBEAT_CONFIRMATION_ID = "pending-heartbeat-create"
 PENDING_HEARTBEAT_TTL_SECONDS = 10 * 60
 FREQUENCY_CLARIFICATION = (
     "I could not process the frequency. Could you confirm how often you want me "
@@ -25,6 +27,10 @@ HEARTBEAT_CREATION_ERROR = (
     "I could not create the heartbeat because the schedule is invalid. "
     "Could you confirm how often you want me to run this task? "
     "For example: 'every 2 hours'."
+)
+HEARTBEAT_CARD_ONLY_CONFIRMATION = (
+    "For security, approve or cancel this heartbeat using the confirmation card in chat. "
+    "Typed yes/no replies are not accepted."
 )
 
 
@@ -37,6 +43,10 @@ def _runtime_root() -> Path:
 
 def _default_pending_actions_path() -> Path:
     return _runtime_root() / "runtime_pending_actions.json"
+
+
+def _default_approval_lifecycle_path() -> Path:
+    return default_approval_lifecycle_path()
 
 
 class HeartbeatDraftModel(BaseModel):
@@ -79,6 +89,7 @@ class PendingHeartbeatAction:
 
     id: str
     user_id: str
+    conversation_id: str
     draft: dict[str, Any]
     created_at: str
 
@@ -95,10 +106,21 @@ class HeartbeatIntentOutcome:
 class PendingHeartbeatStore:
     """Small JSON store for pending heartbeat confirmations."""
 
-    def __init__(self, path: Path | None = None, ttl_seconds: int = PENDING_HEARTBEAT_TTL_SECONDS):
+    def __init__(
+        self,
+        path: Path | None = None,
+        ttl_seconds: int = PENDING_HEARTBEAT_TTL_SECONDS,
+        approval_service: ApprovalService | None = None,
+    ):
         self.path = path or _default_pending_actions_path()
         self.ttl_seconds = ttl_seconds
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        lifecycle_path = (
+            self.path.parent / "approval-lifecycle.json"
+            if path is not None
+            else _default_approval_lifecycle_path()
+        )
+        self.approval_service = approval_service or ApprovalService(lifecycle_path)
 
     def load(self) -> list[PendingHeartbeatAction]:
         if not self.path.exists():
@@ -123,11 +145,17 @@ class PendingHeartbeatStore:
                 PendingHeartbeatAction(
                     id=action_id,
                     user_id=user_id,
+                    conversation_id=str(item.get("conversation_id", "")).strip(),
                     draft=draft,
                     created_at=str(item.get("created_at", "")).strip(),
                 )
             )
-        active_items = [item for item in items if not self._is_expired(item)]
+        active_items: list[PendingHeartbeatAction] = []
+        for item in items:
+            if self._is_expired(item):
+                self.approval_service.mark_expired(item.id)
+                continue
+            active_items.append(item)
         if len(active_items) != len(items):
             self._save(active_items)
         return active_items
@@ -136,26 +164,111 @@ class PendingHeartbeatStore:
         safe_user_id = str(user_id).strip()
         return next((item for item in self.load() if item.user_id == safe_user_id), None)
 
-    def save_for_user(self, user_id: str, draft: HeartbeatDraft) -> PendingHeartbeatAction:
+    def get_for_context(self, user_id: str, conversation_id: str | None) -> PendingHeartbeatAction | None:
+        safe_user_id = str(user_id).strip()
+        safe_conversation_id = str(conversation_id or "").strip()
+        items = self.load()
+        if safe_conversation_id:
+            return next(
+                (
+                    item
+                    for item in items
+                    if item.user_id == safe_user_id and item.conversation_id == safe_conversation_id
+                ),
+                None,
+            )
+        return next((item for item in items if item.user_id == safe_user_id), None)
+
+    def get_by_action_id(self, user_id: str, action_id: str) -> PendingHeartbeatAction | None:
+        safe_user_id = str(user_id).strip()
+        safe_action_id = str(action_id).strip()
+        return next(
+            (
+                item
+                for item in self.load()
+                if item.user_id == safe_user_id and item.id == safe_action_id
+            ),
+            None,
+        )
+
+    def save_for_user(
+        self,
+        user_id: str,
+        draft: HeartbeatDraft,
+        conversation_id: str | None = None,
+    ) -> PendingHeartbeatAction:
         safe_user_id = str(user_id).strip()
         action = PendingHeartbeatAction(
-            id=HEARTBEAT_CONFIRMATION_ID,
+            id=f"pending-heartbeat-{uuid4().hex[:12]}",
             user_id=safe_user_id,
+            conversation_id=str(conversation_id or "").strip(),
             draft=asdict(draft),
             created_at=to_iso_z(utc_now()),
         )
-        items = [item for item in self.load() if item.user_id != safe_user_id]
+        items = [
+            item
+            for item in self.load()
+            if not (
+                item.user_id == safe_user_id
+                and item.conversation_id == action.conversation_id
+            )
+        ]
         items.insert(0, action)
         self._save(items)
+        self.approval_service.register_pending(
+            action_id=action.id,
+            user_id=action.user_id,
+            conversation_id=action.conversation_id,
+            source="heartbeat",
+            action_kind="heartbeat_create",
+            title="Heartbeat draft",
+            summary=f"Approve creating the heartbeat '{draft.name}'.",
+            metadata={"draft": action.draft},
+            supersede_existing=True,
+            supersede_scope="conversation",
+        )
         return action
 
-    def pop_for_user(self, user_id: str) -> PendingHeartbeatAction | None:
+    def pop_for_user(self, user_id: str, *, status: str = "completed") -> PendingHeartbeatAction | None:
         safe_user_id = str(user_id).strip()
         current = self.load()
         action = next((item for item in current if item.user_id == safe_user_id), None)
         if action is None:
             return None
         self._save([item for item in current if item.user_id != safe_user_id])
+        if status == "rejected":
+            self.approval_service.mark_rejected(action.id)
+        elif status == "expired":
+            self.approval_service.mark_expired(action.id)
+        elif status == "failed":
+            self.approval_service.mark_failed(action.id)
+        else:
+            self.approval_service.mark_completed(action.id)
+        return action
+
+    def pop_by_action_id(self, user_id: str, action_id: str, *, status: str = "completed") -> PendingHeartbeatAction | None:
+        safe_user_id = str(user_id).strip()
+        safe_action_id = str(action_id).strip()
+        current = self.load()
+        action = next(
+            (
+                item
+                for item in current
+                if item.user_id == safe_user_id and item.id == safe_action_id
+            ),
+            None,
+        )
+        if action is None:
+            return None
+        self._save([item for item in current if item.id != safe_action_id])
+        if status == "rejected":
+            self.approval_service.mark_rejected(action.id)
+        elif status == "expired":
+            self.approval_service.mark_expired(action.id)
+        elif status == "failed":
+            self.approval_service.mark_failed(action.id)
+        else:
+            self.approval_service.mark_completed(action.id)
         return action
 
     def _save(self, items: list[PendingHeartbeatAction]) -> None:
@@ -186,36 +299,31 @@ class HeartbeatIntentService:
         self.runtime_manager = runtime_manager
         self.store = store
         self.pending_store = pending_store or PendingHeartbeatStore()
+        self.semantic_judges = SemanticJudgeService(runtime_manager)
 
-    async def handle_message(self, user_id: str, user_message: str) -> HeartbeatIntentOutcome | None:
+    async def handle_message(
+        self,
+        user_id: str,
+        user_message: str,
+        conversation_id: str | None = None,
+    ) -> HeartbeatIntentOutcome | None:
         """Handles pending confirmations or a new heartbeat draft."""
-        pending = self.pending_store.get_for_user(user_id)
+        pending = self.pending_store.get_for_context(user_id, conversation_id)
         route = await self._semantic_route(user_message, has_pending=pending is not None)
 
         if route is None:
-            route = self._local_pending_route(user_message) if pending is not None else None
-            if route is None:
-                return None
+            return None
 
         if pending is not None:
             if route.route == "confirm_pending":
-                draft = self._draft_from_dict(pending.draft)
-                try:
-                    job = self._create_job(draft)
-                except ValueError:
-                    return HeartbeatIntentOutcome(
-                        response=HEARTBEAT_CREATION_ERROR,
-                        pending=pending,
-                    )
-                self.pending_store.pop_for_user(user_id)
                 return HeartbeatIntentOutcome(
-                    response=self._created_response(job),
-                    job=job,
+                    response=HEARTBEAT_CARD_ONLY_CONFIRMATION,
+                    pending=pending,
                 )
             if route.route == "cancel_pending":
-                self.pending_store.pop_for_user(user_id)
                 return HeartbeatIntentOutcome(
-                    response="I cancelled the pending heartbeat creation."
+                    response=HEARTBEAT_CARD_ONLY_CONFIRMATION,
+                    pending=pending,
                 )
 
         if route.route == "none":
@@ -226,9 +334,9 @@ class HeartbeatIntentService:
             return HeartbeatIntentOutcome(response=FREQUENCY_CLARIFICATION)
 
         if self._requires_confirmation():
-            action = self.pending_store.save_for_user(user_id, draft)
+            action = self.pending_store.save_for_user(user_id, draft, conversation_id)
             return HeartbeatIntentOutcome(
-                response=self._confirmation_response(draft),
+                response=self._confirmation_response(action, draft),
                 pending=action,
             )
 
@@ -238,97 +346,79 @@ class HeartbeatIntentService:
             return HeartbeatIntentOutcome(response=HEARTBEAT_CREATION_ERROR)
         return HeartbeatIntentOutcome(response=self._created_response(job), job=job)
 
-    def _local_pending_route(self, user_message: str) -> HeartbeatRouteModel | None:
-        """Fallback for explicit pending confirmation/cancellation when the router is unavailable."""
-        normalized = " ".join((user_message or "").strip().casefold().split())
-        normalized = normalized.strip(" .!¡?¿")
-        confirm = {
-            "yes",
-            "yes create it",
-            "yes, create it",
-            "create it",
-            "confirm",
-            "ok",
-            "okay",
-            "si",
-            "sí",
-            "si crealo",
-            "sí créalo",
-            "crealo",
-            "créalo",
-            "confirmar",
-        }
-        cancel = {
-            "no",
-            "cancel",
-            "cancel it",
-            "cancelar",
-            "descartar",
-            "no lo crees",
-            "no crear",
-        }
-        if normalized in confirm:
-            return HeartbeatRouteModel(route="confirm_pending")
-        if normalized in cancel:
-            return HeartbeatRouteModel(route="cancel_pending")
-        return None
+    def handle_pending_decision(
+        self,
+        user_id: str,
+        action_id: str,
+        decision: Literal["approve", "reject"],
+    ) -> HeartbeatIntentOutcome | None:
+        """Executes a structured approval/rejection coming from the chat UI."""
+        safe_action_id = str(action_id).strip()
+        pending = self.pending_store.get_by_action_id(user_id, safe_action_id)
+        if pending is None or pending.id != safe_action_id:
+            record = self.pending_store.approval_service.get_by_action_id(safe_action_id)
+            if record is None or record.user_id != str(user_id).strip():
+                return None
+            if record.source != "heartbeat" and record.action_kind != "heartbeat_create":
+                return None
+            if record.status == "pending":
+                self.pending_store.approval_service.mark_expired(safe_action_id)
+                response = "That heartbeat approval is no longer available. Please regenerate it before approving."
+            elif record.status == "running":
+                response = "That heartbeat approval is already running."
+            elif record.status in {"completed", "approved"}:
+                response = "That heartbeat approval was already processed."
+            elif record.status == "rejected":
+                response = "That heartbeat approval was already canceled."
+            elif record.status == "failed":
+                response = "That heartbeat approval was accepted earlier, but the execution failed."
+            else:
+                response = "That heartbeat approval is no longer active."
+            return HeartbeatIntentOutcome(response=response)
+        if decision == "reject":
+            self.pending_store.pop_by_action_id(user_id, pending.id, status="rejected")
+            return HeartbeatIntentOutcome(response="I cancelled the pending heartbeat creation.")
 
+        draft = self._draft_from_dict(pending.draft)
+        try:
+            job = self._create_job(draft)
+        except ValueError:
+            return HeartbeatIntentOutcome(
+                response=HEARTBEAT_CREATION_ERROR,
+                pending=pending,
+            )
+        self.pending_store.pop_by_action_id(user_id, pending.id, status="completed")
+        return HeartbeatIntentOutcome(
+            response=self._created_response(job),
+            job=job,
+        )
     async def _semantic_route(
         self,
         user_message: str,
         *,
         has_pending: bool,
     ) -> HeartbeatRouteModel | None:
-        """Routes the turn with the fast model using native structured output."""
-        try:
-            from agent_framework import Message
-        except ModuleNotFoundError:
+        """Routes the turn through the shared semantic-judge service."""
+        service = self._get_semantic_judge_service()
+        if service is None:
             return None
-
-        messages = [
-            Message(
-                role="system",
-                contents=(
-                    "You are a semantic router for AzulClaw chat turns. "
-                    "Select exactly one route: create_heartbeat, confirm_pending, "
-                    "cancel_pending, or none. "
-                    "Use create_heartbeat only when the user is asking to create a recurring "
-                    "automation, heartbeat, or scheduled task. "
-                    "For create_heartbeat, return a draft with a short name, the action prompt, "
-                    "a standard 5-field Linux cron expression evaluated in the machine's local "
-                    "timezone, and lane='fast' unless the user explicitly asks for deep reasoning. "
-                    "Use confirm_pending or cancel_pending only when has_pending is true and "
-                    "the user is clearly confirming or cancelling the pending heartbeat draft. "
-                    "If the schedule is ambiguous or cannot be represented as cron, still use "
-                    "create_heartbeat but leave draft.cron_expression empty."
-                ),
-            ),
-            Message(
-                role="user",
-                contents=json.dumps(
-                    {
-                        "has_pending": has_pending,
-                        "message": user_message,
-                    },
-                    ensure_ascii=False,
-                ),
-            ),
-        ]
-        try:
-            result = await self.runtime_manager.execute_messages(
-                messages=messages,
-                lane="fast",
-                title="Heartbeat semantic routing",
-                source="heartbeat-router",
-                kind="agent-run",
-                response_format=HeartbeatRouteModel,
-                tools_enabled=False,
-                instructions=None,
-            )
-        except Exception:
-            return None
-        value = getattr(result, "value", None)
+        value = await service.judge_heartbeat_route(
+            user_message=user_message,
+            has_pending=has_pending,
+            response_format=HeartbeatRouteModel,
+        )
         return value if isinstance(value, HeartbeatRouteModel) else None
+
+    def _get_semantic_judge_service(self) -> SemanticJudgeService | None:
+        service = getattr(self, "semantic_judges", None)
+        if service is not None:
+            return service
+        runtime_manager = getattr(self, "runtime_manager", None)
+        if runtime_manager is None:
+            return None
+        service = SemanticJudgeService(runtime_manager)
+        self.semantic_judges = service
+        return service
 
     def _draft_from_dict(self, payload: dict[str, Any]) -> HeartbeatDraft:
         model = HeartbeatDraftModel.model_validate(payload)
@@ -373,14 +463,20 @@ class HeartbeatIntentService:
                 return job
         return None
 
-    def _confirmation_response(self, draft: HeartbeatDraft) -> str:
-        return (
-            "I can create this heartbeat:\n\n"
-            f"Name: {draft.name}\n"
-            f"Schedule: `{draft.cron_expression}`\n"
-            f"Action: {draft.prompt}\n"
-            "Delivery: desktop chat\n\n"
-            "Reply 'yes, create it' to activate it or 'no' to cancel."
+    def _confirmation_response(self, pending: PendingHeartbeatAction, draft: HeartbeatDraft) -> str:
+        return render_approval_block(
+            action_id=pending.id,
+            action_kind="heartbeat_create",
+            title="Heartbeat draft",
+            summary=f"Approve creating the heartbeat '{draft.name}'.",
+            approve_label="Create heartbeat",
+            reject_label="Cancel",
+            extra_fields={
+                "Name": draft.name,
+                "Schedule": f"`{draft.cron_expression}`",
+                "Action": draft.prompt,
+                "Delivery": "desktop chat",
+            },
         )
 
     def _created_response(self, job: ScheduledJob) -> str:
@@ -407,3 +503,4 @@ def _validate_draft(model: HeartbeatDraftModel | None) -> HeartbeatDraft | None:
         cron_expression=cron_expression,
         lane=model.lane,
     )
+

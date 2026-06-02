@@ -1,0 +1,16 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AZUL_SKILL_REGISTRY_NAME": "azulclaw-private",
+    "AZUL_SKILL_REGISTRY_STORAGE_MODE": "local",
+    "AZUL_SKILL_REGISTRY_BOOTSTRAP_CATALOG": "[]",
+    "AZUL_SKILL_ARTIFACT_DIR": "../../../dist/skills",
+    "AZUL_SKILL_REGISTRY_METADATA_PATH": "./registry_state.json",
+    "AZUL_SKILL_REGISTRY_CONSUMER_KEY": "",
+    "AZUL_SKILL_REGISTRY_ADMIN_KEY": "",
+    "AZUL_SKILL_REGISTRY_AZURE_TABLE_NAME": "skillregistry",
+    "AZUL_SKILL_REGISTRY_AZURE_BLOB_CONTAINER": "skill-artifacts"
+  }
+}

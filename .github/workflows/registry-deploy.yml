@@ -1,0 +1,82 @@
+name: Registry Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Terraform environment folder under azure/marketplace/terraform/envs"
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        working-directory: azure/marketplace/terraform/envs/${{ inputs.environment }}
+        run: terraform init
+
+      - name: Terraform plan
+        working-directory: azure/marketplace/terraform/envs/${{ inputs.environment }}
+        run: terraform plan -out=tfplan
+
+      - name: Terraform apply
+        working-directory: azure/marketplace/terraform/envs/${{ inputs.environment }}
+        run: terraform apply -auto-approve tfplan
+
+      - name: Resolve registry app outputs
+        id: tf
+        working-directory: azure/marketplace/terraform/envs/${{ inputs.environment }}
+        run: |
+          echo "function_app_name=$(terraform output -raw function_app_name)" >> "$GITHUB_OUTPUT"
+          echo "function_app_hostname=$(terraform output -raw function_app_default_hostname)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install registry function dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r azure/marketplace/registry_api/requirements.txt
+
+      - name: Deploy registry function app
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ steps.tf.outputs.function_app_name }}
+          package: azure/marketplace/registry_api
+
+      - name: Smoke test registry
+        env:
+          REGISTRY_HOST: ${{ steps.tf.outputs.function_app_hostname }}
+          REGISTRY_KEY: ${{ secrets.AZUL_REGISTRY_CONSUMER_KEY }}
+          REGISTRY_ADMIN_KEY: ${{ secrets.AZUL_REGISTRY_ADMIN_KEY }}
+        shell: bash
+        run: |
+          key="${REGISTRY_KEY:-$REGISTRY_ADMIN_KEY}"
+          headers=()
+          if [ -n "$key" ]; then
+            headers=(-H "x-functions-key: $key")
+          fi
+          curl --fail --show-error "${headers[@]}" "https://${REGISTRY_HOST}/api/health"
+          curl --fail --show-error "${headers[@]}" "https://${REGISTRY_HOST}/api/catalog"

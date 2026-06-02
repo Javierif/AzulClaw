@@ -1,0 +1,64 @@
+name: Skills Publish Draft
+
+on:
+  workflow_dispatch:
+    inputs:
+      skill_path:
+        description: "Skill directory to package, for example skills/official/gemini"
+        required: true
+        type: string
+      registry_url:
+        description: "Skill Registry base URL"
+        required: true
+        type: string
+
+jobs:
+  publish-draft:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate skill manifests
+        run: python scripts/validate_skills.py "${{ inputs.skill_path }}"
+
+      - name: Run marketplace regression tests
+        run: python -m unittest tests.test_skill_marketplace -v
+
+      - name: Run skill MCP contract tests
+        run: python -m unittest discover -s skills/official/desktop-organizer/tests -p "test_*.py" -v
+
+      - name: Package skill bundle
+        run: python scripts/package_skills.py "${{ inputs.skill_path }}" --out dist/skills
+
+      - name: Resolve bundle path
+        id: bundle
+        shell: bash
+        run: |
+          bundle_path="$(find dist/skills -maxdepth 1 -name '*.azulskill' | head -n 1)"
+          if [ -z "$bundle_path" ]; then
+            echo "No .azulskill bundle found." >&2
+            exit 1
+          fi
+          echo "bundle_path=$bundle_path" >> "$GITHUB_OUTPUT"
+
+      - name: Publish draft to registry
+        env:
+          REGISTRY_ADMIN_KEY: ${{ secrets.AZUL_REGISTRY_ADMIN_KEY }}
+        run: |
+          curl --fail --show-error \
+            -X POST "${{ inputs.registry_url }}/api/skills/publish" \
+            -H "x-functions-key: ${REGISTRY_ADMIN_KEY}" \
+            -F "status=draft" \
+            -F "published_by=github-actions" \
+            -F "bundle=@${{ steps.bundle.outputs.bundle_path }};type=application/octet-stream"

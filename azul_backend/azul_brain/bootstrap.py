@@ -12,7 +12,8 @@ from botbuilder.core import (
     TurnContext,
 )
 
-from .mcp_client import AzulHandsClient
+from .api.skill_services import list_enabled_local_mcp_runtime_specs
+from .mcp_client import AzulHandsClient, AzulMCPMultiplexer
 
 LOGGER = logging.getLogger(__name__)
 
@@ -36,16 +37,19 @@ def build_mcp_script_path(base_path: Path) -> Path:
     """Resolves the path to the MCP server script."""
     return base_path.parent / "azul_hands_mcp" / "mcp_server.py"
 
-def build_mcp_client(base_path: Path) -> AzulHandsClient:
-    """Builds the AzulClaw MCP client."""
+def build_mcp_client(base_path: Path) -> AzulMCPMultiplexer:
+    """Builds the AzulClaw MCP multiplexer for core and skill MCP runtimes."""
     packaged_mcp_command = os.environ.get("AZUL_HANDS_MCP_COMMAND", "").strip()
     if packaged_mcp_command:
-        return AzulHandsClient(
+        primary_client = AzulHandsClient(
             packaged_mcp_command,
             command=packaged_mcp_command,
             args=[],
             cwd=Path(packaged_mcp_command).parent,
+            label="AzulHands",
         )
+        return AzulMCPMultiplexer(primary_client, skill_specs_provider=list_enabled_local_mcp_runtime_specs)
 
     mcp_script_path = build_mcp_script_path(base_path)
-    return AzulHandsClient(str(mcp_script_path))
+    primary_client = AzulHandsClient(str(mcp_script_path), label="AzulHands")
+    return AzulMCPMultiplexer(primary_client, skill_specs_provider=list_enabled_local_mcp_runtime_specs)

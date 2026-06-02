@@ -10,9 +10,16 @@ import { ChatShell } from "../features/chat/ChatShell";
 import { ContextShell } from "../features/context/ContextShell";
 import { HeartbeatsShell } from "../features/heartbeats/HeartbeatsShell";
 import { SetupWizardShell } from "../features/hatching/HatchingShell";
-import { SettingsShell } from "../features/settings/SettingsShell";
+import { RegistryAdminShell } from "../features/registry/RegistryAdminShell";
+import { SettingsShell, type SettingsTab } from "../features/settings/SettingsShell";
 import { SkillsShell } from "../features/skills/SkillsShell";
-import { ensureBackendAuth, listConversations, loadBackendStatus, loadSetupProfile } from "../lib/api";
+import {
+  ensureBackendAuth,
+  listConversations,
+  loadBackendStatus,
+  loadSetupProfile,
+  loadSkillMarketplaceSettings,
+} from "../lib/api";
 import { profileCanRenewAzureLogin, renewAzureLoginFromProfile } from "../lib/azure-session";
 import { DEFAULT_CONVERSATION_TITLE, normalizeConversationTitle } from "../lib/conversation-copy";
 import { notifyUnreadConversation } from "../lib/desktop-notifications";
@@ -50,6 +57,9 @@ const TYPING_SENTENCES = [
   "I can feel a question forming.",
 ];
 
+const THINKING_LABEL_MIN_DELAY_MS = 3_000;
+const THINKING_LABEL_MAX_DELAY_MS = 15_000;
+
 function renderView(
   view: AppView,
   profile: SetupProfile,
@@ -64,16 +74,28 @@ function renderView(
   externalConversationRequest: { conversationId: string; title: string; nonce: number } | null,
   headerPortalTarget: HTMLElement | null,
   focusRequestNonce: number,
+  onOpenMarketplaceSettings: () => void,
+  settingsInitialTab: SettingsTab,
+  onMarketplaceSettingsChanged: (settings: { registry_admin_key_configured?: boolean }) => void,
 ) {
   switch (view) {
     case "skills":
-      return <SkillsShell headerPortalTarget={headerPortalTarget} />;
+      return <SkillsShell headerPortalTarget={headerPortalTarget} onOpenMarketplaceSettings={onOpenMarketplaceSettings} />;
+    case "registry":
+      return <RegistryAdminShell headerPortalTarget={headerPortalTarget} onOpenMarketplaceSettings={onOpenMarketplaceSettings} />;
     case "context":
       return <ContextShell headerPortalTarget={headerPortalTarget} />;
     case "heartbeats":
       return <HeartbeatsShell headerPortalTarget={headerPortalTarget} />;
     case "settings":
-      return <SettingsShell headerPortalTarget={headerPortalTarget} onLocalDataWiped={onLocalDataWiped} />;
+      return (
+        <SettingsShell
+          headerPortalTarget={headerPortalTarget}
+          initialTab={settingsInitialTab}
+          onLocalDataWiped={onLocalDataWiped}
+          onMarketplaceSettingsChanged={onMarketplaceSettingsChanged}
+        />
+      );
     case "chat":
     default:
       return (
@@ -93,12 +115,14 @@ function renderView(
 
 export function DesktopApp() {
   const [activeView, setActiveView] = useState<AppView>("chat");
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>("azure");
   const [profile, setProfile] = useState<SetupProfile>(defaultSetupProfile);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [authPromptVisible, setAuthPromptVisible] = useState(false);
   const [authPromptBusy, setAuthPromptBusy] = useState(false);
   const [authPromptError, setAuthPromptError] = useState("");
   const [authPromptDismissWarning, setAuthPromptDismissWarning] = useState(false);
+  const [registryAdminVisible, setRegistryAdminVisible] = useState(false);
   const [topbarLabel, setTopbarLabel] = useState<{ text: string; mode: "thinking" | "typing" } | null>(null);
   const [conversationTitle, setConversationTitle] = useState(DEFAULT_CONVERSATION_TITLE);
   const [sectionHeaderHost, setSectionHeaderHost] = useState<HTMLDivElement | null>(null);
@@ -116,6 +140,29 @@ export function DesktopApp() {
   const isThinkingRef = useRef(false);
   const notificationNonceRef = useRef(0);
 
+  const clearThinkingLabelTimer = useCallback(() => {
+    if (thinkingIntervalRef.current !== null) {
+      window.clearTimeout(thinkingIntervalRef.current);
+      thinkingIntervalRef.current = null;
+    }
+  }, []);
+
+  const scheduleNextThinkingLabel = useCallback(() => {
+    clearThinkingLabelTimer();
+    const delay =
+      THINKING_LABEL_MIN_DELAY_MS +
+      Math.floor(Math.random() * (THINKING_LABEL_MAX_DELAY_MS - THINKING_LABEL_MIN_DELAY_MS + 1));
+    thinkingIntervalRef.current = window.setTimeout(() => {
+      if (!isThinkingRef.current) {
+        thinkingIntervalRef.current = null;
+        return;
+      }
+      sentenceIndexRef.current = (sentenceIndexRef.current + 1) % THINKING_SENTENCES.length;
+      setTopbarLabel({ text: THINKING_SENTENCES[sentenceIndexRef.current], mode: "thinking" });
+      scheduleNextThinkingLabel();
+    }, delay);
+  }, [clearThinkingLabelTimer]);
+
   useEffect(() => {
     let isMounted = true;
 
@@ -123,6 +170,16 @@ export function DesktopApp() {
       if (isMounted) {
         setProfile(data);
         setIsBootstrapping(false);
+      }
+      try {
+        const marketplaceSettings = await loadSkillMarketplaceSettings();
+        if (isMounted) {
+          setRegistryAdminVisible(Boolean(marketplaceSettings.registry_admin_key_configured));
+        }
+      } catch {
+        if (isMounted) {
+          setRegistryAdminVisible(false);
+        }
       }
       try {
         const auth = await ensureBackendAuth();
@@ -170,6 +227,18 @@ export function DesktopApp() {
     }
   }
 
+  function handleNavigate(view: AppView) {
+    if (view === "settings") {
+      setSettingsInitialTab("azure");
+    }
+    setActiveView(view);
+  }
+
+  function openMarketplaceSettings() {
+    setSettingsInitialTab("marketplace");
+    setActiveView("settings");
+  }
+
   function handleDismissAzureLogin() {
     if (!authPromptDismissWarning) {
       setAuthPromptDismissWarning(true);
@@ -183,28 +252,20 @@ export function DesktopApp() {
   const onThinkingChange = useCallback((thinking: boolean) => {
     isThinkingRef.current = thinking;
     if (thinking) {
+      clearThinkingLabelTimer();
       sentenceIndexRef.current = Math.floor(Math.random() * THINKING_SENTENCES.length);
       setTopbarLabel({ text: THINKING_SENTENCES[sentenceIndexRef.current], mode: "thinking" });
-      thinkingIntervalRef.current = window.setInterval(() => {
-        sentenceIndexRef.current = (sentenceIndexRef.current + 1) % THINKING_SENTENCES.length;
-        setTopbarLabel({ text: THINKING_SENTENCES[sentenceIndexRef.current], mode: "thinking" });
-      }, 2800);
+      scheduleNextThinkingLabel();
     } else {
-      if (thinkingIntervalRef.current !== null) {
-        window.clearInterval(thinkingIntervalRef.current);
-        thinkingIntervalRef.current = null;
-      }
+      clearThinkingLabelTimer();
       setTopbarLabel(null);
     }
-  }, []);
+  }, [clearThinkingLabelTimer, scheduleNextThinkingLabel]);
 
   const onAnswerStart = useCallback(() => {
-    if (thinkingIntervalRef.current !== null) {
-      window.clearInterval(thinkingIntervalRef.current);
-      thinkingIntervalRef.current = null;
-    }
+    clearThinkingLabelTimer();
     setTopbarLabel(null);
-  }, []);
+  }, [clearThinkingLabelTimer]);
 
   const onTypingChange = useCallback((typing: boolean) => {
     if (isThinkingRef.current) return;
@@ -275,11 +336,12 @@ export function DesktopApp() {
 
     return () => {
       cancelled = true;
+      clearThinkingLabelTimer();
       if (pollId !== null) {
         window.clearTimeout(pollId);
       }
     };
-  }, []);
+  }, [clearThinkingLabelTimer]);
 
   useEffect(() => {
     if (!isTauri()) {
@@ -332,7 +394,12 @@ export function DesktopApp() {
 
   return (
     <div className="desktop-frame">
-      <Sidebar activeView={activeView} onNavigate={setActiveView} profile={profile} />
+      <Sidebar
+        activeView={activeView}
+        onNavigate={handleNavigate}
+        profile={profile}
+        registryAdminVisible={registryAdminVisible}
+      />
       <main className="desktop-main">
         <header className={`desktop-topbar${activeView === "chat" ? "" : " desktop-topbar-section-mode"}`}>
           <div className="topbar-identity">
@@ -389,6 +456,9 @@ export function DesktopApp() {
           externalConversationRequest,
           sectionHeaderHost,
           chatFocusNonce,
+          openMarketplaceSettings,
+          settingsInitialTab,
+          (settings) => setRegistryAdminVisible(Boolean(settings.registry_admin_key_configured)),
         )}
         {authPromptVisible && (
           <div className="hw-modal-backdrop">

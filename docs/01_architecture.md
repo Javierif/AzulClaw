@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Last reviewed: 2026-04-15
+Last reviewed: 2026-06-02
 
 ## Purpose
 
@@ -64,6 +64,10 @@ Workspace sandbox
 2. Azure Function validates and relays it through Service Bus.
 3. The local worker consumes the activity and routes it into the same local orchestration stack.
 
+Telegram is the current first-party channel connector in this repository. The
+relay path is Bot Framework-based so other configured channels can use the same
+transport pattern when their channel-specific setup is provided.
+
 ## Design principles
 
 ### Local-first
@@ -87,10 +91,11 @@ Memory, runtime settings, jobs, and process history are persisted locally so the
 ```text
 azul_backend/       Local runtime and MCP server
 azul_desktop/       Desktop shell
-azure/              Cloud relay for channels
+azure/              Core Azure platform, marketplace, and shared Terraform
 docs/               Canonical documentation
 memory/             Generated local runtime state
 scripts/            Utility scripts
+skills/             First-party skills, templates, manifests, and skill infra
 ```
 
 ## Related documents

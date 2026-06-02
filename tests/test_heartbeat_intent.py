@@ -10,8 +10,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 from azul_backend.azul_brain.runtime.heartbeat_intent import (
+    HEARTBEAT_CARD_ONLY_CONFIRMATION,
     FREQUENCY_CLARIFICATION,
     HeartbeatDraft,
     HeartbeatDraftModel,
@@ -132,7 +134,8 @@ class HeartbeatIntentServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(outcome)
             assert outcome is not None
             self.assertIsNotNone(outcome.pending)
-            self.assertIn("I can create this heartbeat", outcome.response)
+            self.assertIn("[PENDING_ACTION:approval]", outcome.response)
+            self.assertIn("ActionKind: heartbeat_create", outcome.response)
             self.assertIn("`*/30 * * * *`", outcome.response)
             self.assertEqual(store.load_jobs(), [])
             self.assertEqual(runtime.calls, 1)
@@ -143,7 +146,7 @@ class HeartbeatIntentServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(pending[0]["draft"]["cron_expression"], "*/30 * * * *")
             self.assertEqual(pending[0]["draft"]["prompt"], "Review Inbox and flag urgent items.")
 
-    async def test_confirmation_creates_cron_job_and_clears_pending_action(self) -> None:
+    async def test_structured_pending_decision_creates_cron_job_and_clears_pending_action(self) -> None:
         with temp_runtime_dir() as root:
             store = make_store(root)
             runtime = FakeRuntimeManager(
@@ -168,9 +171,15 @@ class HeartbeatIntentServiceTests(unittest.IsolatedAsyncioTestCase):
                     "Every 30 minutes, review HEARTBEAT.md.",
                 )
 
-            runtime.value = HeartbeatRouteModel(route="confirm_pending")
-            with fake_agent_framework_module():
-                outcome = await service.handle_message("desktop-user", "yes, create it")
+            pending = pending_store.get_for_user("desktop-user")
+            self.assertIsNotNone(pending)
+            assert pending is not None
+
+            outcome = service.handle_pending_decision(
+                "desktop-user",
+                pending.id,
+                "approve",
+            )
 
             self.assertIsNotNone(outcome)
             assert outcome is not None
@@ -184,7 +193,7 @@ class HeartbeatIntentServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(pending_store.load(), [])
             self.assertIn("I created the heartbeat", outcome.response)
 
-    async def test_failed_confirmation_preserves_pending_action(self) -> None:
+    async def test_failed_structured_approval_preserves_pending_action(self) -> None:
         with temp_runtime_dir() as root:
             store = make_store(root)
             pending_store = PendingHeartbeatStore(root / "pending.json")
@@ -204,8 +213,11 @@ class HeartbeatIntentServiceTests(unittest.IsolatedAsyncioTestCase):
                 pending_store=pending_store,
             )
 
-            with fake_agent_framework_module():
-                outcome = await service.handle_message("desktop-user", "yes, create it")
+            outcome = service.handle_pending_decision(
+                "desktop-user",
+                pending_store.get_for_user("desktop-user").id,
+                "approve",
+            )
 
             self.assertIsNotNone(outcome)
             assert outcome is not None
@@ -216,6 +228,34 @@ class HeartbeatIntentServiceTests(unittest.IsolatedAsyncioTestCase):
             assert pending is not None
             self.assertEqual(pending.draft["cron_expression"], "*/10 * * * * *")
             self.assertEqual(store.load_jobs(), [])
+
+    async def test_heartbeat_decision_ignores_sensitive_approval_records(self) -> None:
+        with temp_runtime_dir() as root:
+            store = make_store(root)
+            runtime = FakeRuntimeManager(store, value=HeartbeatRouteModel(route="none"))
+            pending_store = PendingHeartbeatStore(root / "pending.json")
+            pending_store.approval_service.register_pending(
+                action_id="pending-sensitive-action-123",
+                user_id="desktop-user",
+                conversation_id="conv-1",
+                source="sensitive_action",
+                action_kind="folder_organizer",
+                title="Folder Organizer",
+                summary="Approve applying the reviewed plan.",
+            )
+            service = HeartbeatIntentService(
+                runtime_manager=runtime,
+                store=store,
+                pending_store=pending_store,
+            )
+
+            outcome = service.handle_pending_decision(
+                "desktop-user",
+                "pending-sensitive-action-123",
+                "approve",
+            )
+
+            self.assertIsNone(outcome)
 
     async def test_immediate_creation_error_returns_clarification(self) -> None:
         with temp_runtime_dir() as root:
@@ -363,7 +403,7 @@ class HeartbeatIntentServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(pending_store.get_for_user("desktop-user"))
             self.assertEqual(store.load_jobs(), [])
 
-    async def test_semantic_routing_failure_still_accepts_explicit_local_confirmation(self) -> None:
+    async def test_typed_confirmation_is_rejected_when_pending_exists(self) -> None:
         with temp_runtime_dir() as root:
             store = make_store(root)
             pending_store = PendingHeartbeatStore(root / "pending.json")
@@ -382,15 +422,16 @@ class HeartbeatIntentServiceTests(unittest.IsolatedAsyncioTestCase):
                 store=store,
                 pending_store=pending_store,
             )
+            service._semantic_route = AsyncMock(return_value=HeartbeatRouteModel(route="confirm_pending"))
 
             with fake_agent_framework_module():
                 outcome = await service.handle_message("desktop-user", "yes")
 
             self.assertIsNotNone(outcome)
             assert outcome is not None
-            self.assertIn("I created the heartbeat", outcome.response)
-            self.assertEqual(pending_store.load(), [])
-            self.assertEqual(len(store.load_jobs()), 1)
+            self.assertEqual(outcome.response, HEARTBEAT_CARD_ONLY_CONFIRMATION)
+            self.assertEqual(len(pending_store.load()), 1)
+            self.assertEqual(len(store.load_jobs()), 0)
 
     async def test_pending_confirmation_expires_after_ttl(self) -> None:
         with temp_runtime_dir() as root:
@@ -428,6 +469,39 @@ class HeartbeatIntentServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(outcome)
             self.assertEqual(pending_store.load(), [])
             self.assertEqual(store.load_jobs(), [])
+
+    async def test_pending_heartbeats_are_isolated_per_conversation(self) -> None:
+        with temp_runtime_dir() as root:
+            store = make_store(root)
+            runtime = FakeRuntimeManager(
+                store,
+                value=create_route(
+                    name="Inbox review",
+                    prompt="Review my Inbox.",
+                    cron_expression="0 * * * *",
+                ),
+            )
+            pending_store = PendingHeartbeatStore(root / "pending.json")
+            service = HeartbeatIntentService(
+                runtime_manager=runtime,
+                store=store,
+                pending_store=pending_store,
+            )
+            service._requires_confirmation = lambda: True
+
+            with fake_agent_framework_module():
+                first = await service.handle_message("desktop-user", "Every hour review Inbox", "conv-1")
+                second = await service.handle_message("desktop-user", "Every hour review Inbox", "conv-2")
+
+            self.assertIsNotNone(first)
+            self.assertIsNotNone(second)
+            assert first is not None and second is not None
+            self.assertIsNotNone(first.pending)
+            self.assertIsNotNone(second.pending)
+            assert first.pending is not None and second.pending is not None
+            self.assertNotEqual(first.pending.id, second.pending.id)
+            self.assertIsNotNone(pending_store.get_for_context("desktop-user", "conv-1"))
+            self.assertIsNotNone(pending_store.get_for_context("desktop-user", "conv-2"))
 
 
 if __name__ == "__main__":

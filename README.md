@@ -1,160 +1,147 @@
 # AzulClaw
 
 <p align="center">
-  <img width="600" height="400" alt="AzulClaw" src="https://github.com/user-attachments/assets/c73da31c-f0e1-416e-9da7-ee5e30650857" />
+  <img width="120" alt="AzulClaw mascot" src="img/azulclaw.png" />
 </p>
 
 <p align="center">
-  <a href="https://discord.gg/gggT7Bx858">
-    <img alt="Join the AzulClaw Discord community" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white" />
+  <strong>Enterprise AI assistant for Azure teams.</strong><br/>
+  Local-first. Governed. Ready to deploy.
+</p>
+
+<p align="center">
+  <a href="https://github.com/Javierif/AzulClaw/releases/latest">
+    <img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows%20Installer-0078D4?style=for-the-badge&logo=windows&logoColor=white" />
   </a>
 </p>
 
 <p align="center">
-  Build AzulClaw with us, share feedback, and follow product progress in the community server.
+  <a href="https://discord.gg/gggT7Bx858">
+    <img alt="Discord" src="https://img.shields.io/badge/Discord-Community-5865F2?logo=discord&logoColor=white" />
+  </a>
+  &nbsp;
+  <a href="docs/README.md">
+    <img alt="Docs" src="https://img.shields.io/badge/Docs-Documentation-grey" />
+  </a>
+  &nbsp;
+  <a href="LICENSE">
+    <img alt="License" src="https://img.shields.io/badge/license-MIT-blue" />
+  </a>
 </p>
 
-AzulClaw is a local-first AI companion that combines a secure desktop workspace, a Python orchestration layer, and Azure-backed reasoning. The product is designed around one constraint: the assistant must be useful without being allowed to roam freely across the user's machine.
+---
 
-## What AzulClaw is
+<p align="center">
+  <img alt="AzulClaw desktop app screenshot" src="img/screenshot01.png" />
+</p>
 
-- A desktop shell built with Tauri, React, and TypeScript.
-- A local Python runtime that handles chat, memory, scheduling, process tracking, and Bot Framework activities.
-- A sandboxed file tool layer exposed through MCP so filesystem access stays isolated and auditable.
-- An optional Azure relay for public channels such as Telegram or Alexa without exposing the local runtime directly.
+---
 
-## Architecture at a glance
+## What is AzulClaw?
+
+AzulClaw is a desktop AI assistant built for organizations that cannot afford to treat employee machines as unrestricted execution targets.
+
+It runs locally — chat history, memory, and workspace state stay on the device. Azure services handle identity, secrets, channel relay, and enterprise distribution when you need them. Nothing leaves the machine unless a configured integration explicitly requires it.
+
+**Prerequisites:** Windows 10/11 for the packaged app. Development also requires Python 3.11+, Node 20+, npm, and a current stable Rust toolchain.
+
+---
+
+## Download and install
+
+<p align="center">
+  <a href="https://github.com/Javierif/AzulClaw/releases/latest">
+    <img alt="Download AzulClaw for Windows" src="https://img.shields.io/badge/⬇%20Download%20AzulClaw%20for%20Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white" />
+  </a>
+</p>
+
+1. Download the `.exe` installer from the [latest release](https://github.com/Javierif/AzulClaw/releases/latest).
+2. Run the installer — no admin rights required.
+3. On first launch, complete the **Hatching** setup wizard to configure your model provider.
+4. Start chatting.
+
+The installer bundles the Python backend and MCP server. End users do not need a separate Python, Node, or Rust installation.
+
+> **IT administrators:** see [Managed deployment](#managed-deployment-for-it-administrators) for silent install, Key Vault configuration, and Entra ID setup.
+
+---
+
+## Why AzulClaw for the enterprise
+
+### Separated execution model
+
+The reasoning layer (`azul_brain`) and the filesystem layer (`azul_hands_mcp`) run as separate processes communicating over JSON-RPC. The AI can reason freely; it cannot touch the filesystem without going through a path validator that enforces workspace boundaries. Path traversal attacks are blocked by design.
+
+### Azure-native identity and secrets
+
+AzulClaw treats Microsoft Entra ID as the preferred authentication path for Azure OpenAI, and Azure Key Vault as the preferred secret store. In managed deployments, credentials stay out of local config files and ordinary environment variables on employee machines.
+
+### Governed skill distribution
+
+The **Marketplace** lets employees browse and install approved skills locally. The **Registry Admin** gives IT and security teams control over what reaches the catalog — publishing, versioning, approval, and revocation — without touching individual machines.
+
+### Local-first data model
+
+Conversation history, memory, and workspace state are stored in SQLite on the device. There is no cloud sync by default. Public channels use an Azure relay so the local runtime is never exposed to the internet; Telegram is the current first-party channel connector, and the relay pattern is built on Bot Framework for other configured channels.
+
+### Operational visibility
+
+The Settings panel surfaces backend diagnostics: reachability, active model profiles, Entra sign-in state, runtime directories, and recent logs — without needing access to developer machines.
+
+---
+
+## Architecture overview
 
 ```text
 Desktop UI (Tauri + React)
-        |
-        v
-Local HTTP API (aiohttp)
-        |
-        +--> Conversation orchestrator
-        +--> Runtime scheduler and heartbeats
-        +--> SQLite memory
-        +--> Bot Framework adapter
-        |
-        v
-MCP sandbox (filesystem tools inside workspace boundary)
+  │
+  ▼
+Local HTTP API
+  │
+  ├── Conversation orchestrator
+  ├── Runtime scheduler and heartbeats
+  ├── SQLite memory
+  └── Bot Framework adapter
+  │
+  ▼
+MCP sandbox (azul_hands_mcp)
+  │
+  ▼
+Workspace boundary — validated paths only
 ```
 
-For public channels, the production path is:
+For public channels, traffic flows outbound through Azure and never exposes the local runtime:
 
 ```text
-Channel -> Azure Bot Service -> Azure Function -> Azure Service Bus -> Local AzulClaw
+Channel → Azure Bot Service → Azure Function → Azure Service Bus → AzulClaw (outbound worker)
 ```
 
-## Repository layout
+Full architecture documentation: [Architecture Overview](docs/01_architecture.md) · [Security Model](docs/03_security_model.md) · [Azure Bot Architecture](docs/12_azure_bot_architecture.md)
 
-```text
-AzulClaw/
-|- azul_backend/     Python runtime, memory, channels, MCP integration
-|- azul_desktop/     Desktop shell and frontend views
-|- azure/            Azure relay resources and deployment artifacts
-|- docs/             Canonical product and technical documentation
-|- memory/           Local runtime state generated during development
-|- scripts/          Utility scripts
-|- README.md
-`- requirements.txt
-```
+---
 
-## Quick start
+## Managed deployment for IT administrators
 
-### 1. Install backend dependencies
+### 1. Provision Azure Key Vault
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
+Store secrets in Key Vault using the environment variable name with underscores replaced by hyphens:
 
-### 2. Configure the backend
+| Secret name | Example |
+|---|---|
+| `AZURE-OPENAI-ENDPOINT` | `https://your-resource.openai.azure.com` |
+| `AZURE-OPENAI-API-KEY` | *(omit if using Entra ID)* |
 
-Recommended local configuration uses Azure Key Vault. The Hatching Azure wizard
-can discover Key Vault resources in your subscription and save the selected
-vault URL in the local profile, so `.env.local` does not need to hold secrets or
-the vault pointer.
+### 2. Configure the vault pointer on end-user machines
 
-For headless or manual setups, keep only the vault pointer in your user/machine
-environment:
+One environment variable — only a vault pointer on the machine:
 
 ```powershell
 setx AZUL_KEY_VAULT_URL "https://your-vault.vault.azure.net"
 ```
 
-Secret names use the environment variable name with underscores replaced by
-hyphens, for example `AZURE_OPENAI_ENDPOINT` is stored as
-`AZURE-OPENAI-ENDPOINT`.
+### 3. Configure Microsoft Entra ID for Azure OpenAI (recommended)
 
-AzulClaw supports Microsoft Entra ID for Azure OpenAI and treats it as the
-preferred desktop path. Assign the signed-in user an Azure role such as
-`Cognitive Services OpenAI User` on the Azure OpenAI resource.
-
-To migrate an existing local env file:
-
-```powershell
-python scripts\migrate_env_to_keyvault.py --vault your-vault --delete-env-file
-```
-
-### 3. Start the desktop shell
-
-```powershell
-cd azul_desktop
-npm install
-npm run tauri:dev
-```
-
-The native Tauri shell starts the backend automatically on `http://localhost:3978` if nothing is already listening there.
-
-For frontend-only web iteration, start the backend in one terminal:
-
-```powershell
-python -m azul_backend.azul_brain.main_launcher
-```
-
-Then start Vite in another terminal:
-
-```powershell
-cd azul_desktop
-npm run dev
-```
-
-## Windows desktop package
-
-To build the one-click Windows installer, run from the repository root:
-
-```powershell
-npm run package:desktop:win
-```
-
-The script packages the Python backend and MCP server into internal executables,
-bundles them into the Tauri app, and writes the installer to:
-
-```text
-azul_desktop/src-tauri/target/release/bundle/nsis/
-```
-
-Install that `.exe` and launch AzulClaw from the desktop shortcut or start menu.
-The app starts its local backend automatically.
-
-## Installed app configuration
-
-The packaged Windows app does not bundle `.env.local` or any Azure secrets.
-For an installed desktop app, point the backend at Key Vault before launching
-AzulClaw from the desktop/start menu.
-
-Recommended configuration:
-
-```powershell
-setx AZUL_KEY_VAULT_URL "https://your-vault.vault.azure.net"
-```
-
-After changing them, fully close AzulClaw and launch it again. If Windows
-Explorer already had an old environment snapshot, sign out and back in.
-
-Optional Entra settings:
+Assign users the `Cognitive Services OpenAI User` role on the Azure OpenAI resource, then set:
 
 ```powershell
 setx AZURE_TENANT_ID "<your-tenant-id>"
@@ -162,51 +149,109 @@ setx AZUL_ENABLE_INTERACTIVE_BROWSER_AUTH "true"
 setx AZUL_ENTRA_BROWSER_CLIENT_ID "<desktop-app-registration-client-id>"
 ```
 
-If interactive browser auth is not configured, the backend still supports other
-`DefaultAzureCredential` sources such as Azure CLI, Visual Studio Code, and the
-Windows shared token cache.
+With Entra configured, AzulClaw authenticates at startup through the desktop Microsoft sign-in or another supported Azure credential source. No Azure OpenAI API keys are required on employee machines.
 
-Settings now includes a backend diagnostics section that shows:
+### 4. Distribute the installer
 
-- whether the local backend is reachable
-- how many model profiles are enabled
-- the Microsoft Entra sign-in state for Azure OpenAI
-- the runtime and log directories
-- recent backend and MCP launcher logs
+Deploy the `.exe` from [Releases](https://github.com/Javierif/AzulClaw/releases/latest) through your standard software delivery tooling. The installer is self-contained — Python and the MCP server are bundled.
 
-When `AZUL_AZURE_OPENAI_AUTH_MODE=entra`, the desktop app triggers Azure OpenAI
-authentication as part of startup instead of waiting for the first chat request.
+For silent installation with the NSIS package:
 
-If chat replies with `No enabled model profiles found.`, the backend is usually
-running but missing provider configuration. In Entra mode, also verify that the
-current user can obtain a token and has Azure RBAC access to the Azure OpenAI
-resource.
+```powershell
+.\AzulClaw_<version>_x64-setup.exe /S
+```
 
-## Core capabilities
+After changing environment variables, users must fully close and relaunch AzulClaw. If Windows Explorer had an old environment snapshot, a sign-out/sign-in resolves it.
 
-- Fast and slow model lanes with automatic triage.
-- Streaming desktop chat over NDJSON.
-- Local persistent memory in SQLite with vector, keyword, and hybrid retrieval.
-- Hatching flow for profile and workspace setup.
-- Workspace browsing restricted to a dedicated sandbox root.
-- Heartbeats and scheduled jobs stored locally.
-- Optional Azure relay for Bot Framework channels.
+> Migrate an existing `.env.local` to Key Vault:
+> ```powershell
+> python scripts\migrate_env_to_keyvault.py --vault your-vault --delete-env-file
+> ```
+
+Full deployment guide: [Setup and Development](docs/02_setup_and_development.md)
+
+---
+
+## For developers
+
+### Build from source
+
+```powershell
+# Backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+# Desktop shell
+cd azul_desktop
+npm install
+npm run tauri:dev
+```
+
+The Tauri shell starts the backend automatically on `http://localhost:3978`.
+
+For frontend-only iteration, run backend and Vite in separate terminals:
+
+```powershell
+# Terminal 1
+python -m azul_backend.azul_brain.main_launcher
+
+# Terminal 2
+cd azul_desktop
+npm run dev
+```
+
+### Build the Windows installer
+
+From the repository root:
+
+```powershell
+npm run package:desktop:win
+```
+
+Output: `azul_desktop/src-tauri/target/release/bundle/nsis/`
+
+### Repository layout
+
+```text
+AzulClaw/
+├── azul_backend/     Python runtime, memory, channels, MCP integration
+├── azul_desktop/     Desktop shell and frontend (Tauri + React)
+├── azure/            Azure infrastructure, marketplace registry, Terraform
+├── docs/             Product and technical documentation
+├── scripts/          Utility and migration scripts
+├── skills/           First-party skills, manifests, and schema
+├── tests/
+├── requirements.txt
+└── README.md
+```
+
+---
 
 ## Documentation
 
-Start with [Documentation Hub](docs/README.md).
-
-Recommended reading order:
+Start at [Documentation Hub](docs/README.md). Recommended reading order:
 
 1. [Architecture Overview](docs/01_architecture.md)
 2. [Setup and Development](docs/02_setup_and_development.md)
 3. [Security Model](docs/03_security_model.md)
 4. [Component Reference](docs/04_component_reference.md)
-5. [Memory System](docs/15_memory_system.md)
+5. [Marketplace and Skills](docs/16_marketplace_and_skills.md)
+6. [Memory System](docs/15_memory_system.md)
 
-## Notes for contributors
+---
+
+## Contributing
 
 - Keep documentation in English.
-- Treat `docs/` as the canonical source for product and architecture decisions.
+- `docs/` is the canonical source for product and architecture decisions.
 - Do not commit `.env.local`, generated workspace data, or credentials.
 - The MCP sandbox is a security boundary, not a convenience wrapper.
+
+Open an issue or join the [Discord community](https://discord.gg/gggT7Bx858) before starting large changes.
+
+---
+
+## License
+
+[MIT](LICENSE)

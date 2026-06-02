@@ -1,6 +1,6 @@
 # Azure Bot Deployment Guide
 
-Last reviewed: 2026-04-15
+Last reviewed: 2026-06-02
 
 ## Scope
 
@@ -9,6 +9,10 @@ This guide covers the Azure relay path for public channels:
 ```text
 Channel -> Azure Bot Service -> Azure Function -> Azure Service Bus -> Local AzulClaw
 ```
+
+The deployable first-party connector in this repository is Telegram. The relay
+uses Bot Framework activities, so the same transport pattern can be reused for
+other channels after their channel-specific connector and configuration exist.
 
 ## Prerequisites
 
@@ -30,7 +34,10 @@ Channel -> Azure Bot Service -> Azure Function -> Azure Service Bus -> Local Azu
 
 ## Configure the Function
 
-Deploy the contents of `azure/functions/bot_relay/`.
+Deploy the contents of `skills/official/telegram/src/relay_function/`.
+
+Terraform for this channel connector belongs under
+`skills/official/telegram/infra/terraform/`.
 
 Important settings:
 
@@ -49,7 +56,11 @@ TELEGRAM_ALLOWED_CHAT_IDS
 
 ## Configure the local runtime
 
-Set the same Service Bus and allowlist values in `azul_backend/azul_brain/.env.local`.
+For managed installed desktops, store the Service Bus and channel settings in
+Key Vault and configure the local machine with `AZUL_KEY_VAULT_URL`.
+
+For local development only, the same values can be set in
+`azul_backend/azul_brain/.env.local`.
 
 ## Validate the deployment
 

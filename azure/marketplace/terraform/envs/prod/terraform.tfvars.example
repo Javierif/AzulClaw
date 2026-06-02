@@ -1,0 +1,18 @@
+resource_group_name       = "rg-azulclaw-marketplace-prod"
+location                  = "spaincentral"
+registry_name             = "azulclaw-prod-registry"
+tenant_id                 = "00000000-0000-0000-0000-000000000000"
+function_app_name         = "func-azulclaw-marketplace-prod"
+storage_account_name      = "stazulmarketprod01"
+service_plan_name         = "asp-azulclaw-marketplace-prod"
+application_insights_name = "appi-azulclaw-marketplace-prod"
+key_vault_name            = "kv-azulclaw-marketplace-prod"
+metadata_table_name       = "skillregistry"
+artifacts_container_name  = "skill-artifacts"
+consumer_key              = ""
+admin_key                 = ""
+tags = {
+  environment = "prod"
+  product     = "azulclaw"
+  component   = "marketplace"
+}
