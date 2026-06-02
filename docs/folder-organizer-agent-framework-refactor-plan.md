@@ -198,9 +198,9 @@ Estado implementado:
 - Cuando un workflow de marketplace esta habilitado pero falla o falta el runtime, AzulClaw no cae al camino embebido legacy.
 - Folder Organizer ya no tiene fallback workflow especifico en el flujo activo de `process_user_message` ni streaming.
 - Si Folder Organizer tiene workflow habilitado y el router generico no lo selecciona, el core no ejecuta el preflight legacy de `preview_folder_organization`.
-- Folder Organizer conserva codigo especifico solo para compatibilidad transicional de approvals/previews legacy cuando no hay workflow habilitado.
-- Con workflow habilitado, AzulClaw no crea nuevas approval cards legacy de Folder Organizer, no recupera approvals legacy desde previews antiguas y no ejecuta pending actions legacy contra `organize_target_folder`.
-- Las reglas activas de approvals legacy de Folder Organizer fueron extraidas a `runtime/folder_organizer_legacy_approvals.py`; `PendingSensitiveActionService` conserva wrappers de compatibilidad.
+- La capa legacy de ejecucion/recuperacion de approvals de Folder Organizer fue eliminada: ya no existen el staging de `[PENDING_ACTION:folder_organizer]` por texto, la ejecucion directa de pending actions contra `organize_target_folder`, ni la recuperacion de approvals desde previews antiguas. Las approvals de Folder Organizer van exclusivamente por el workflow HITL.
+- Se conserva la infraestructura compartida: el preview store (`FolderOrganizerPreviewStore` + `maybe_record_folder_organizer_preview`), el safe-reply de fallback, el plan-context (`_maybe_prepare_folder_organizer_plan_context`) y el capability guard.
+- El modulo `runtime/folder_organizer_legacy_approvals.py` fue eliminado; las constantes y la validacion de argumentos compartidas viven ahora en `runtime/pending_action_intent.py`.
 - Las reglas de capability de Folder Organizer fueron retiradas del system prompt global; viven en `skills/official/desktop-organizer/prompts/capability.md` y se cargan desde el manifest de la skill.
 - `conversation.py` ya no usa regex para parsing/checks legacy de Folder Organizer; los helpers legacy usan parsing estructurado o lectura manual del payload/resumen.
 

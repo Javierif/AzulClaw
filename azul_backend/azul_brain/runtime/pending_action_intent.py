@@ -19,18 +19,9 @@ from .approval_protocol import (
     strip_pending_action_block,
 )
 from .approval_service import ApprovalService, default_approval_lifecycle_path
-from .folder_organizer_legacy_approvals import (
-    FOLDER_ORGANIZER_SKILL_ID,
-    FOLDER_ORGANIZER_TOOL_NAME,
-    derive_folder_organizer_action_from_preview,
-    enrich_folder_organizer_action_with_snapshot,
-    extract_folder_organizer_action,
-    extract_folder_organizer_preview_request,
-    render_folder_organizer_metadata,
-    render_folder_organizer_review_details,
-    validate_folder_organizer_arguments,
-)
 from .store import parse_iso_datetime, to_iso_z, utc_now
+
+FOLDER_ORGANIZER_SKILL_ID = "dev.azulclaw.desktop-organizer"
 
 PENDING_SENSITIVE_ACTION_TTL_SECONDS = 10 * 60
 PENDING_SENSITIVE_ACTION_CARD_ONLY_CONFIRMATION = (
@@ -78,8 +69,85 @@ def _hash_plan_snapshot(snapshot: dict[str, Any]) -> str:
     return sha256(_stable_json(snapshot).encode("utf-8")).hexdigest()
 
 
+def _normalize_override_path(raw: str) -> str:
+    stripped = str(raw or "").strip().replace("\\", "/")
+    if not stripped:
+        raise ValueError("category_overrides keys must be non-empty relative source paths.")
+    parts = [part for part in stripped.split("/") if part]
+    if not parts or any(part in {".", ".."} for part in parts):
+        raise ValueError("category_overrides keys must be relative source paths inside the configured folder.")
+    return "/".join(parts)
+
+
+def _sanitize_override_name(raw: str) -> str:
+    value = " ".join(str(raw or "").split()).strip(" .")
+    if not value:
+        raise ValueError("category_overrides values must resolve to a non-empty folder name.")
+    return value
+
+
 def _validate_folder_organizer_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
-    return validate_folder_organizer_arguments(arguments)
+    allowed = {
+        "relative_path",
+        "recursive",
+        "max_depth",
+        "plan_token",
+        "dry_run",
+        "batch_index",
+        "include_moves",
+        "category_overrides",
+    }
+    unknown = sorted(key for key in arguments if key not in allowed)
+    if unknown:
+        raise ValueError(f"Unsupported Folder Organizer argument(s): {', '.join(unknown)}")
+
+    normalized: dict[str, Any] = {}
+    if "relative_path" in arguments:
+        relative_path = str(arguments.get("relative_path", "")).strip()
+        if relative_path:
+            normalized["relative_path"] = relative_path
+
+    if "recursive" in arguments:
+        normalized["recursive"] = bool(arguments["recursive"])
+    if "include_moves" in arguments:
+        normalized["include_moves"] = bool(arguments["include_moves"])
+    if "dry_run" in arguments:
+        if bool(arguments["dry_run"]):
+            raise ValueError("Approved Folder Organizer executions cannot use dry_run=true.")
+        normalized["dry_run"] = False
+
+    if "max_depth" in arguments:
+        max_depth = int(arguments["max_depth"])
+        if max_depth < 1 or max_depth > 8:
+            raise ValueError("max_depth must be an integer between 1 and 8.")
+        normalized["max_depth"] = max_depth
+
+    if "batch_index" in arguments:
+        batch_index = int(arguments["batch_index"])
+        if batch_index < 1:
+            raise ValueError("batch_index must be an integer greater than or equal to 1.")
+        normalized["batch_index"] = batch_index
+
+    if "plan_token" in arguments:
+        plan_token = str(arguments.get("plan_token", "")).strip()
+        if not plan_token:
+            raise ValueError("plan_token cannot be empty when provided.")
+        normalized["plan_token"] = plan_token
+
+    if "category_overrides" in arguments:
+        raw_overrides = arguments["category_overrides"]
+        if not isinstance(raw_overrides, dict):
+            raise ValueError("category_overrides must be an object mapping source_relative_path to folder name.")
+        normalized["category_overrides"] = {
+            _normalize_override_path(str(key)): _sanitize_override_name(str(value))
+            for key, value in raw_overrides.items()
+        }
+
+    if normalized.get("batch_index") is not None and not normalized.get("recursive", False):
+        raise ValueError("batch_index requires recursive=true.")
+    if normalized.get("plan_token") and not normalized.get("recursive", False):
+        raise ValueError("plan_token requires recursive=true.")
+    return normalized
 
 
 _TOOL_CAPTURE_CONTEXT: contextvars.ContextVar[tuple[str, str] | None] = contextvars.ContextVar(
@@ -731,12 +799,7 @@ class PendingSensitiveActionService:
         structured = self._extract_structured_action(user_message, assistant_response)
         if structured is None:
             normalized_action_kind = str(semantic_action_kind or "").strip()
-            if normalized_action_kind == "folder_organizer":
-                structured = self._derive_folder_organizer_action_from_preview(
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                )
-            elif normalized_action_kind == "generic":
+            if normalized_action_kind == "generic":
                 structured = {
                     "action_kind": "generic",
                     "title": str(semantic_title or "").strip() or "Sensitive action",
@@ -963,19 +1026,7 @@ class PendingSensitiveActionService:
         user_message: str,
         assistant_response: str,
     ) -> dict[str, Any] | None:
-        folder = extract_folder_organizer_action(assistant_response)
-        if folder is not None:
-            return folder
         return None
-
-    def _derive_folder_organizer_action_from_preview(
-        self,
-        *,
-        user_id: str,
-        conversation_id: str | None,
-    ) -> dict[str, Any] | None:
-        preview = self.preview_store.get_for_context(user_id, conversation_id)
-        return derive_folder_organizer_action_from_preview(preview)
 
     def _enrich_action_with_snapshot(
         self,
@@ -984,33 +1035,12 @@ class PendingSensitiveActionService:
         conversation_id: str | None,
         action: dict[str, Any],
     ) -> dict[str, Any]:
-        preview = self.preview_store.get_for_context(user_id, conversation_id)
-        return enrich_folder_organizer_action_with_snapshot(
-            action=action,
-            preview=preview,
-            hash_plan_snapshot=_hash_plan_snapshot,
-        )
-
-    def _extract_folder_organizer_action(self, assistant_response: str) -> dict[str, Any] | None:
-        return extract_folder_organizer_action(assistant_response)
-
-    def extract_folder_organizer_preview_request(self, assistant_response: str) -> dict[str, Any] | None:
-        return extract_folder_organizer_preview_request(assistant_response)
-
-    def _render_folder_organizer_metadata(self, action: PendingSensitiveAction) -> list[tuple[str, str]]:
-        return render_folder_organizer_metadata(action)
-
-    def _render_folder_organizer_review_details(self, action: PendingSensitiveAction) -> list[tuple[str, str]]:
-        return render_folder_organizer_review_details(action)
+        return action
 
     def _render_block(self, action: PendingSensitiveAction) -> str:
         extra_fields: dict[str, str] = {}
         if action.revision_label:
             extra_fields["RevisionLabel"] = action.revision_label
-        for label, value in self._render_folder_organizer_metadata(action):
-            extra_fields[label] = value
-        for label, value in self._render_folder_organizer_review_details(action):
-            extra_fields[label] = value
         return render_approval_block(
             action_id=action.id,
             action_kind=action.action_kind or "sensitive_action",

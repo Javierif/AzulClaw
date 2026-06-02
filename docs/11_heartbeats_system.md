@@ -1,6 +1,6 @@
 # Heartbeats System
 
-Last reviewed: 2026-04-20
+Last reviewed: 2026-06-02
 
 ## Purpose
 
@@ -124,8 +124,8 @@ This is intentional. User reminders such as "send me a greeting every minute" mu
 It uses the fast runtime as a semantic router with native structured outputs. The route model is `HeartbeatRouteModel`, and the possible routes are:
 
 - `create_heartbeat`
-- `confirm_pending`
-- `cancel_pending`
+- `confirm_pending` (only reachable when a draft is pending; now answered with the card-only notice instead of executing — see [Confirmation](#confirmation))
+- `cancel_pending` (same: answered with the card-only notice)
 - `none`
 
 For `create_heartbeat`, the structured draft includes:
@@ -141,29 +141,32 @@ There is no local regex fallback for natural-language scheduling. The human is t
 
 ### Confirmation
 
-If hatching settings require confirmation for sensitive actions, the draft is stored in `memory/runtime_pending_actions.json`.
+If hatching settings require confirmation for sensitive actions, the draft is stored in `memory/runtime_pending_actions.json` and registered in the unified approval lifecycle (`memory/runtime_approval_lifecycle.json`) through the shared `ApprovalService`. Heartbeat creation registers with `source="heartbeat"` and `action_kind="heartbeat_create"`, so it shares supersede logic, idempotency keys, and receipts with the other approval sources (`sensitive_action`, `skill_workflow`).
 
-The backend still returns a text representation for compatibility:
+The backend returns the draft as a shared `[PENDING_ACTION:approval]` block (rendered by `render_approval_block`):
 
 ```text
-I can create this heartbeat:
-
+[PENDING_ACTION:approval]
+ActionId: <pending-id>
+ActionKind: heartbeat_create
+Title: Heartbeat draft
+Summary: Approve creating the heartbeat 'recordatorio_agua'.
 Name: recordatorio_agua
 Schedule: `0 * * * *`
 Action: Remind user to drink water
 Delivery: desktop chat
-
-Reply 'yes, create it' to activate it or 'no' to cancel.
+ApproveLabel: Create heartbeat
+RejectLabel: Cancel
+[/PENDING_ACTION]
 ```
 
-The desktop renders that response as an interactive card instead of showing the raw text.
+The desktop parses that block and renders an interactive `HeartbeatConfirmationCard` instead of showing the raw text.
 
-The buttons send normal chat messages:
+Confirmation is **card-only**. The card buttons decide the pending action through the approval lifecycle; typed `yes`/`no` replies are rejected. When a user types a confirmation instead of using the card, the backend answers with `HEARTBEAT_CARD_ONLY_CONFIRMATION`:
 
-- Create heartbeat: `yes, create it`
-- Cancel: `no`
-
-The backend routes those messages through the same semantic router as `confirm_pending` or `cancel_pending`.
+```text
+For security, approve or cancel this heartbeat using the confirmation card in chat. Typed yes/no replies are not accepted.
+```
 
 ### Delivery
 
@@ -196,7 +199,7 @@ Main UI files:
 
 ### Chat confirmation card
 
-`ChatShell` parses the compatibility confirmation text returned by the backend and renders a `HeartbeatConfirmationCard`.
+`ChatShell` parses the shared `[PENDING_ACTION:approval]` block returned by the backend (matching `ActionKind: heartbeat_create`) and renders a `HeartbeatConfirmationCard`. The card resolves the pending action by calling the structured approve/reject decision endpoint, not by sending typed chat replies.
 
 The card displays:
 

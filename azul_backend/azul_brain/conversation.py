@@ -37,16 +37,11 @@ from .runtime.approval_protocol import contains_pending_action_block, strip_pend
 from .runtime.heartbeat_intent import HeartbeatIntentService
 from .runtime.pending_action_intent import (
     FOLDER_ORGANIZER_SKILL_ID,
-    FOLDER_ORGANIZER_TOOL_NAME,
     PENDING_SENSITIVE_ACTION_APPROVAL_PROMPT,
     PENDING_SENSITIVE_ACTION_CARD_ONLY_CONFIRMATION,
     PendingSensitiveAction,
     PendingSensitiveActionService,
     pending_sensitive_action_capture_context,
-)
-from .runtime.folder_organizer_legacy_approvals import (
-    folder_preview_expected_changes,
-    folder_summary_reports_no_ready_files,
 )
 from .runtime.semantic_judge import SemanticJudgeService
 from .runtime.skill_workflow_runtime import SkillWorkflowEvent, SkillWorkflowRun, SkillWorkflowRuntime
@@ -277,12 +272,12 @@ def _is_placeholder_conversation_title(title: str | None) -> bool:
     return t in _PLACEHOLDER_TITLES
 
 
+_MARKDOWN_EMPHASIS_TABLE = str.maketrans("", "", "*_`#")
+
+
 def _strip_markdown_emphasis(text: str) -> str:
     """Removes Markdown emphasis markers for surfaces that render plain text."""
-    cleaned = text
-    for marker in ("**", "__", "`", "*", "_", "#"):
-        cleaned = cleaned.replace(marker, "")
-    return cleaned.strip()
+    return (text or "").translate(_MARKDOWN_EMPHASIS_TABLE).strip()
 
 
 def should_skip_vectorization(text: str) -> bool:
@@ -791,29 +786,6 @@ class ConversationOrchestrator:
                 return spec
         return None
 
-    def _folder_organizer_workflow_enabled(self) -> bool:
-        return self._enabled_workflow_spec_for_skill(FOLDER_ORGANIZER_SKILL_ID) is not None
-
-    def _is_folder_organizer_legacy_action(self, pending_action: PendingSensitiveAction) -> bool:
-        return (
-            pending_action.action_kind == "folder_organizer"
-            and pending_action.skill_id == FOLDER_ORGANIZER_SKILL_ID
-            and pending_action.tool_name == FOLDER_ORGANIZER_TOOL_NAME
-            and isinstance(pending_action.tool_arguments, dict)
-        )
-
-    def _folder_organizer_legacy_disabled_reply(self) -> ConversationReply:
-        return ConversationReply(
-            text=(
-                "This legacy Folder Organizer approval is no longer executable because the installed "
-                "skill workflow is enabled. Please rerun the request so Folder Organizer can create "
-                "a workflow-backed approval."
-            ),
-            lane="slow",
-            triage_reason="pending-action",
-            turn_status="tool_failure",
-        )
-
     async def _select_marketplace_skill_workflow_spec(self, *, user_message: str) -> dict[str, object] | None:
         specs = list_enabled_workflow_runtime_specs()
         if not specs:
@@ -1115,6 +1087,7 @@ class ConversationOrchestrator:
                 if next_step:
                     return next_step, "approval_required"
             text = (
+                f"Approval request from {skill_name}.\n\n"
                 f"{summary or 'There are changes ready to review.'}\n\n"
                 "Use the approval controls below to apply or cancel."
             )
@@ -1690,7 +1663,6 @@ class ConversationOrchestrator:
         allow_pending_action_staging: bool = True,
         pending_plan_revision: bool = False,
     ) -> ConversationReply:
-        reply.text = await self._maybe_execute_folder_organizer_preview_request(reply.text)
         staged_text = await self._maybe_stage_sensitive_action_card(
             user_id=user_id,
             conversation_id=conversation_id,
@@ -2482,8 +2454,6 @@ class ConversationOrchestrator:
             )
             if stage_verdict is None or stage_verdict.decision != "approval_ready":
                 return reply_text
-            if stage_verdict.action_kind == "folder_organizer" and self._folder_organizer_workflow_enabled():
-                return reply_text
             return service.maybe_stage_action(
                 user_id=user_id,
                 conversation_id=conversation_id,
@@ -2497,34 +2467,6 @@ class ConversationOrchestrator:
         except Exception as error:
             LOGGER.warning("[PendingActions] Could not stage sensitive action card: %s", error)
             return reply_text
-
-    async def _maybe_execute_folder_organizer_preview_request(self, reply_text: str) -> str:
-        service = self._get_pending_sensitive_action_service()
-        mcp_client = getattr(self, "mcp_client", None)
-        if service is None or mcp_client is None:
-            return reply_text
-        preview_arguments = service.extract_folder_organizer_preview_request(reply_text)
-        if preview_arguments is None:
-            return reply_text
-        if self._folder_organizer_workflow_enabled():
-            base_text = strip_pending_action_block(reply_text)
-            detail = (
-                "Folder Organizer now uses the installed workflow for previews and approvals. "
-                "I did not run the legacy preview block."
-            )
-            return "\n\n".join(part for part in [base_text, detail] if part)
-        base_text = strip_pending_action_block(reply_text)
-        try:
-            result = await mcp_client.call_tool(
-                "preview_folder_organization",
-                preview_arguments,
-                skill_id=FOLDER_ORGANIZER_SKILL_ID,
-            )
-        except Exception as error:
-            detail = f"I couldn't run the preview right now: {error}"
-            return "\n\n".join(part for part in [base_text, detail] if part)
-        preview_text = _format_folder_organizer_preview_text(_extract_first_tool_text(result))
-        return "\n\n".join(part for part in [base_text, preview_text] if part)
 
     async def _try_handle_sensitive_action_confirmation_attempt(
         self,
@@ -2568,73 +2510,6 @@ class ConversationOrchestrator:
             turn_status="approval_required",
         )
 
-    async def _try_recover_folder_approval_from_preview(
-        self,
-        user_id: str,
-        user_message: str,
-        *,
-        conversation_id: str | None = None,
-    ) -> ConversationReply | None:
-        service = self._get_pending_sensitive_action_service()
-        if service is None:
-            return None
-        if self._folder_organizer_workflow_enabled():
-            return None
-        if service.get_pending_action_for_context(user_id, conversation_id) is not None:
-            return None
-        preview = service.preview_store.get_for_context(user_id, conversation_id)
-        if preview is None:
-            return None
-        synthetic_pending = PendingSensitiveAction(
-            id="preview-recovery",
-            user_id=user_id,
-            conversation_id=str(conversation_id or ""),
-            title="Folder Organizer",
-            summary=(
-                "Approve applying the latest previewed folder organization changes."
-                + (f" Preview: {preview.summary}" if preview.summary else "")
-            ),
-            source_user_message=user_message,
-            created_at="",
-            action_kind="folder_organizer",
-        )
-        verdict = await self._judge_pending_action_user_intent(
-            user_message=user_message,
-            pending_action=synthetic_pending,
-        )
-        if verdict is None or verdict.decision != "approve":
-            return None
-        staged = service.maybe_stage_action(
-            user_id=user_id,
-            conversation_id=conversation_id,
-            user_message=user_message,
-            assistant_response=(
-                "The reviewed Folder Organizer plan is ready to execute. "
-                "Please approve it using this confirmation card."
-            ),
-            semantic_action_kind="folder_organizer",
-            semantic_title="Folder Organizer",
-            semantic_summary=synthetic_pending.summary,
-        )
-        await self.persist_with_vector_memory(
-            user_id,
-            "user",
-            user_message,
-            conversation_id=conversation_id,
-        )
-        await self.persist_with_vector_memory(
-            user_id,
-            "assistant",
-            staged,
-            conversation_id=conversation_id,
-        )
-        return ConversationReply(
-            text=staged,
-            lane="fast",
-            triage_reason="pending-action-recovered",
-            turn_status="approval_required",
-        )
-
     async def _invoke_approved_sensitive_action(
         self,
         *,
@@ -2642,10 +2517,6 @@ class ConversationOrchestrator:
         pending_action: PendingSensitiveAction,
         conversation_id: str | None,
     ) -> ConversationReply:
-        if self._is_folder_organizer_legacy_action(pending_action):
-            if self._folder_organizer_workflow_enabled():
-                return self._folder_organizer_legacy_disabled_reply()
-            return await self._execute_folder_organizer_pending_action(pending_action)
         history = self._load_chat_history(user_id, conversation_id, limit=12)
         execution_prompt = (
             f"{PENDING_SENSITIVE_ACTION_APPROVAL_PROMPT}\n\n"
@@ -2690,15 +2561,6 @@ class ConversationOrchestrator:
         conversation_id: str | None,
         on_delta: Callable[[str], Awaitable[None]],
     ) -> ConversationReply:
-        if self._is_folder_organizer_legacy_action(pending_action):
-            if self._folder_organizer_workflow_enabled():
-                reply = self._folder_organizer_legacy_disabled_reply()
-                await on_delta(reply.text)
-                return reply
-            reply = await self._execute_folder_organizer_pending_action(pending_action)
-            if reply.text:
-                await on_delta(reply.text)
-            return reply
         history = self._load_chat_history(user_id, conversation_id, limit=12)
         execution_prompt = (
             f"{PENDING_SENSITIVE_ACTION_APPROVAL_PROMPT}\n\n"
@@ -2735,138 +2597,6 @@ class ConversationOrchestrator:
             triage_reason="pending-action",
             conversation_title=reply.conversation_title,
             turn_status=reply.turn_status,
-        )
-
-    async def _execute_folder_organizer_pending_action(
-        self,
-        pending_action: PendingSensitiveAction,
-    ) -> ConversationReply:
-        if self.mcp_client is None:
-            return ConversationReply(
-                text="Folder Organizer is not available right now.",
-                lane="slow",
-                triage_reason="pending-action",
-                turn_status="tool_failure",
-            )
-        arguments = dict(pending_action.tool_arguments or {})
-        payloads: list[dict[str, object]] = []
-        raw_texts: list[str] = []
-        execute_full_snapshot = (
-            bool(arguments.get("recursive"))
-            and bool(str(arguments.get("plan_token", "")).strip())
-            and arguments.get("batch_index") in {None, ""}
-        )
-        max_batches = 64
-
-        for _ in range(max_batches):
-            result = await self.mcp_client.call_tool(
-                pending_action.tool_name,
-                arguments,
-                skill_id=pending_action.skill_id,
-            )
-            raw_text = _extract_first_tool_text(result).strip()
-            raw_texts.append(raw_text)
-            payload = None
-            if raw_text.startswith("{"):
-                try:
-                    parsed = json.loads(raw_text)
-                except json.JSONDecodeError:
-                    parsed = None
-                if isinstance(parsed, dict):
-                    payload = parsed
-                    payloads.append(parsed)
-            if not execute_full_snapshot:
-                break
-            if not isinstance(payload, dict):
-                break
-            has_batch_progress = any(
-                key in payload for key in ("plan_complete", "remaining_batch_count", "next_batch_index")
-            )
-            if not has_batch_progress or bool(payload.get("plan_complete")):
-                break
-
-        if payloads:
-            total_moved_count = 0
-            total_blocked_count = 0
-            for payload in payloads:
-                try:
-                    total_moved_count += int(payload.get("moved_count", 0) or 0)
-                except Exception:
-                    pass
-                try:
-                    total_blocked_count += int(payload.get("blocked_count", 0) or 0)
-                except Exception:
-                    pass
-            if execute_full_snapshot and len(payloads) > 1:
-                batch_summaries = [
-                    str(payload.get("summary", "")).strip()
-                    for payload in payloads
-                    if str(payload.get("summary", "")).strip()
-                ]
-                relative_path = str(payloads[0].get("relative_path", "")).strip()
-                final_payload = payloads[-1]
-                workflow_hint = str(final_payload.get("workflow_hint", "")).strip()
-                header = f"Folder Organizer executed the approved plan across {len(payloads)} batch(es)."
-                if relative_path:
-                    header = f"{header} Scope: `{relative_path}`."
-                lines = [header]
-                for index, item_summary in enumerate(batch_summaries, start=1):
-                    lines.append(f"Batch {index}: {item_summary}")
-                if workflow_hint and not bool(final_payload.get("plan_complete")):
-                    lines.append(workflow_hint)
-                summary = "\n".join(lines)
-            else:
-                final_payload = payloads[-1]
-                tool_summary = str(final_payload.get("summary", "")).strip()
-                relative_path = str(final_payload.get("relative_path", "")).strip()
-                next_hint = str(final_payload.get("workflow_hint", "")).strip()
-                parts = [part for part in [tool_summary, next_hint] if part]
-                if relative_path and tool_summary:
-                    parts.insert(0, f"Folder Organizer executed for `{relative_path}`.")
-                summary = "\n".join(parts) if parts else raw_texts[-1]
-        else:
-            total_moved_count = 0
-            total_blocked_count = 0
-            summary = raw_texts[-1] if raw_texts else ""
-        snapshot = pending_action.plan_snapshot if isinstance(pending_action.plan_snapshot, dict) else {}
-        preview = snapshot.get("preview") if isinstance(snapshot.get("preview"), dict) else {}
-        preview_summary = str(preview.get("summary", "")).strip()
-        preview_expected_changes = folder_preview_expected_changes(preview_summary)
-        no_changes_applied = total_moved_count <= 0 and total_blocked_count > 0
-        no_ready_files_reported = total_moved_count <= 0 and folder_summary_reports_no_ready_files(summary)
-        if no_changes_applied or (preview_expected_changes and no_ready_files_reported):
-            detail = summary or "No executable changes were returned."
-            blocked_hint = (
-                " The tool reported only blocked/conflicting items, so nothing was reorganized."
-                if no_changes_applied
-                else ""
-            )
-            return ConversationReply(
-                text=(
-                    "The approved Folder Organizer plan did not apply any changes."
-                    f"{blocked_hint} Please regenerate the preview and review the reported conflicts before applying again.\n\n"
-                    f"Latest tool result: {detail}"
-                ),
-                lane="slow",
-                triage_reason="pending-action",
-                turn_status="tool_failure",
-            )
-        if preview_expected_changes and folder_summary_reports_no_ready_files(summary):
-            return ConversationReply(
-                text=(
-                    "The approved Folder Organizer plan could not be applied because the folder state no longer "
-                    "matches the reviewed preview. Please regenerate the preview before applying changes again.\n\n"
-                    f"Latest tool result: {summary or 'No executable changes were returned.'}"
-                ),
-                lane="slow",
-                triage_reason="pending-action",
-                turn_status="tool_failure",
-            )
-        return ConversationReply(
-            text=summary or "Folder Organizer finished executing the approved action.",
-            lane="slow",
-            triage_reason="pending-action",
-            turn_status="final_answer",
         )
 
     async def process_message(
@@ -2928,14 +2658,6 @@ class ConversationOrchestrator:
         )
         if pending_confirmation_reply is not None:
             return pending_confirmation_reply
-
-        recovered_folder_approval = await self._try_recover_folder_approval_from_preview(
-            user_id,
-            user_message,
-            conversation_id=conversation_id,
-        )
-        if recovered_folder_approval is not None:
-            return recovered_folder_approval
 
         workflow_plan_follow_up = await self._try_handle_skill_workflow_plan_follow_up(
             user_id=user_id,
@@ -3142,32 +2864,6 @@ class ConversationOrchestrator:
                 )
             await on_delta(pending_confirmation_reply.text)
             return pending_confirmation_reply
-
-        recovered_folder_approval = await self._try_recover_folder_approval_from_preview(
-            user_id,
-            user_message,
-            conversation_id=conversation_id,
-        )
-        if recovered_folder_approval is not None:
-            if on_commentary is not None:
-                await on_commentary("Recovered the reviewed plan and prepared the approval card.")
-            if on_progress is not None:
-                await on_progress(
-                    "progress-init",
-                    build_progress_snapshot(
-                        user_message,
-                        reason=recovered_folder_approval.triage_reason or "pending-action-recovered",
-                        lane=recovered_folder_approval.lane or "fast",
-                        stage="delegated",
-                        event_type="progress-init",
-                        summary="Recovered the reviewed plan and prepared the approval card.",
-                        current_step_label="Preparing approval",
-                        started_at=started_at,
-                        last_updated_at=_utcnow_iso(),
-                    ),
-                )
-            await on_delta(recovered_folder_approval.text)
-            return recovered_folder_approval
 
         workflow_plan_follow_up = await self._try_handle_skill_workflow_plan_follow_up(
             user_id=user_id,
