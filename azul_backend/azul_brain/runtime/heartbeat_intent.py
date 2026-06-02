@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -14,8 +13,9 @@ from pydantic import BaseModel, Field, field_validator
 from ..api.hatching_store import HatchingStore
 from .approval_protocol import render_approval_block
 from .approval_service import ApprovalService, default_approval_lifecycle_path
+from .json_pending_store import JsonPendingStore
 from .semantic_judge import SemanticJudgeService
-from .store import RuntimeStore, ScheduledJob, parse_iso_datetime, to_iso_z, utc_now
+from .store import RuntimeStore, ScheduledJob, to_iso_z, utc_now
 
 
 PENDING_HEARTBEAT_TTL_SECONDS = 10 * 60
@@ -103,7 +103,7 @@ class HeartbeatIntentOutcome:
     pending: PendingHeartbeatAction | None = None
 
 
-class PendingHeartbeatStore:
+class PendingHeartbeatStore(JsonPendingStore[PendingHeartbeatAction]):
     """Small JSON store for pending heartbeat confirmations."""
 
     def __init__(
@@ -112,9 +112,7 @@ class PendingHeartbeatStore:
         ttl_seconds: int = PENDING_HEARTBEAT_TTL_SECONDS,
         approval_service: ApprovalService | None = None,
     ):
-        self.path = path or _default_pending_actions_path()
-        self.ttl_seconds = ttl_seconds
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        super().__init__(path or _default_pending_actions_path(), ttl_seconds)
         lifecycle_path = (
             self.path.parent / "approval-lifecycle.json"
             if path is not None
@@ -122,43 +120,22 @@ class PendingHeartbeatStore:
         )
         self.approval_service = approval_service or ApprovalService(lifecycle_path)
 
-    def load(self) -> list[PendingHeartbeatAction]:
-        if not self.path.exists():
-            return []
-        try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except Exception:
-            return []
-        if not isinstance(raw, list):
-            return []
+    def _deserialize(self, item: dict[str, Any]) -> PendingHeartbeatAction | None:
+        action_id = str(item.get("id", "")).strip()
+        user_id = str(item.get("user_id", "")).strip()
+        draft = item.get("draft")
+        if not action_id or not user_id or not isinstance(draft, dict):
+            return None
+        return PendingHeartbeatAction(
+            id=action_id,
+            user_id=user_id,
+            conversation_id=str(item.get("conversation_id", "")).strip(),
+            draft=draft,
+            created_at=str(item.get("created_at", "")).strip(),
+        )
 
-        items: list[PendingHeartbeatAction] = []
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            action_id = str(item.get("id", "")).strip()
-            user_id = str(item.get("user_id", "")).strip()
-            draft = item.get("draft")
-            if not action_id or not user_id or not isinstance(draft, dict):
-                continue
-            items.append(
-                PendingHeartbeatAction(
-                    id=action_id,
-                    user_id=user_id,
-                    conversation_id=str(item.get("conversation_id", "")).strip(),
-                    draft=draft,
-                    created_at=str(item.get("created_at", "")).strip(),
-                )
-            )
-        active_items: list[PendingHeartbeatAction] = []
-        for item in items:
-            if self._is_expired(item):
-                self.approval_service.mark_expired(item.id)
-                continue
-            active_items.append(item)
-        if len(active_items) != len(items):
-            self._save(active_items)
-        return active_items
+    def _on_prune_expired(self, item: PendingHeartbeatAction) -> None:
+        self.approval_service.mark_expired(item.id)
 
     def get_for_user(self, user_id: str) -> PendingHeartbeatAction | None:
         safe_user_id = str(user_id).strip()
@@ -270,20 +247,6 @@ class PendingHeartbeatStore:
         else:
             self.approval_service.mark_completed(action.id)
         return action
-
-    def _save(self, items: list[PendingHeartbeatAction]) -> None:
-        self.path.write_text(
-            json.dumps([asdict(item) for item in items], ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-
-    def _is_expired(self, item: PendingHeartbeatAction) -> bool:
-        if self.ttl_seconds <= 0:
-            return False
-        created_at = parse_iso_datetime(item.created_at)
-        if created_at is None:
-            return False
-        return (utc_now() - created_at).total_seconds() > self.ttl_seconds
 
 
 class HeartbeatIntentService:
