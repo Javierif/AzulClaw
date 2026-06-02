@@ -1,10 +1,14 @@
 # Azure Bot Architecture
 
-Last reviewed: 2026-04-15
+Last reviewed: 2026-06-02
 
 ## Purpose
 
 This document describes the current cloud relay used when AzulClaw connects to public messaging channels.
+
+Telegram is the current first-party channel connector in this repository. The
+relay is intentionally Bot Framework-shaped so additional configured channels
+can reuse the same cloud-to-local transport pattern.
 
 ## Current topology
 

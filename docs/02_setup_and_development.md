@@ -1,6 +1,6 @@
 # Setup and Development
 
-Last reviewed: 2026-04-23
+Last reviewed: 2026-06-02
 
 ## Prerequisites
 
@@ -138,7 +138,7 @@ The packaging flow:
 Output:
 
 ```text
-azul_desktop/src-tauri/target/release/bundle/nsis/AzulClaw_0.2.0_x64-setup.exe
+azul_desktop/src-tauri/target/release/bundle/nsis/AzulClaw_<version>_x64-setup.exe
 ```
 
 The installer creates a start menu entry and a desktop shortcut. The installed
@@ -146,11 +146,17 @@ desktop app starts the packaged backend automatically. Runtime state is stored i
 the user's app data directory, while workspace and memory data remain inside the
 configured AzulClaw workspace.
 
+For silent installation with the NSIS package:
+
+```powershell
+.\AzulClaw_<version>_x64-setup.exe /S
+```
+
 ### Installed app configuration
 
 The packaged app does not include `azul_backend/azul_brain/.env.local`.
-For installed desktop builds, point the backend at Key Vault before launching
-AzulClaw.
+For managed installed desktop builds, point the backend at Key Vault before
+launching AzulClaw.
 
 Recommended variable:
 

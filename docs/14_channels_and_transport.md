@@ -1,10 +1,14 @@
 # Channels and Transport
 
-Last reviewed: 2026-04-15
+Last reviewed: 2026-06-02
 
 ## Purpose
 
 This document explains how external channel traffic reaches AzulClaw without requiring the local runtime to expose a public inbound endpoint.
+
+Telegram is the current first-party channel connector in this repository. The
+cloud relay uses Bot Framework activities, so the pattern can support other
+configured Bot Framework channels when their channel-specific setup exists.
 
 ## Delivery model
 
@@ -35,3 +39,10 @@ Channel -> Azure Bot Service -> Azure Function -> Azure Service Bus -> Local Azu
 - Bot Framework auth in the Azure Function when enabled
 - Telegram user and chat allowlists in the relay
 - repeated allowlist checks in the local runtime for defense in depth
+
+## First-party connector status
+
+| Channel | Repository status |
+|---|---|
+| Telegram | First-party skill under `skills/official/telegram/` with relay Function and Terraform scaffolding |
+| Other Bot Framework channels | Supported by the relay architecture when a channel-specific connector/configuration is provided |
