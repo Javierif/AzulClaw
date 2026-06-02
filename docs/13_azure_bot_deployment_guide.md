@@ -30,7 +30,10 @@ Channel -> Azure Bot Service -> Azure Function -> Azure Service Bus -> Local Azu
 
 ## Configure the Function
 
-Deploy the contents of `azure/functions/bot_relay/`.
+Deploy the contents of `skills/official/telegram/src/relay_function/`.
+
+Terraform for this channel connector belongs under
+`skills/official/telegram/infra/terraform/`.
 
 Important settings:
 

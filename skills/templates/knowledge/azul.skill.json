@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "id": "com.example.knowledge",
+  "name": "Example Knowledge Pack",
+  "version": "0.1.0",
+  "publisher": "Example",
+  "description": "Installs curated knowledge and prompts.",
+  "kind": "knowledge",
+  "runtime": {
+    "kind": "none"
+  },
+  "compatibility": {
+    "azulclaw_min_version": "0.1.0"
+  },
+  "categories": ["knowledge"],
+  "tags": ["docs"],
+  "presentation": {
+    "icon_text": "KP",
+    "banner": {
+      "variant": "blueprint",
+      "title": "Knowledge",
+      "accent": "#14b8a6"
+    }
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "secrets": [],
+  "permissions": {
+    "filesystem": [],
+    "process": false,
+    "network": [],
+    "memory": "read",
+    "channels": [],
+    "sensitive_actions": []
+  },
+  "capabilities": [
+    {
+      "id": "example.knowledge",
+      "description": "Use the installed example knowledge."
+    }
+  ],
+  "activation": {
+    "restart_required": false
+  }
+}

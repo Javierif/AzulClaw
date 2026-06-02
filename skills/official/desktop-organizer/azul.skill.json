@@ -1,0 +1,134 @@
+{
+  "schema_version": "1.0",
+  "id": "dev.azulclaw.desktop-organizer",
+  "name": "Folder Organizer",
+  "version": "0.1.0",
+  "publisher": "AzulClaw",
+  "description": "Browse and organize a user-selected folder tree through a local MCP tool.",
+  "kind": "local_mcp",
+  "runtime": {
+    "kind": "mcp",
+    "transport": "stdio",
+    "command": "python",
+    "args": ["mcp/server.py"]
+  },
+  "compatibility": {
+    "azulclaw_min_version": "0.1.0"
+  },
+  "categories": ["tools", "local"],
+  "tags": ["mcp", "filesystem", "desktop"],
+  "presentation": {
+    "icon_text": "FO",
+    "banner": {
+      "variant": "desktop",
+      "title": "Folders",
+      "accent": "#22d3ee"
+    }
+  },
+  "config_schema": {
+    "type": "object",
+    "required": ["targetFolder"],
+    "properties": {
+      "targetFolder": {
+        "type": "string",
+        "title": "Root folder",
+        "format": "directory",
+        "description": "Folder Organizer can browse and organize files inside this folder and its subfolders."
+      },
+      "organizationDepth": {
+        "type": "integer",
+        "default": 3,
+        "title": "Traversal depth",
+        "minimum": 1,
+        "maximum": 8,
+        "description": "How many folder levels Folder Organizer may scan when building a global organization plan for the tree."
+      },
+      "semanticCategorization": {
+        "type": "boolean",
+        "default": false,
+        "title": "Semantic categorization",
+        "description": "When enabled, the agent may propose custom destination folder names instead of relying only on the built-in extension categories."
+      }
+    },
+    "additionalProperties": false
+  },
+  "secrets": [],
+  "permissions": {
+    "filesystem": [
+      {
+        "scope": "user_selected_folder",
+        "access": "read_write",
+        "purpose": "Organize files in a folder selected by the user."
+      }
+    ],
+    "process": true,
+    "network": [],
+    "memory": "none",
+    "channels": [],
+    "sensitive_actions": ["move_files"]
+  },
+  "capabilities": [
+    {
+      "id": "desktop_organizer.organize",
+      "description": "Browse and organize files in a user-selected folder tree without deleting anything."
+    }
+  ],
+  "workflow": {
+    "mode": "isolated_process",
+    "protocol_version": "1.0",
+    "entrypoint": {
+      "command": "python",
+      "args": ["workflow/main.py"]
+    },
+    "tools": {
+      "preview": "preview_folder_organization",
+      "execute": "organize_target_folder"
+    },
+    "tool_policies": {
+      "preview": {
+        "requires_approval": false
+      },
+      "execute": {
+        "requires_approval": true,
+        "sensitive_action": "move_files"
+      }
+    },
+    "input_defaults": {
+      "recursive": true,
+      "preview_arguments": {
+        "recursive": true,
+        "include_moves": true
+      }
+    },
+    "sensitive_actions": ["move_files"],
+    "capability_prompt": "prompts/capability.md",
+    "schemas": {
+      "intent": "schemas/intent.schema.json",
+      "preview_context": "schemas/preview-context.schema.json",
+      "execution_plan": "schemas/execution-plan.schema.json",
+      "approval_request": "schemas/approval-request.schema.json"
+    },
+    "checkpoint_policy": "required"
+  },
+  "activation": {
+    "restart_required": false,
+    "workflow_intents": [
+      "Create a reviewed organization plan for the configured target folder.",
+      "Tidy, clean up, sort, classify, or declutter the files in the configured folder or desktop.",
+      "Preview proposed file moves before execution.",
+      "Apply a previously reviewed Folder Organizer plan only after human approval."
+    ],
+    "workflow_examples": [
+      "Dame un plan de organización utilizando la skill de folder organizer.",
+      "Ordena la carpeta configurada.",
+      "Organiza mi escritorio.",
+      "Necesito limpiar y organizar esa carpeta.",
+      "Clasifica los archivos de la carpeta.",
+      "Ayúdame a poner en orden mis archivos.",
+      "Use Folder Organizer to preview how the target folder should be organized.",
+      "Tidy up and sort the files in my folder.",
+      "Clean up and classify the files in the configured folder.",
+      "Organize the configured folder after I approve the plan."
+    ]
+  }
+}

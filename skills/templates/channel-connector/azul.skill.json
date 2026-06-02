@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "id": "com.example.channel",
+  "name": "Example Channel Connector",
+  "version": "0.1.0",
+  "publisher": "Example",
+  "description": "Connects AzulClaw to an external communication channel.",
+  "kind": "channel_connector",
+  "runtime": {
+    "kind": "none"
+  },
+  "compatibility": {
+    "azulclaw_min_version": "0.1.0"
+  },
+  "categories": ["channels"],
+  "tags": ["channel"],
+  "presentation": {
+    "icon_text": "CH",
+    "banner": {
+      "variant": "channel",
+      "title": "Channel",
+      "accent": "#38bdf8"
+    }
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "secrets": [],
+  "permissions": {
+    "filesystem": [],
+    "process": false,
+    "network": [],
+    "memory": "none",
+    "channels": ["example"],
+    "sensitive_actions": []
+  },
+  "capabilities": [
+    {
+      "id": "example.channel",
+      "description": "Use the example channel connector."
+    }
+  ],
+  "activation": {
+    "restart_required": true
+  }
+}

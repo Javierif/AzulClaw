@@ -8,7 +8,8 @@ This directory is the canonical documentation set for AzulClaw. All files in thi
 2. [Setup and Development](02_setup_and_development.md)
 3. [Security Model](03_security_model.md)
 4. [Component Reference](04_component_reference.md)
-5. [Memory System](15_memory_system.md)
+5. [Marketplace and Skills](16_marketplace_and_skills.md)
+6. [Memory System](15_memory_system.md)
 
 ## Full index
 
@@ -29,6 +30,7 @@ This directory is the canonical documentation set for AzulClaw. All files in thi
 | Azure deployment procedure | [13 Azure Bot Deployment Guide](13_azure_bot_deployment_guide.md) |
 | Channel transport semantics | [14 Channels and Transport](14_channels_and_transport.md) |
 | Persistent memory internals | [15 Memory System](15_memory_system.md) |
+| Marketplace architecture and skill authoring model | [16 Marketplace and Skills](16_marketplace_and_skills.md) |
 
 ## Documentation rules
 

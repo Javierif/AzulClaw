@@ -6,21 +6,13 @@ import json
 
 
 def build_commentary(user_message: str, *, reason: str, lane: str) -> str:
-    """Heuristic fallback if the fast brain cannot narrate."""
-    normalized = " ".join((user_message or "").strip().lower().split())
-
+    """Deterministic fallback if the fast brain cannot narrate."""
     if lane == "fast":
-        if any(token in normalized for token in ("historia", "cuento", "inventa", "imagina")):
-            return "Let me picture that for a second. I'll start telling you now."
-        if normalized.endswith("?"):
+        if reason == "short-question":
             return "Let me answer that right away."
         return "On it. I'll walk you through it as I go."
 
-    if any(token in normalized for token in ("archivo", "workspace", "carpeta", "documento", "pdf")):
-        return "Reviewing the context and reading what I need. I'll have a full response shortly."
-    if any(token in normalized for token in ("codigo", "code", "bug", "error", "traceback", "stacktrace")):
-        return "Taking a closer look at this. Let me gather context first, then give you a definitive answer."
-    if any(token in normalized for token in ("analiza", "arquitectura", "plan", "estrategia", "detall")):
+    if reason in {"complex-request", "deep-analysis-request"}:
         return "Routing this to the slow brain to think it through properly. I'll keep you updated."
     if reason == "long-request":
         return "Breaking down the request step by step. Back with a full response shortly."
@@ -66,8 +58,12 @@ def build_progress_snapshot(
     reason: str,
     lane: str,
     stage: str,
+    event_type: str = "progress-update",
     tick: int = 0,
     summary: str = "",
+    current_step_label: str = "",
+    started_at: str = "",
+    last_updated_at: str = "",
     blueprint: dict | None = None,
 ) -> dict:
     """Builds a safe, summarised view of internal progress."""
@@ -80,9 +76,17 @@ def build_progress_snapshot(
         if step["status"] != "done"
     )
     return {
+        "event_type": event_type,
         "title": selected_blueprint["title"],
         "summary": summary or selected_blueprint["summary"].get(stage, selected_blueprint["summary"]["thinking"]),
         "badge": selected_blueprint["badge"],
+        "lane": lane,
+        "lane_label": _lane_label(lane),
+        "triage_reason": reason,
+        "reason_label": _reason_label(reason, lane=lane),
+        "current_step_label": current_step_label or _current_step_label(phases, stage=stage),
+        "started_at": started_at,
+        "last_updated_at": last_updated_at,
         "active_count": active_count,
         "phases": phases,
     }
@@ -221,9 +225,48 @@ def _normalize_phase_defs(phases: object, fallback_phases: list[dict]) -> list[d
     return normalized or fallback_phases
 
 
-def _select_blueprint(user_message: str, *, reason: str, lane: str) -> dict:
-    normalized = " ".join((user_message or "").strip().lower().split())
+def _lane_label(lane: str) -> str:
+    return "Slow brain" if lane == "slow" else "Fast brain"
 
+
+def _reason_label(reason: str, *, lane: str) -> str:
+    mapping = {
+        "phatic": "Greeting or acknowledgement",
+        "empty": "Empty input",
+        "code-block": "Code block detected",
+        "complex-marker": "Complex or technical request",
+        "short-utterance": "Short request",
+        "short-question": "Quick question",
+        "long-request": "Long request",
+        "default-fast": "Default quick route",
+        "explicit": "Lane selected explicitly",
+        "runtime-default": "Runtime default route",
+        "heartbeat-intent": "Heartbeat automation flow",
+    }
+    normalized = (reason or "").strip()
+    if normalized in mapping:
+        return mapping[normalized]
+    if normalized.endswith("|visual-fallback-fast"):
+        return "Visual input required a fast-compatible route"
+    if lane == "slow":
+        return "Deep analysis requested"
+    return "Quick response path"
+
+
+def _current_step_label(phases: list[dict], *, stage: str) -> str:
+    if stage == "done":
+        return "Response ready"
+    for phase in phases:
+        for step in phase.get("steps", []):
+            if step.get("status") == "active":
+                return str(step.get("label", "")).strip() or str(phase.get("label", "")).strip()
+    for phase in phases:
+        if phase.get("status") == "active":
+            return str(phase.get("label", "")).strip()
+    return "Preparing the response"
+
+
+def _select_blueprint(user_message: str, *, reason: str, lane: str) -> dict:
     if lane != "slow":
         return {
             "title": "Quick response",
@@ -247,7 +290,7 @@ def _select_blueprint(user_message: str, *, reason: str, lane: str) -> dict:
             ],
         }
 
-    if any(token in normalized for token in ("archivo", "workspace", "carpeta", "documento", "pdf")):
+    if reason in {"complex-request", "deep-analysis-request"}:
         return {
             "title": "Deep thinking in progress",
             "badge": "Slow brain",
@@ -281,84 +324,6 @@ def _select_blueprint(user_message: str, *, reason: str, lane: str) -> dict:
                     "steps": [
                         "Draft the final summary",
                         "Review clarity and coverage",
-                    ],
-                },
-            ],
-        }
-
-    if any(token in normalized for token in ("codigo", "code", "bug", "error", "traceback", "stacktrace")):
-        return {
-            "title": "Technical analysis in progress",
-            "badge": "Slow brain",
-            "summary": {
-                "delegated": "Started a deeper review to avoid a blind answer.",
-                "context-ready": "Technical context ready. Moving to the main hypothesis.",
-                "thinking": "Cross-checking symptoms, context, and probable solution.",
-                "finalizing": "Finalising the explanation and next steps.",
-                "done": "Process complete.",
-            },
-            "phases": [
-                {
-                    "id": "phase-inspect",
-                    "label": "Phase 1: Technical Inspection",
-                    "steps": [
-                        "Identify the affected area",
-                        "Review symptoms and context",
-                    ],
-                },
-                {
-                    "id": "phase-resolve",
-                    "label": "Phase 2: Resolution",
-                    "steps": [
-                        "Build a useful hypothesis",
-                        "Define the change or explanation",
-                    ],
-                },
-                {
-                    "id": "phase-output",
-                    "label": "Phase 3: Close",
-                    "steps": [
-                        "Synthesise the proposal",
-                        "Review risks and next steps",
-                    ],
-                },
-            ],
-        }
-
-    if any(token in normalized for token in ("historia", "cuento", "inventa", "imagina")):
-        return {
-            "title": "Narrative in construction",
-            "badge": "Slow brain",
-            "summary": {
-                "delegated": "Switched to narrative mode for better shape and flow.",
-                "context-ready": "Tone and key elements ready. Building the story now.",
-                "thinking": "Crafting the story so it has a clear thread and a good ending.",
-                "finalizing": "Polishing the pace and the final payoff.",
-                "done": "Process complete.",
-            },
-            "phases": [
-                {
-                    "id": "phase-scene",
-                    "label": "Phase 1: Narrative Preparation",
-                    "steps": [
-                        "Identify protagonists and tone",
-                        "Define setting and starting point",
-                    ],
-                },
-                {
-                    "id": "phase-story",
-                    "label": "Phase 2: Story Construction",
-                    "steps": [
-                        "Choose conflict or twist",
-                        "Structure beginning, middle, and end",
-                    ],
-                },
-                {
-                    "id": "phase-polish",
-                    "label": "Phase 3: Final Polish",
-                    "steps": [
-                        "Adjust pace and voice",
-                        "Close the response",
                     ],
                 },
             ],

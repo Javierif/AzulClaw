@@ -142,16 +142,18 @@ class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
         ):
             response = await routes.desktop_azure_connect_handler(request)
 
+            self.assertEqual(os.environ["AZURE_OPENAI_ENDPOINT"], "https://example.openai.azure.com")
+            self.assertEqual(os.environ["AZURE_OPENAI_FAST_ENDPOINT"], "https://example.openai.azure.com/openai/v1")
+            self.assertEqual(os.environ["AZURE_OPENAI_DEPLOYMENT"], "gpt-main")
+            self.assertEqual(os.environ["AZURE_OPENAI_SLOW_DEPLOYMENT"], "gpt-main")
+            self.assertEqual(os.environ["AZURE_OPENAI_FAST_DEPLOYMENT"], "gpt-fast")
+            self.assertEqual(os.environ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"], "text-embedding")
+            self.assertEqual(os.environ["AZURE_OPENAI_API_KEY"], "secret-key")
+            self.assertEqual(os.environ["AZUL_AZURE_OPENAI_AUTH_MODE"], "api_key")
+            self.assertNotIn("AZUL_KEY_VAULT_URL", os.environ)
+
         self.assertEqual(response.status, 200)
         self.assertFalse(token_mock.called)
-        self.assertEqual(os.environ["AZURE_OPENAI_ENDPOINT"], "https://example.openai.azure.com")
-        self.assertEqual(os.environ["AZURE_OPENAI_DEPLOYMENT"], "gpt-main")
-        self.assertEqual(os.environ["AZURE_OPENAI_SLOW_DEPLOYMENT"], "gpt-main")
-        self.assertEqual(os.environ["AZURE_OPENAI_FAST_DEPLOYMENT"], "gpt-fast")
-        self.assertEqual(os.environ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"], "text-embedding")
-        self.assertEqual(os.environ["AZURE_OPENAI_API_KEY"], "secret-key")
-        self.assertEqual(os.environ["AZUL_AZURE_OPENAI_AUTH_MODE"], "api_key")
-        self.assertNotIn("AZUL_KEY_VAULT_URL", os.environ)
 
     async def test_connect_api_key_mode_requires_api_key(self) -> None:
         payload = {
@@ -224,6 +226,7 @@ class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("AZUL_KEY_VAULT_URL", os.environ)
             self.assertNotIn("AZURE_OPENAI_FAST_DEPLOYMENT", os.environ)
             self.assertNotIn("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", os.environ)
+            self.assertEqual(os.environ["AZURE_OPENAI_FAST_ENDPOINT"], "https://example.openai.azure.com/openai/v1")
             self.assertEqual(runtime_manager.agent_cache, {})
             self.assertEqual(runtime_manager.probe_cache, {})
             self.assertEqual(runtime_manager.cooldowns, {})
@@ -387,8 +390,8 @@ class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
             [
                 {
                     "models": [
-                        {"id": "fast", "deployment": "new-fast"},
-                        {"id": "slow", "deployment": "new-slow"},
+                        {"id": "fast", "deployment": "new-fast", "capabilities": []},
+                        {"id": "slow", "deployment": "new-slow", "capabilities": []},
                     ]
                 }
             ],
@@ -437,8 +440,8 @@ class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
             [
                 {
                     "models": [
-                        {"id": "fast", "deployment": ""},
-                        {"id": "slow", "deployment": "new-slow"},
+                        {"id": "fast", "deployment": "", "capabilities": []},
+                        {"id": "slow", "deployment": "new-slow", "capabilities": []},
                     ]
                 }
             ],

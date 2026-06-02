@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Folder Organizer Execution Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "requires_approval", "tool_arguments"],
+  "properties": {
+    "summary": { "type": "string" },
+    "requires_approval": { "type": "boolean" },
+    "tool_arguments": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "conceptual_taxonomy": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    }
+  }
+}
+

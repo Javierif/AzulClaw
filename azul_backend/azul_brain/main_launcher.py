@@ -27,8 +27,9 @@ if __package__ in (None, ""):
     from azul_backend.azul_brain.runtime.agent_runtime import AgentRuntimeManager
     from azul_backend.azul_brain.runtime.process_registry import ProcessRegistry
     from azul_backend.azul_brain.runtime.scheduler import RuntimeScheduler
+    from azul_backend.azul_brain.runtime.skill_workflow_runtime import SkillWorkflowRuntime
     from azul_backend.azul_brain.runtime.store import RuntimeStore
-    from azul_backend.azul_brain.channels.access_control import evaluate_telegram_access
+    from azul_backend.azul_brain.channels.access_control import evaluate_channel_connector_access
     from azul_backend.azul_brain.channels.servicebus_worker import ServiceBusWorker
 else:
     from .api.routes import register_desktop_routes
@@ -41,8 +42,9 @@ else:
     from .runtime.agent_runtime import AgentRuntimeManager
     from .runtime.process_registry import ProcessRegistry
     from .runtime.scheduler import RuntimeScheduler
+    from .runtime.skill_workflow_runtime import SkillWorkflowRuntime
     from .runtime.store import RuntimeStore
-    from .channels.access_control import evaluate_telegram_access
+    from .channels.access_control import evaluate_channel_connector_access
     from .channels.servicebus_worker import ServiceBusWorker
 
 LOGGER = logging.getLogger(__name__)
@@ -121,14 +123,14 @@ async def messages_handler(req: web.Request) -> web.Response:
         return web.Response(status=415)
 
     body = await req.json()
-    decision = evaluate_telegram_access(
+    decision = evaluate_channel_connector_access(
         body,
-        runtime_config.telegram_allowed_user_ids,
-        runtime_config.telegram_allowed_chat_ids,
+        runtime_config.channel_connector_policies or {},
     )
     if not decision.authorized:
         LOGGER.warning(
-            "Rejected unauthorized Telegram activity at local endpoint user_id=%s chat_id=%s reason=%s",
+            "Rejected unauthorized channel activity at local endpoint channel=%s user_id=%s chat_id=%s reason=%s",
+            decision.channel_id or "<empty>",
             decision.user_id or "<empty>",
             decision.chat_id or "<empty>",
             decision.reason,
@@ -171,11 +173,16 @@ async def create_app() -> web.Application:
         store=runtime_store,
         process_registry=process_registry,
     )
+    skill_workflow_runtime = SkillWorkflowRuntime()
     try:
         sync_runtime_models_from_saved_hatching_profile(runtime_manager)
     except Exception as error:
         LOGGER.warning("[Runtime] model sync from hatching profile failed: %s", error)
-    orchestrator = ConversationOrchestrator(mcp_client, runtime_manager)
+    orchestrator = ConversationOrchestrator(
+        mcp_client,
+        runtime_manager,
+        skill_workflow_runtime=skill_workflow_runtime,
+    )
     scheduler = RuntimeScheduler(store=runtime_store, orchestrator=orchestrator)
     await scheduler.start()
 
@@ -192,6 +199,7 @@ async def create_app() -> web.Application:
     app["runtime_store"] = runtime_store
     app["process_registry"] = process_registry
     app["runtime_manager"] = runtime_manager
+    app["skill_workflow_runtime"] = skill_workflow_runtime
     app["scheduler"] = scheduler
     app["azure_auth_state"] = azure_auth_state
     app.router.add_post("/api/messages", messages_handler)
@@ -219,6 +227,7 @@ async def create_app() -> web.Application:
             outbound_queue=runtime_config.service_bus_outbound_queue,
             use_sessions=runtime_config.service_bus_use_sessions,
             sync_reply_timeout_seconds=runtime_config.bot_sync_reply_timeout_seconds,
+            channel_connector_policies=runtime_config.channel_connector_policies or {},
             telegram_allowed_user_ids=runtime_config.telegram_allowed_user_ids,
             telegram_allowed_chat_ids=runtime_config.telegram_allowed_chat_ids,
         )

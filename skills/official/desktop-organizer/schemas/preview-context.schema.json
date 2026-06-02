@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Folder Organizer Preview Context",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reply_language", "has_executable_plan", "conceptual_plan_requested", "status_summary"],
+  "properties": {
+    "reply_language": { "type": "string" },
+    "has_executable_plan": { "type": "boolean" },
+    "conceptual_plan_requested": { "type": "boolean" },
+    "status_summary": { "type": "string" },
+    "reason": { "type": "string" }
+  }
+}
+

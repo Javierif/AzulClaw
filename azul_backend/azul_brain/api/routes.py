@@ -8,7 +8,7 @@ import os
 import re
 from pathlib import Path
 import time
-from dataclasses import replace
+from dataclasses import asdict, replace
 from urllib.parse import quote, urlparse
 
 import aiohttp
@@ -17,10 +17,18 @@ from aiohttp.client_exceptions import ClientConnectionResetError, ContentTypeErr
 from aiohttp.web_exceptions import HTTPRequestEntityTooLarge
 
 from ..attachments import MAX_ATTACHMENTS_PER_TURN, MAX_ATTACHMENT_SIZE_BYTES
+from ..runtime.approval_protocol import parse_approval_block
+from ..runtime.approval_service import ApprovalService, default_approval_lifecycle_path
+from ..runtime.skill_workflow_runtime import HumanApprovalResponse, SkillWorkflowRuntime
 
 from ..azure_auth import AZURE_OPENAI_SCOPE, set_frontend_azure_token
 from ..bootstrap import build_adapter
-from ..config import apply_hatching_azure_runtime_settings, normalize_azure_openai_endpoint
+from ..config import (
+    apply_hatching_azure_runtime_settings,
+    derive_fast_azure_openai_endpoint,
+    normalize_azure_openai_endpoint,
+    normalize_azure_openai_profile_endpoint,
+)
 from .services import (
     list_workspace_entries,
     load_hatching_profile,
@@ -36,6 +44,30 @@ from .services import (
     sync_runtime_models_from_azure_profile,
     wipe_local_user_data,
 )
+from .skill_services import (
+    approve_registry_skill_version,
+    list_channel_connector_runtime_status,
+    get_registry_admin_overview,
+    get_registry_admin_skill_versions,
+    inspect_skill_bundle,
+    configure_skill,
+    install_skill,
+    install_skill_bundle,
+    list_registry_admin_skills,
+    list_remote_agent_runtime_status,
+    list_enabled_workflow_runtime_specs,
+    list_installed_skills,
+    list_marketplace_skills,
+    load_skill_marketplace_settings,
+    publish_registry_bundle,
+    probe_skill_registry,
+    refresh_marketplace_catalog,
+    resolve_skill_asset_path,
+    revoke_registry_skill_version,
+    save_skill_marketplace_settings,
+    uninstall_skill,
+    update_skill_enabled,
+)
 
 LOGGER = logging.getLogger(__name__)
 AZURE_ARM_BASE_URL = "https://management.azure.com"
@@ -50,10 +82,109 @@ KEY_VAULT_HOST_SUFFIXES = (
     "vault.usgovcloudapi.net",
     "vault.microsoftazure.de",
 )
+_APPROVAL_STATUS_LABELS = {
+    "pending": "Awaiting approval",
+    "approved": "Approved",
+    "rejected": "Rejected",
+    "superseded": "Superseded",
+    "expired": "Expired",
+    "running": "Running",
+    "completed": "Completed",
+    "failed": "Failed",
+}
+_STALE_APPROVAL_ERROR = (
+    "That approval is no longer available. Please regenerate the reviewed plan before applying changes."
+)
 
 
 def _desktop_user_id(value: object = "desktop-user") -> str:
     return str(value or "desktop-user").strip() or "desktop-user"
+
+
+def _coerce_mcp_tool_result(result: object) -> object:
+    content = getattr(result, "content", None)
+    if isinstance(content, list) and content:
+        text = getattr(content[0], "text", None)
+        if isinstance(text, str):
+            stripped = text.strip()
+            if stripped.startswith("{"):
+                try:
+                    return json.loads(stripped)
+                except json.JSONDecodeError:
+                    return {"text": stripped}
+            return {"text": stripped}
+    value = getattr(result, "value", None)
+    if value is not None:
+        return value
+    return result
+
+
+def _enrich_history_with_approval_status(
+    messages: list[dict],
+    *,
+    orchestrator=None,
+    user_id: str = "",
+    conversation_id: str | None = None,
+) -> list[dict]:
+    """Attaches approval lifecycle metadata to persisted chat messages."""
+
+    if not messages:
+        return messages
+    service = ApprovalService(default_approval_lifecycle_path())
+    records_by_action_id = {record.action_id: record for record in service.load()}
+    heartbeat_pending_id = ""
+    sensitive_pending_id = ""
+    safe_user_id = str(user_id or "").strip()
+    safe_conversation_id = str(conversation_id or "").strip()
+    if orchestrator is not None and safe_user_id:
+        heartbeat_service = getattr(orchestrator, "heartbeat_intents", None)
+        heartbeat_pending = (
+            heartbeat_service.pending_store.get_for_context(safe_user_id, safe_conversation_id or None)
+            if heartbeat_service is not None and getattr(heartbeat_service, "pending_store", None) is not None
+            else None
+        )
+        heartbeat_pending_id = str(getattr(heartbeat_pending, "id", "")).strip()
+        sensitive_service = getattr(orchestrator, "pending_sensitive_actions", None)
+        sensitive_pending = (
+            sensitive_service.get_pending_action_for_context(safe_user_id, safe_conversation_id or None)
+            if sensitive_service is not None
+            else None
+        )
+        sensitive_pending_id = str(getattr(sensitive_pending, "id", "")).strip()
+    enriched: list[dict] = []
+    for item in messages:
+        message = dict(item)
+        fields = parse_approval_block(str(message.get("content", "")))
+        action_id = str(fields.get("ActionId", "")).strip()
+        if action_id:
+            record = records_by_action_id.get(action_id)
+            action_kind = str(fields.get("ActionKind", "")).strip().lower()
+            live_pending_id = heartbeat_pending_id if action_kind == "heartbeat_create" else sensitive_pending_id
+            if record is not None:
+                effective_status = record.status
+                if record.status == "pending" and safe_user_id and record.user_id == safe_user_id:
+                    if live_pending_id and live_pending_id != action_id:
+                        service.mark_superseded(action_id, superseded_by=live_pending_id)
+                        effective_status = "superseded"
+                    elif not live_pending_id:
+                        service.mark_expired(action_id)
+                        effective_status = "expired"
+                message["approval_action_id"] = action_id
+                message["approval_status"] = effective_status
+                message["approval_status_label"] = _APPROVAL_STATUS_LABELS.get(
+                    effective_status,
+                    effective_status.title(),
+                )
+            else:
+                effective_status = "pending" if live_pending_id == action_id else "expired"
+                message["approval_action_id"] = action_id
+                message["approval_status"] = effective_status
+                message["approval_status_label"] = _APPROVAL_STATUS_LABELS.get(
+                    effective_status,
+                    effective_status.title(),
+                )
+        enriched.append(message)
+    return enriched
 
 
 def _conversation_belongs_to_user(memory, conversation_id: str | None, user_id: str) -> bool:
@@ -75,6 +206,16 @@ def _attachment_ids_from_payload(payload: dict) -> list[str]:
     if len(attachment_ids) > MAX_ATTACHMENTS_PER_TURN:
         raise ValueError(f"At most {MAX_ATTACHMENTS_PER_TURN} attachments are allowed per turn.")
     return attachment_ids
+
+
+def _pending_action_from_payload(payload: dict) -> tuple[str | None, str | None]:
+    action_id = str(payload.get("pending_action_id", "")).strip() or None
+    decision = str(payload.get("pending_action_decision", "")).strip().lower() or None
+    if decision is not None and decision not in {"approve", "reject"}:
+        raise ValueError("pending_action_decision must be 'approve' or 'reject'.")
+    if (action_id is None) != (decision is None):
+        raise ValueError("pending_action_id and pending_action_decision must be provided together.")
+    return action_id, decision
 
 
 def _effective_desktop_message(message: str, attachment_ids: list[str]) -> str:
@@ -245,7 +386,9 @@ async def desktop_azure_connect_handler(req: web.Request) -> web.Response:
     if not endpoint:
         return web.json_response({"error": "endpoint is required"}, status=400)
     try:
-        endpoint = normalize_azure_openai_endpoint(endpoint)
+        profile_endpoint = normalize_azure_openai_profile_endpoint(endpoint)
+        endpoint = normalize_azure_openai_endpoint(profile_endpoint)
+        fast_endpoint = derive_fast_azure_openai_endpoint(profile_endpoint)
     except ValueError as error:
         return web.json_response({"error": str(error)}, status=400)
     if not deployment:
@@ -269,6 +412,7 @@ async def desktop_azure_connect_handler(req: web.Request) -> web.Response:
             return web.json_response({"error": str(error)}, status=400)
 
     os.environ["AZURE_OPENAI_ENDPOINT"] = endpoint
+    os.environ["AZURE_OPENAI_FAST_ENDPOINT"] = fast_endpoint
     os.environ["AZURE_OPENAI_DEPLOYMENT"] = deployment
     os.environ["AZURE_OPENAI_SLOW_DEPLOYMENT"] = deployment
     if auth_mode == "api_key":
@@ -881,24 +1025,35 @@ async def desktop_chat_handler(req: web.Request) -> web.Response:
     conversation_id = str(payload.get("conversation_id", "")).strip() or None
     try:
         attachment_ids = _attachment_ids_from_payload(payload)
+        pending_action_id, pending_action_decision = _pending_action_from_payload(payload)
     except ValueError as error:
         return web.json_response({"error": str(error)}, status=400)
     message = _effective_desktop_message(message, attachment_ids)
 
-    if not message:
+    if not message and pending_action_id is None:
         return web.json_response({"error": "message is required"}, status=400)
 
     if not _conversation_belongs_to_user(orchestrator.memory, conversation_id, user_id):
         conversation_id, _ = orchestrator.memory.get_or_create_empty_conversation(user_id)
     orchestrator.memory.set_active_conversation(user_id, conversation_id)
 
-    reply = await orchestrator.process_user_message(
-        user_id,
-        message,
-        lane="auto",
-        conversation_id=conversation_id,
-        attachment_ids=attachment_ids,
-    )
+    if pending_action_id is not None and pending_action_decision is not None:
+        reply = await orchestrator._try_handle_pending_action_decision(
+            user_id,
+            pending_action_id,
+            pending_action_decision,
+            conversation_id=conversation_id,
+        )
+        if reply is None:
+            return web.json_response({"error": _STALE_APPROVAL_ERROR}, status=404)
+    else:
+        reply = await orchestrator.process_user_message(
+            user_id,
+            message,
+            lane="auto",
+            conversation_id=conversation_id,
+            attachment_ids=attachment_ids,
+        )
     marker = getattr(orchestrator.memory, "mark_conversation_viewed", None)
     if callable(marker):
         marker(user_id, conversation_id)
@@ -907,6 +1062,12 @@ async def desktop_chat_handler(req: web.Request) -> web.Response:
         history = history_loader(conversation_id, limit=12)
     else:
         history = orchestrator.memory.get_conversation_messages(conversation_id, limit=12)
+    history = _enrich_history_with_approval_status(
+        history,
+        orchestrator=orchestrator,
+        user_id=user_id,
+        conversation_id=conversation_id,
+    )
     conversation_title = orchestrator.memory.get_conversation_title(conversation_id)
     return web.json_response(
         {
@@ -920,7 +1081,12 @@ async def desktop_chat_handler(req: web.Request) -> web.Response:
                 "model_id": reply.model_id,
                 "model_label": reply.model_label,
                 "process_id": reply.process_id,
+                "attempt_count": reply.attempt_count,
+                "skipped_models": reply.skipped_models or [],
+                "failed_attempts": reply.failed_attempts or [],
                 "triage_reason": reply.triage_reason,
+                "turn_status": reply.turn_status,
+                "workflow_events": getattr(reply, "workflow_events", None) or [],
             },
         }
     )
@@ -930,12 +1096,16 @@ async def desktop_chat_stream_handler(req: web.Request) -> web.StreamResponse:
     """Processes a message from the desktop app and emits incremental NDJSON."""
     orchestrator = req.app["orchestrator"]
     payload = await req.json()
+    
+    class _StreamClientDisconnected(Exception):
+        """Raised when the client disconnects mid-stream."""
 
     user_id = _desktop_user_id(payload.get("user_id"))
     message = str(payload.get("message", "")).strip()
     conversation_id = str(payload.get("conversation_id", "")).strip() or None
     try:
         attachment_ids = _attachment_ids_from_payload(payload)
+        pending_action_id, pending_action_decision = _pending_action_from_payload(payload)
     except ValueError as error:
         return web.json_response({"error": str(error)}, status=400)
     message = _effective_desktop_message(message, attachment_ids)
@@ -945,7 +1115,7 @@ async def desktop_chat_stream_handler(req: web.Request) -> web.StreamResponse:
         conversation_id, _ = orchestrator.memory.get_or_create_empty_conversation(user_id)
     orchestrator.memory.set_active_conversation(user_id, conversation_id)
 
-    if not message:
+    if not message and pending_action_id is None:
         return web.json_response({"error": "message is required"}, status=400)
 
     response = web.StreamResponse(
@@ -975,31 +1145,69 @@ async def desktop_chat_stream_handler(req: web.Request) -> web.StreamResponse:
             return False
         return True
 
-    try:
-        await write_event({"type": "start"})
+    async def push_event(event: dict) -> None:
+        if not await write_event(event):
+            raise _StreamClientDisconnected()
 
-        reply = await orchestrator.process_user_message_stream(
-            user_id,
-            message,
-            lane="auto",
-            conversation_id=conversation_id,
-            attachment_ids=attachment_ids,
-            on_delta=lambda text: write_event({"type": "delta", "text": text}),
-            on_commentary=lambda text: write_event({"type": "commentary", "text": text}),
-            on_progress=lambda progress: write_event({"type": "progress", "progress": progress}),
-        )
+    try:
+        await push_event({"type": "start"})
+        if pending_action_id is not None and pending_action_decision is not None:
+            await push_event({"type": "commentary", "text": "Processing approval now."})
+            await push_event(
+                {
+                    "type": "progress-init",
+                    "progress": {
+                        "title": "Pending action approval",
+                        "summary": "Processing approval now.",
+                        "badge": "Fast brain",
+                        "lane": "fast",
+                        "lane_label": "Fast brain",
+                        "triage_reason": "pending-action",
+                        "reason_label": "Pending action approval",
+                        "current_step_label": "Processing approval",
+                        "active_count": 1,
+                        "phases": [],
+                    },
+                }
+            )
+            reply = await orchestrator._try_handle_pending_action_decision(
+                user_id,
+                pending_action_id,
+                pending_action_decision,
+                conversation_id=conversation_id,
+            )
+            if reply is None:
+                raise ValueError(_STALE_APPROVAL_ERROR)
+            await push_event({"type": "delta", "text": reply.text})
+        else:
+            reply = await orchestrator.process_user_message_stream(
+                user_id,
+                message,
+                lane="auto",
+                conversation_id=conversation_id,
+                attachment_ids=attachment_ids,
+                on_delta=lambda text: push_event({"type": "delta", "text": text}),
+                on_commentary=lambda text: push_event({"type": "commentary", "text": text}),
+                on_progress=lambda event_type, progress: push_event({"type": event_type, "progress": progress}),
+            )
         history_loader = getattr(orchestrator.memory, "get_conversation_message_records", None)
         if callable(history_loader):
             history = history_loader(conversation_id, limit=12)
         else:
             history = orchestrator.memory.get_conversation_messages(conversation_id, limit=12)
+        history = _enrich_history_with_approval_status(
+            history,
+            orchestrator=orchestrator,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
         marker = getattr(orchestrator.memory, "mark_conversation_viewed", None)
         if callable(marker):
             marker(user_id, conversation_id)
         conv_title = reply.conversation_title or orchestrator.memory.get_conversation_title(
             conversation_id
         )
-        await write_event(
+        await push_event(
             {
                 "type": "done",
                 "reply": reply.text,
@@ -1011,10 +1219,17 @@ async def desktop_chat_stream_handler(req: web.Request) -> web.StreamResponse:
                     "model_id": reply.model_id,
                     "model_label": reply.model_label,
                     "process_id": reply.process_id,
+                    "attempt_count": reply.attempt_count,
+                    "skipped_models": reply.skipped_models or [],
+                    "failed_attempts": reply.failed_attempts or [],
                     "triage_reason": reply.triage_reason,
+                    "turn_status": reply.turn_status,
+                    "workflow_events": getattr(reply, "workflow_events", None) or [],
                 },
             }
         )
+    except _StreamClientDisconnected:
+        pass
     except Exception as error:
         if not stream_closed:
             await write_event({"type": "error", "message": str(error)})
@@ -1026,6 +1241,163 @@ async def desktop_chat_stream_handler(req: web.Request) -> web.StreamResponse:
                 pass
 
     return response
+
+
+def _render_workflow_decision_reply(
+    *,
+    approved: bool,
+    workflow_name: str,
+    events: list[dict],
+) -> str:
+    name = str(workflow_name or "Skill workflow").strip() or "Skill workflow"
+    if not approved:
+        return f"{name} approval was cancelled. No workflow changes were applied."
+    completed_event = next((event for event in events if event.get("type") == "completed"), None)
+    if completed_event is not None:
+        data = completed_event.get("data") if isinstance(completed_event.get("data"), dict) else {}
+        status = str(data.get("status", "")).strip()
+        result = data.get("result") if isinstance(data.get("result"), dict) else {}
+        summary = str(result.get("summary", "") or data.get("summary", "") or "").strip()
+        if summary:
+            return f"{name} finished applying the approved plan.\n\n{summary}"
+        if status:
+            return f"{name} finished applying the approved plan.\n\nStatus: {status}"
+        return f"{name} finished applying the approved plan."
+    failed_event = next((event for event in events if event.get("type") == "failed"), None)
+    if failed_event is not None:
+        data = failed_event.get("data") if isinstance(failed_event.get("data"), dict) else {}
+        error = str(data.get("error", failed_event.get("error", "Workflow failed."))).strip()
+        return f"{name} could not apply the approved plan.\n\n{error}"
+    return f"{name} approval was recorded."
+
+
+async def desktop_workflow_request_decision_handler(req: web.Request) -> web.Response:
+    """Resolves a human-in-the-loop request emitted by a skill workflow."""
+
+    runtime = req.app.get("skill_workflow_runtime")
+    if not isinstance(runtime, SkillWorkflowRuntime):
+        return web.json_response({"error": "Skill workflow runtime unavailable."}, status=503)
+    run_id = req.match_info.get("run_id", "").strip()
+    request_id = req.match_info.get("request_id", "").strip()
+    if not run_id or not request_id:
+        return web.json_response({"error": "run_id and request_id are required."}, status=400)
+    try:
+        payload = await req.json()
+    except json.JSONDecodeError:
+        return web.json_response({"error": "JSON body required."}, status=400)
+    decision = str(payload.get("decision", "")).strip().lower()
+    if decision not in {"approve", "reject"}:
+        return web.json_response({"error": "decision must be approve or reject."}, status=400)
+    user_id = _desktop_user_id(payload.get("user_id"))
+    try:
+        response = HumanApprovalResponse(
+            approved=decision == "approve",
+            user_id=user_id,
+            reason=str(payload.get("reason", "")).strip(),
+        )
+        run = runtime.store.get_run(run_id)
+        workflow_spec = None
+        if decision == "approve" and run is not None:
+            workflow_spec = next(
+                (
+                    item
+                    for item in list_enabled_workflow_runtime_specs()
+                    if str(item.get("skill_id", "")).strip() == run.skill_id
+                ),
+                None,
+            )
+        mcp_client = req.app.get("mcp_client")
+        if decision == "approve" and (run is None or workflow_spec is None or mcp_client is None):
+            return web.json_response(
+                {
+                    "error": (
+                        "The workflow approval could not be executed because the installed workflow runtime "
+                        "or MCP bridge is unavailable."
+                    )
+                },
+                status=503,
+            )
+        if workflow_spec is not None and mcp_client is not None:
+            async def _tool_invoker(tool_name: str, arguments: dict) -> object:
+                tool_result = await mcp_client.call_tool(
+                    tool_name,
+                    arguments,
+                    skill_id=run.skill_id if run is not None else "",
+                )
+                return _coerce_mcp_tool_result(tool_result)
+
+            resumed_run, events = await runtime.resume_isolated_workflow(
+                spec=workflow_spec,
+                run_id=run_id,
+                request_id=request_id,
+                response=response,
+                tool_invoker=_tool_invoker,
+            )
+            pending = runtime.store.get_request(request_id)
+            lifecycle = runtime.approval_service.get_by_action_id(request_id)
+            skill_name = resumed_run.workflow_name or run.skill_id if run is not None else "Skill workflow"
+            reply_text = _render_workflow_decision_reply(
+                approved=True,
+                workflow_name=skill_name,
+                events=[asdict(event) for event in events],
+            )
+            orchestrator = req.app.get("orchestrator")
+            if reply_text and orchestrator is not None and resumed_run.conversation_id:
+                localizer = getattr(orchestrator, "localize_workflow_message", None)
+                if callable(localizer):
+                    reply_text = await localizer(
+                        user_id=user_id,
+                        conversation_id=resumed_run.conversation_id,
+                        source_text=reply_text,
+                        phase="executed",
+                        skill_name=str(skill_name),
+                    )
+                persist = getattr(orchestrator, "persist_with_vector_memory", None)
+                if callable(persist):
+                    await persist(user_id, "assistant", reply_text, conversation_id=resumed_run.conversation_id)
+            return web.json_response(
+                {
+                    "run_id": run_id,
+                    "request_id": request_id,
+                    "status": lifecycle.status if lifecycle is not None else pending.status if pending is not None else "approved",
+                    "approved": True,
+                    "workflow_status": resumed_run.status,
+                    "events": [asdict(event) for event in events],
+                    "reply": reply_text,
+                    "conversation_id": resumed_run.conversation_id,
+                }
+            )
+
+        pending = runtime.resolve_human_approval(
+            run_id=run_id,
+            request_id=request_id,
+            response=response,
+        )
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=404)
+    lifecycle = runtime.approval_service.get_by_action_id(request_id)
+    run = runtime.store.get_run(run_id)
+    reply_text = _render_workflow_decision_reply(
+        approved=bool(pending.response and pending.response.approved),
+        workflow_name=run.workflow_name if run is not None else "Skill workflow",
+        events=[],
+    )
+    orchestrator = req.app.get("orchestrator")
+    if reply_text and orchestrator is not None and run is not None and run.conversation_id:
+        persist = getattr(orchestrator, "persist_with_vector_memory", None)
+        if callable(persist):
+            await persist(user_id, "assistant", reply_text, conversation_id=run.conversation_id)
+    return web.json_response(
+        {
+            "run_id": run_id,
+            "request_id": request_id,
+            "status": lifecycle.status if lifecycle is not None else pending.status,
+            "approved": bool(pending.response and pending.response.approved),
+            "workflow_status": (runtime.store.get_run(run_id).status if runtime.store.get_run(run_id) else ""),
+            "reply": reply_text,
+            "conversation_id": run.conversation_id if run is not None else "",
+        }
+    )
 
 
 async def desktop_conversations_handler(req: web.Request) -> web.Response:
@@ -1065,7 +1437,16 @@ async def desktop_conversation_messages_handler(req: web.Request) -> web.Respons
         msgs = loader(conv_id)
     else:
         msgs = orchestrator.memory.get_conversation_messages(conv_id)
-    return web.json_response({"messages": msgs})
+    return web.json_response(
+        {
+            "messages": _enrich_history_with_approval_status(
+                msgs,
+                orchestrator=orchestrator,
+                user_id=user_id,
+                conversation_id=conv_id,
+            )
+        }
+    )
 
 
 async def desktop_delete_conversation_handler(req: web.Request) -> web.Response:
@@ -1167,7 +1548,7 @@ async def desktop_hatching_put_handler(req: web.Request) -> web.Response:
         endpoint = str(azure_config.get("endpoint", "")).strip()
         if endpoint:
             try:
-                azure_config["endpoint"] = normalize_azure_openai_endpoint(endpoint)
+                azure_config["endpoint"] = normalize_azure_openai_profile_endpoint(endpoint)
             except ValueError as error:
                 return web.json_response({"error": str(error)}, status=400)
     result = save_hatching_profile(payload)
@@ -1277,6 +1658,241 @@ async def desktop_job_delete_handler(req: web.Request) -> web.Response:
     return web.json_response({"deleted": True, "job_id": job_id})
 
 
+async def desktop_skills_marketplace_handler(_: web.Request) -> web.Response:
+    """Returns marketplace skills with local installation state."""
+    try:
+        return web.json_response(list_marketplace_skills())
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=500)
+
+
+async def _reload_skill_runtimes(app: web.Application) -> None:
+    """Refreshes connected Marketplace MCP skill runtimes after skill state changes."""
+    mcp_client = app.get("mcp_client")
+    if mcp_client is not None and hasattr(mcp_client, "reload_skill_clients"):
+        try:
+            await mcp_client.reload_skill_clients()
+        except Exception as error:
+            LOGGER.warning("[Skills] MCP skill runtime reload failed: %s", error)
+    invalidate_runtime_model_caches(app.get("runtime_manager"))
+
+
+async def desktop_skills_marketplace_refresh_handler(_: web.Request) -> web.Response:
+    """Refreshes the local marketplace catalog from the configured registry."""
+    try:
+        return web.json_response(refresh_marketplace_catalog())
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=500)
+    except OSError as error:
+        return web.json_response({"error": str(error)}, status=502)
+
+
+async def desktop_skills_installed_handler(_: web.Request) -> web.Response:
+    """Returns locally installed skills."""
+    return web.json_response(list_installed_skills())
+
+
+async def desktop_skill_runtime_status_handler(req: web.Request) -> web.Response:
+    """Returns runtime readiness for enabled Marketplace skills."""
+    items = list_remote_agent_runtime_status()
+    items.extend(list_channel_connector_runtime_status())
+    mcp_client = req.app.get("mcp_client")
+    if mcp_client is not None and hasattr(mcp_client, "get_skill_runtime_status"):
+        items.extend(mcp_client.get_skill_runtime_status())
+    return web.json_response({"items": items})
+
+
+async def desktop_skill_settings_get_handler(_: web.Request) -> web.Response:
+    """Returns user-editable Marketplace settings."""
+    return web.json_response(load_skill_marketplace_settings())
+
+
+async def desktop_skill_settings_put_handler(req: web.Request) -> web.Response:
+    """Saves user-editable Marketplace settings."""
+    payload = await req.json()
+    try:
+        return web.json_response(save_skill_marketplace_settings(payload))
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+
+
+async def desktop_skill_settings_test_handler(req: web.Request) -> web.Response:
+    """Validates the current or draft Skill Registry configuration."""
+    payload = {}
+    if req.can_read_body:
+        try:
+            payload = await req.json()
+        except json.JSONDecodeError:
+            return web.json_response({"error": "JSON body required"}, status=400)
+    try:
+        return web.json_response(probe_skill_registry(payload))
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+
+
+async def desktop_registry_admin_overview_handler(_: web.Request) -> web.Response:
+    """Returns Skill Registry admin overview for the configured company registry."""
+    try:
+        return web.json_response(get_registry_admin_overview())
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+
+
+async def desktop_registry_admin_skills_handler(_: web.Request) -> web.Response:
+    """Returns registered skills and latest version state from the company registry."""
+    try:
+        return web.json_response(list_registry_admin_skills())
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+
+
+async def desktop_registry_admin_skill_versions_handler(req: web.Request) -> web.Response:
+    """Returns all known versions for one registry skill."""
+    skill_id = req.match_info.get("skill_id", "")
+    try:
+        return web.json_response(get_registry_admin_skill_versions(skill_id))
+    except ValueError as error:
+        status = 404 if "not found" in str(error).lower() else 400
+        return web.json_response({"error": str(error)}, status=status)
+
+
+async def desktop_registry_admin_bundle_inspect_handler(req: web.Request) -> web.Response:
+    """Loads bundle metadata and manifest preview before publishing it."""
+    payload = await req.json()
+    try:
+        return web.json_response(inspect_skill_bundle(str(payload.get("bundle_path", "")).strip()))
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+
+
+async def desktop_registry_admin_publish_handler(req: web.Request) -> web.Response:
+    """Publishes a local .azulskill bundle to the configured company registry as draft."""
+    payload = await req.json()
+    try:
+        return web.json_response(
+            publish_registry_bundle(
+                str(payload.get("bundle_path", "")).strip(),
+                published_by=str(payload.get("published_by", "AzulClaw Desktop")).strip() or "AzulClaw Desktop",
+            ),
+            status=201,
+        )
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+
+
+async def desktop_registry_admin_approve_handler(req: web.Request) -> web.Response:
+    """Approves one registry skill version."""
+    try:
+        payload = await req.json() if req.can_read_body else {}
+    except json.JSONDecodeError:
+        payload = {}
+    skill_id = req.match_info.get("skill_id", "")
+    version = req.match_info.get("version", "")
+    try:
+        return web.json_response(
+            approve_registry_skill_version(
+                skill_id,
+                version,
+                actor=str(payload.get("actor", "AzulClaw Desktop")).strip() or "AzulClaw Desktop",
+            )
+        )
+    except ValueError as error:
+        status = 404 if "not found" in str(error).lower() else 400
+        return web.json_response({"error": str(error)}, status=status)
+
+
+async def desktop_registry_admin_revoke_handler(req: web.Request) -> web.Response:
+    """Revokes one registry skill version."""
+    try:
+        payload = await req.json() if req.can_read_body else {}
+    except json.JSONDecodeError:
+        payload = {}
+    skill_id = req.match_info.get("skill_id", "")
+    version = req.match_info.get("version", "")
+    try:
+        return web.json_response(
+            revoke_registry_skill_version(
+                skill_id,
+                version,
+                actor=str(payload.get("actor", "AzulClaw Desktop")).strip() or "AzulClaw Desktop",
+            )
+        )
+    except ValueError as error:
+        status = 404 if "not found" in str(error).lower() else 400
+        return web.json_response({"error": str(error)}, status=status)
+
+
+async def desktop_skill_install_handler(req: web.Request) -> web.Response:
+    """Installs a marketplace skill into the local runtime state."""
+    payload = await req.json()
+    try:
+        result = install_skill(str(payload.get("skill_id", "")).strip())
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    await _reload_skill_runtimes(req.app)
+    return web.json_response(result)
+
+
+async def desktop_skill_install_bundle_handler(req: web.Request) -> web.Response:
+    """Installs a local .azulskill bundle into the local runtime state."""
+    payload = await req.json()
+    try:
+        result = install_skill_bundle(
+            Path(str(payload.get("bundle_path", "")).strip()),
+            str(payload.get("sha256", "")).strip(),
+        )
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    await _reload_skill_runtimes(req.app)
+    return web.json_response(result)
+
+
+async def desktop_skill_asset_handler(req: web.Request) -> web.Response:
+    """Serves safe presentation assets declared by a local or installed skill."""
+    skill_id = req.match_info.get("skill_id", "")
+    asset_path = req.match_info.get("asset_path", "")
+    try:
+        resolved, content_type = resolve_skill_asset_path(skill_id, asset_path)
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=404)
+    return web.FileResponse(resolved, headers={"Content-Type": content_type})
+
+
+async def desktop_skill_config_handler(req: web.Request) -> web.Response:
+    """Stores configuration for an installed skill."""
+    payload = await req.json()
+    skill_id = req.match_info.get("skill_id", "")
+    try:
+        result = configure_skill(skill_id, payload.get("config", payload))
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    await _reload_skill_runtimes(req.app)
+    return web.json_response(result)
+
+
+async def desktop_skill_enabled_handler(req: web.Request) -> web.Response:
+    """Enables or disables an installed skill."""
+    payload = await req.json()
+    skill_id = req.match_info.get("skill_id", "")
+    try:
+        result = update_skill_enabled(skill_id, bool(payload.get("enabled", False)))
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    await _reload_skill_runtimes(req.app)
+    return web.json_response(result)
+
+
+async def desktop_skill_delete_handler(req: web.Request) -> web.Response:
+    """Uninstalls a skill from the local runtime state."""
+    skill_id = req.match_info.get("skill_id", "")
+    try:
+        result = uninstall_skill(skill_id)
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    await _reload_skill_runtimes(req.app)
+    return web.json_response(result)
+
+
 def register_desktop_routes(app: web.Application) -> None:
     """Registers endpoints consumed by the desktop app."""
     app.router.add_get("/api/health", health_handler)
@@ -1293,6 +1909,10 @@ def register_desktop_routes(app: web.Application) -> None:
     app.router.add_delete("/api/desktop/attachments/{attachment_id}", desktop_attachment_delete_handler)
     app.router.add_post("/api/desktop/chat", desktop_chat_handler)
     app.router.add_post("/api/desktop/chat/stream", desktop_chat_stream_handler)
+    app.router.add_post(
+        "/api/desktop/workflows/{run_id}/requests/{request_id}/decision",
+        desktop_workflow_request_decision_handler,
+    )
     app.router.add_get("/api/desktop/conversations", desktop_conversations_handler)
     app.router.add_post("/api/desktop/conversations", desktop_create_conversation_handler)
     app.router.add_get("/api/desktop/conversations/{conv_id}/messages", desktop_conversation_messages_handler)
@@ -1312,3 +1932,23 @@ def register_desktop_routes(app: web.Application) -> None:
     app.router.add_post("/api/desktop/jobs", desktop_jobs_post_handler)
     app.router.add_post("/api/desktop/jobs/{job_id}/run", desktop_job_run_handler)
     app.router.add_delete("/api/desktop/jobs/{job_id}", desktop_job_delete_handler)
+    app.router.add_get("/api/desktop/skills/marketplace", desktop_skills_marketplace_handler)
+    app.router.add_post("/api/desktop/skills/marketplace/refresh", desktop_skills_marketplace_refresh_handler)
+    app.router.add_get("/api/desktop/skills/installed", desktop_skills_installed_handler)
+    app.router.add_get("/api/desktop/skills/runtime", desktop_skill_runtime_status_handler)
+    app.router.add_get("/api/desktop/skills/settings", desktop_skill_settings_get_handler)
+    app.router.add_put("/api/desktop/skills/settings", desktop_skill_settings_put_handler)
+    app.router.add_post("/api/desktop/skills/settings/test", desktop_skill_settings_test_handler)
+    app.router.add_get("/api/desktop/registry/overview", desktop_registry_admin_overview_handler)
+    app.router.add_get("/api/desktop/registry/skills", desktop_registry_admin_skills_handler)
+    app.router.add_get("/api/desktop/registry/skills/{skill_id}/versions", desktop_registry_admin_skill_versions_handler)
+    app.router.add_post("/api/desktop/registry/bundles/inspect", desktop_registry_admin_bundle_inspect_handler)
+    app.router.add_post("/api/desktop/registry/publish", desktop_registry_admin_publish_handler)
+    app.router.add_post("/api/desktop/registry/skills/{skill_id}/versions/{version}/approve", desktop_registry_admin_approve_handler)
+    app.router.add_post("/api/desktop/registry/skills/{skill_id}/versions/{version}/revoke", desktop_registry_admin_revoke_handler)
+    app.router.add_post("/api/desktop/skills/install", desktop_skill_install_handler)
+    app.router.add_post("/api/desktop/skills/install-bundle", desktop_skill_install_bundle_handler)
+    app.router.add_get("/api/desktop/skills/{skill_id}/assets/{asset_path:.*}", desktop_skill_asset_handler)
+    app.router.add_put("/api/desktop/skills/{skill_id}/config", desktop_skill_config_handler)
+    app.router.add_put("/api/desktop/skills/{skill_id}/enabled", desktop_skill_enabled_handler)
+    app.router.add_delete("/api/desktop/skills/{skill_id}", desktop_skill_delete_handler)

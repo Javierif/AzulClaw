@@ -21,7 +21,7 @@ AzulClaw is a local-first AI companion that combines a secure desktop workspace,
 - A desktop shell built with Tauri, React, and TypeScript.
 - A local Python runtime that handles chat, memory, scheduling, process tracking, and Bot Framework activities.
 - A sandboxed file tool layer exposed through MCP so filesystem access stays isolated and auditable.
-- An optional Azure relay for public channels such as Telegram or Alexa without exposing the local runtime directly.
+- Optional Azure-backed skills and relays for public channels such as Telegram or Alexa without exposing the local runtime directly.
 
 ## Architecture at a glance
 
@@ -52,10 +52,11 @@ Channel -> Azure Bot Service -> Azure Function -> Azure Service Bus -> Local Azu
 AzulClaw/
 |- azul_backend/     Python runtime, memory, channels, MCP integration
 |- azul_desktop/     Desktop shell and frontend views
-|- azure/            Azure relay resources and deployment artifacts
+|- azure/            Azure core, marketplace, and shared Terraform scaffolding
 |- docs/             Canonical product and technical documentation
 |- memory/           Local runtime state generated during development
 |- scripts/          Utility scripts
+|- skills/           First-party skills, skill templates, and manifest schema
 |- README.md
 `- requirements.txt
 ```
@@ -190,7 +191,23 @@ resource.
 - Hatching flow for profile and workspace setup.
 - Workspace browsing restricted to a dedicated sandbox root.
 - Heartbeats and scheduled jobs stored locally.
-- Optional Azure relay for Bot Framework channels.
+- Optional Azure relay for Bot Framework channels through first-party skills.
+- Internal Marketplace and Registry Admin surfaces for distributing approved company skills across AzulClaw installations.
+
+## Marketplace and Registry
+
+AzulClaw now separates two product surfaces:
+
+- `Marketplace`: browse approved skills, install them locally, configure them, and enable their runtime.
+- `Registry Admin`: publish `.azulskill` bundles as drafts, review versions, approve or revoke them, and control what appears in the company marketplace.
+
+The desktop app stores the registry URL and optional Azure Function keys locally in
+`memory/skills/settings.json`. When an admin key is configured in
+`Settings -> Marketplace`, the `Registry` section appears in the sidebar.
+
+See [Marketplace and Skills](docs/16_marketplace_and_skills.md) for the
+end-to-end skill lifecycle, manifest contract, registry architecture, and a
+reference skill folder example.
 
 ## Documentation
 
@@ -202,7 +219,8 @@ Recommended reading order:
 2. [Setup and Development](docs/02_setup_and_development.md)
 3. [Security Model](docs/03_security_model.md)
 4. [Component Reference](docs/04_component_reference.md)
-5. [Memory System](docs/15_memory_system.md)
+5. [Marketplace and Skills](docs/16_marketplace_and_skills.md)
+6. [Memory System](docs/15_memory_system.md)
 
 ## Notes for contributors
 

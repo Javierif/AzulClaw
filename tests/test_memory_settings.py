@@ -7,7 +7,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from azul_backend.azul_brain.api.services import WIPE_CONFIRMATION_PHRASE, save_memory_runtime_settings, wipe_local_user_data
+from azul_backend.azul_brain.api.services import (
+    WIPE_CONFIRMATION_PHRASE,
+    save_hatching_profile,
+    save_memory_runtime_settings,
+    wipe_local_user_data,
+)
 from azul_backend.azul_brain.api.hatching_store import (
     HatchingProfile,
     HatchingStore,
@@ -128,6 +133,22 @@ class MemorySettingsTests(unittest.TestCase):
             self.assertEqual(result["memory_db_path"], str(Path(result["workspace_root"]) / ".azul" / "azul_memory.db"))
             self.assertEqual(load_memory_settings(), MemorySettings())
             self.assertTrue(is_vector_memory_enabled())
+
+    def test_save_hatching_profile_persists_authenticator_preference(self) -> None:
+        tmp = self._runtime_dir()
+        workspace = Path(tmp) / "workspace"
+        with patch.dict(os.environ, {"AZUL_RUNTIME_DIR": tmp}, clear=True):
+            HatchingStore().save(HatchingProfile(workspace_root=str(workspace)))
+
+            saved = save_hatching_profile(
+                {
+                    "workspace_root": str(workspace),
+                    "require_authenticator_for_sensitive_actions": True,
+                }
+            )
+
+            self.assertTrue(saved["require_authenticator_for_sensitive_actions"])
+            self.assertTrue(HatchingStore().load().require_authenticator_for_sensitive_actions)
 
 
 if __name__ == "__main__":

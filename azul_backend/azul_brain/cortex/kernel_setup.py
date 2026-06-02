@@ -1,8 +1,10 @@
 """Cognitive agent configuration based on Microsoft Agent Framework."""
 
+import hashlib
 import json
 import logging
 import os
+import re
 from typing import Any
 from urllib.parse import urlparse
 
@@ -12,11 +14,16 @@ from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.openai import OpenAIChatClient
 from pydantic import BaseModel
 
+from ..api.skill_services import (
+    invoke_remote_agent,
+    list_enabled_remote_agent_runtime_specs,
+)
 from ..azure_auth import (
     get_azure_openai_token_provider,
     get_default_azure_credential,
     resolve_azure_openai_auth_mode,
 )
+from ..config import derive_fast_azure_openai_endpoint
 from ..foundry_url import (
     is_foundry_endpoint,
     normalize_azure_openai_endpoint,
@@ -26,6 +33,7 @@ from ..soul.system_prompt import AZULCLAW_SYSTEM_PROMPT
 from .mcp_plugin import MCPToolsPlugin
 
 LOGGER = logging.getLogger(__name__)
+MAX_DYNAMIC_TOOL_NAME_LENGTH = 64
 
 try:
     from openai.lib._parsing._completions import (
@@ -289,9 +297,55 @@ class AzulAgent:
         return self.agent.run(messages, stream=True)
 
 
-def _build_tools(mcp_client):
+def _normalize_dynamic_tool_name(skill_id: str, tool_name: str, used_names: set[str]) -> str:
+    skill_slug = re.sub(r"[^a-z0-9]+", "_", skill_id.lower()).strip("_")
+    tool_slug = re.sub(r"[^a-z0-9]+", "_", tool_name.lower()).strip("_")
+    candidate = f"skill_{skill_slug}__{tool_slug}".strip("_")
+
+    def _bounded_name(base: str, suffix: str = "") -> str:
+        limit = MAX_DYNAMIC_TOOL_NAME_LENGTH - len(suffix)
+        if len(base) <= limit:
+            return f"{base}{suffix}"
+        digest = hashlib.sha1(base.encode("utf-8")).hexdigest()[:8]
+        keep = max(1, limit - len(digest) - 1)
+        truncated = base[:keep].rstrip("_-") or base[:keep]
+        return f"{truncated}_{digest}{suffix}"
+
+    candidate = _bounded_name(candidate)
+    if candidate not in used_names:
+        used_names.add(candidate)
+        return candidate
+    index = 2
+    while _bounded_name(candidate, f"_{index}") in used_names:
+        index += 1
+    unique = _bounded_name(candidate, f"_{index}")
+    used_names.add(unique)
+    return unique
+
+
+def _tool_schema_summary(input_schema: Any) -> str:
+    if not isinstance(input_schema, dict):
+        return "Pass a JSON object string for the tool arguments."
+    properties = input_schema.get("properties", {})
+    required = input_schema.get("required", [])
+    if not isinstance(properties, dict) or not properties:
+        return "Pass a JSON object string for the tool arguments."
+    parts = []
+    for name, schema in properties.items():
+        if not isinstance(schema, dict):
+            continue
+        type_name = str(schema.get("type", "value"))
+        suffix = " required" if name in required else ""
+        parts.append(f"{name}:{type_name}{suffix}")
+    joined = ", ".join(parts[:8])
+    return f"Pass arguments_json as a JSON object. Expected fields: {joined}." if joined else "Pass arguments_json as a JSON object."
+
+
+async def _build_tools(mcp_client):
     """Builds the agent tool catalogue on top of MCPToolsPlugin."""
     plugin = MCPToolsPlugin(mcp_client)
+    tools = []
+    used_names = {"list_files", "read_file", "move_file", "list_skill_tools", "list_remote_agents"}
 
     @tool(
         name="list_files",
@@ -314,7 +368,88 @@ def _build_tools(mcp_client):
     async def move_file(source: str = "", destination: str = "") -> str:
         return await plugin.move_file(source, destination)
 
-    return [list_files, read_file, move_file]
+    tools.extend([list_files, read_file, move_file])
+
+    if hasattr(mcp_client, "list_tool_catalog"):
+        @tool(
+            name="list_skill_tools",
+            description="Lists Marketplace MCP tools connected from enabled local skills.",
+        )
+        async def list_skill_tools(skill_id: str = "") -> str:
+            return await plugin.list_skill_tools(skill_id)
+
+        tools.append(list_skill_tools)
+
+        try:
+            catalog = await mcp_client.list_tool_catalog(include_primary=False)
+        except Exception as error:
+            LOGGER.warning("Could not load Marketplace MCP tool catalog: %s", error)
+            catalog = []
+
+        for item in catalog:
+            skill_id = str(item.get("skill_id", "")).strip()
+            tool_name = str(item.get("tool_name", "")).strip()
+            if not skill_id or not tool_name:
+                continue
+            dynamic_name = _normalize_dynamic_tool_name(skill_id, tool_name, used_names)
+            description = str(item.get("description", "")).strip() or f"Runs MCP tool {tool_name}."
+            schema_summary = _tool_schema_summary(item.get("input_schema"))
+
+            def _make_invoke_skill_tool(bound_skill_id: str, bound_tool_name: str):
+                async def invoke_skill_tool(arguments_json: str = "{}") -> str:
+                    return await plugin.call_skill_tool(bound_skill_id, bound_tool_name, arguments_json)
+                return invoke_skill_tool
+
+            tools.append(
+                tool(
+                    name=dynamic_name,
+                    description=f"[{skill_id}] {description} {schema_summary}",
+                )(_make_invoke_skill_tool(skill_id, tool_name))
+            )
+
+    @tool(
+        name="list_remote_agents",
+        description="Lists enabled Marketplace remote-agent skills and their HTTPS endpoints.",
+    )
+    async def list_remote_agents() -> str:
+        items = list_enabled_remote_agent_runtime_specs()
+        if not items:
+            return "No Marketplace remote-agent skills are enabled."
+        lines = []
+        for item in items:
+            lines.append(
+                f"{item.get('skill_id', '')}: {item.get('endpoint', '')} - {item.get('message', '')}".strip()
+            )
+        return "\n".join(lines)
+
+    tools.append(list_remote_agents)
+
+    for item in list_enabled_remote_agent_runtime_specs():
+        skill_id = str(item.get("skill_id", "")).strip()
+        if not skill_id:
+            continue
+        dynamic_name = _normalize_dynamic_tool_name(skill_id, "remote_agent", used_names)
+        description = str(item.get("description", "")).strip() or "Calls the configured remote agent."
+
+        def _make_remote_agent_tool(bound_skill_id: str):
+            async def invoke_bound_remote_agent(prompt: str = "", context_json: str = "{}") -> str:
+                try:
+                    context = json.loads(context_json or "{}")
+                except json.JSONDecodeError as error:
+                    raise ValueError(f"context_json must be valid JSON: {error}") from error
+                if not isinstance(context, dict):
+                    raise ValueError("context_json must decode to a JSON object.")
+                return await invoke_remote_agent(bound_skill_id, prompt, context)
+            return invoke_bound_remote_agent
+
+        tools.append(
+            tool(
+                name=dynamic_name,
+                description=f"[{skill_id}] {description} Pass prompt plus optional context_json as a JSON object.",
+            )(_make_remote_agent_tool(skill_id))
+        )
+
+    return tools
 
 
 async def create_agent(
@@ -332,7 +467,7 @@ async def create_agent(
     )
     lane = getattr(model_profile, "lane", "").strip().lower()
     effective_instructions = _compose_instructions(instructions)
-    tools = _build_tools(mcp_client) if tools_enabled else []
+    tools = await _build_tools(mcp_client) if tools_enabled else []
 
     if provider == "openai":
         base_url = _normalize_openai_base_url(
@@ -366,7 +501,7 @@ async def create_agent(
         token_provider = get_azure_openai_token_provider() if auth_mode == "entra" else None
         if auth_mode != "entra" and not api_key:
             api_key = _require_env("AZURE_OPENAI_API_KEY")
-        url = _foundry_chat_url(endpoint)
+        url = _foundry_chat_url(derive_fast_azure_openai_endpoint(endpoint))
         LOGGER.debug("[Kernel] Fast lane using FoundryAgent: %s (%s)", url, deployment_name)
         return FoundryAgent(
             url=url,

@@ -3,11 +3,12 @@
 import asyncio
 import json
 import logging
+from typing import Any
 
 from azure.servicebus import ServiceBusMessage
 from azure.servicebus.aio import ServiceBusClient
 
-from .access_control import evaluate_telegram_access
+from .access_control import evaluate_channel_connector_access
 from .proactive_sender import send_proactive_reply
 
 LOGGER = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class ServiceBusWorker:
         outbound_queue: str,
         use_sessions: str = "true",
         sync_reply_timeout_seconds: float = 6.8,
+        channel_connector_policies: dict[str, dict[str, Any]] | None = None,
         telegram_allowed_user_ids: frozenset[str] = frozenset(),
         telegram_allowed_chat_ids: frozenset[str] = frozenset(),
     ):
@@ -60,6 +62,7 @@ class ServiceBusWorker:
         self.inbound_queue = inbound_queue
         self.outbound_queue = outbound_queue
         self.sync_reply_timeout_seconds = sync_reply_timeout_seconds
+        self.channel_connector_policies = channel_connector_policies or {}
         self.telegram_allowed_user_ids = telegram_allowed_user_ids
         self.telegram_allowed_chat_ids = telegram_allowed_chat_ids
         raw_mode = (use_sessions or "auto").strip().lower()
@@ -83,9 +86,13 @@ class ServiceBusWorker:
     def _is_session_capability_error(error: Exception) -> bool:
         """Returns True when the queue rejects session-based operations."""
         error_text = str(error).lower()
-        return "session" in error_text and any(
-            marker in error_text
-            for marker in ("require", "enabled", "accept", "disabled", "sessionful", "sessionless")
+        return "session" in error_text and (
+            "require" in error_text
+            or "enabled" in error_text
+            or "accept" in error_text
+            or "disabled" in error_text
+            or "sessionful" in error_text
+            or "sessionless" in error_text
         )
 
     def _disable_auto_session_mode(self, reason: str) -> None:
@@ -234,14 +241,17 @@ class ServiceBusWorker:
             raise ValueError("Malformed inbound activity payload.") from error
 
         correlation_id = msg.correlation_id or msg.session_id or ""
-        decision = evaluate_telegram_access(
-            activity,
-            self.telegram_allowed_user_ids,
-            self.telegram_allowed_chat_ids,
-        )
+        policies = self.channel_connector_policies or {
+            "telegram": {
+                "allowed_user_ids": self.telegram_allowed_user_ids,
+                "allowed_chat_ids": self.telegram_allowed_chat_ids,
+            }
+        }
+        decision = evaluate_channel_connector_access(activity, policies)
         if not decision.authorized:
             LOGGER.warning(
-                "[Worker] Dropping unauthorized Telegram activity user_id=%s chat_id=%s reason=%s correlation_id=%s",
+                "[Worker] Dropping unauthorized channel activity channel=%s user_id=%s chat_id=%s reason=%s correlation_id=%s",
+                decision.channel_id or "<empty>",
                 decision.user_id or "<empty>",
                 decision.chat_id or "<empty>",
                 decision.reason,
@@ -260,7 +270,7 @@ class ServiceBusWorker:
             await self._send_sync_reply(activity, EMPTY_TEXT_PROMPT, correlation_id)
             return
 
-        route = self.orchestrator.resolve_route(text)
+        route = await self.orchestrator.resolve_route_async(text)
         LOGGER.info(
             "[Worker] Processing channel activity from %s (correlation_id=%s, text_length=%d, lane=%s).",
             user_id,

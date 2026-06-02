@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.0",
+  "id": "com.example.remote-agent",
+  "name": "Example Remote Agent",
+  "version": "0.1.0",
+  "publisher": "Example",
+  "description": "Delegates a capability to a remote HTTPS agent.",
+  "kind": "remote_agent",
+  "runtime": {
+    "kind": "remote_agent",
+    "endpoint": "https://example.invalid/api/agent",
+    "auth": {
+      "type": "api_key",
+      "secret_name": "REMOTE_AGENT_API_KEY",
+      "header": "x-api-key"
+    }
+  },
+  "compatibility": {
+    "azulclaw_min_version": "0.1.0"
+  },
+  "categories": ["enterprise"],
+  "tags": ["remote", "agent"],
+  "presentation": {
+    "icon_text": "RA",
+    "banner": {
+      "variant": "agent",
+      "title": "Remote Agent",
+      "accent": "#60a5fa"
+    }
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "secrets": [
+    {
+      "name": "REMOTE_AGENT_API_KEY",
+      "title": "Remote agent API key",
+      "description": "Credential sent to the remote agent endpoint.",
+      "required": true
+    }
+  ],
+  "permissions": {
+    "filesystem": [],
+    "process": false,
+    "network": ["example.invalid"],
+    "memory": "none",
+    "channels": [],
+    "sensitive_actions": []
+  },
+  "capabilities": [
+    {
+      "id": "example.remote_agent",
+      "description": "Ask the remote example agent for help."
+    }
+  ],
+  "activation": {
+    "restart_required": false
+  }
+}

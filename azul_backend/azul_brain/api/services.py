@@ -439,6 +439,12 @@ def save_hatching_profile(payload: dict) -> dict:
         confirm_sensitive_actions=bool(
             payload.get("confirm_sensitive_actions", current.confirm_sensitive_actions)
         ),
+        require_authenticator_for_sensitive_actions=bool(
+            payload.get(
+                "require_authenticator_for_sensitive_actions",
+                current.require_authenticator_for_sensitive_actions,
+            )
+        ),
         is_hatched=bool(payload.get("is_hatched", current.is_hatched)),
         completed_at=str(payload.get("completed_at", current.completed_at)).strip()
         or current.completed_at,

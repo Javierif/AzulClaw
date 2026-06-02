@@ -1,6 +1,7 @@
 export type AppView =
   | "chat"
   | "skills"
+  | "registry"
   | "context"
   | "heartbeats"
   | "runtime"
@@ -76,6 +77,41 @@ export interface ChatExchange {
   content: string;
   created_at?: string;
   attachments?: AttachmentSummary[];
+  approval_action_id?: string;
+  approval_status?: string;
+  approval_status_label?: string;
+  workflow_events?: SkillWorkflowEvent[];
+}
+
+export interface ChatRuntimeSkipDetail {
+  model_id: string;
+  model_label: string;
+  lane: string;
+  reason: string;
+  reason_label: string;
+  detail: string;
+}
+
+export interface ChatRuntimeFailedAttempt {
+  model_id: string;
+  label: string;
+  error: string;
+}
+
+export interface ChatDebugTrace {
+  lane_label: string;
+  reason_label: string;
+  triage_reason: string;
+  turn_status?: string;
+  model_label: string;
+  process_id: string;
+  attempt_count?: number;
+  skipped_models?: ChatRuntimeSkipDetail[];
+  failed_attempts?: ChatRuntimeFailedAttempt[];
+  started_at?: string;
+  completed_at?: string;
+  elapsed_ms?: number;
+  summary?: string;
 }
 
 export interface ConversationSummary {
@@ -104,9 +140,17 @@ export interface ThinkingPhase {
 }
 
 export interface ThinkingProgress {
+  event_type?: "progress-init" | "progress-update" | "progress-idle" | "progress-done";
   title: string;
   summary: string;
   badge: string;
+  lane?: string;
+  lane_label?: string;
+  triage_reason?: string;
+  reason_label?: string;
+  current_step_label?: string;
+  started_at?: string;
+  last_updated_at?: string;
   active_count: number;
   phases: ThinkingPhase[];
 }
@@ -116,11 +160,32 @@ export interface ChatRuntimeMeta {
   model_id: string;
   model_label: string;
   process_id: string;
+  attempt_count?: number;
+  skipped_models?: ChatRuntimeSkipDetail[];
+  failed_attempts?: ChatRuntimeFailedAttempt[];
   triage_reason?: string;
+  turn_status?: string;
+  workflow_events?: SkillWorkflowEvent[];
+}
+
+export interface SkillWorkflowEvent {
+  type: "delta" | "status" | "request_info" | "completed" | "failed" | string;
+  run_id: string;
+  skill_id: string;
+  data: Record<string, unknown>;
 }
 
 export interface ChatStreamEvent {
-  type: "start" | "commentary" | "progress" | "delta" | "done" | "error";
+  type:
+    | "start"
+    | "commentary"
+    | "progress-init"
+    | "progress-update"
+    | "progress-idle"
+    | "progress-done"
+    | "delta"
+    | "done"
+    | "error";
   text?: string;
   reply?: string;
   history?: ChatExchange[];
@@ -135,6 +200,7 @@ export interface ChatStreamEvent {
 export interface SetupProfile {
   name: string;
   role: string;
+  /** Deprecated: kept for backward compatibility with persisted profiles; no longer edited in the UI. */
   mission: string;
   tone: string;
   style: string;
@@ -142,6 +208,7 @@ export interface SetupProfile {
   archetype: string;
   workspace_root: string;
   confirm_sensitive_actions: boolean;
+  require_authenticator_for_sensitive_actions: boolean;
   is_hatched: boolean;
   completed_at: string;
   skills: string[];
@@ -311,4 +378,213 @@ export interface JobRunResult {
     conversation_title?: string;
     error?: string;
   };
+}
+
+export type SkillKind =
+  | "local_mcp"
+  | "remote_agent"
+  | "knowledge"
+  | "workflow"
+  | "channel_connector"
+  | "unknown";
+
+export type SkillRuntimeKind = "none" | "mcp" | "remote_agent" | "unknown";
+
+export interface SkillSummary {
+  id: string;
+  name: string;
+  version: string;
+  publisher: string;
+  description: string;
+  kind: SkillKind;
+  runtime_kind: SkillRuntimeKind;
+  categories?: string[];
+  tags?: string[];
+  presentation?: {
+    icon_text?: string;
+    banner?: {
+      variant?: "default" | "desktop" | "gemini" | "telegram" | "blueprint" | "agent" | "channel";
+      title?: string;
+      image?: string;
+      accent?: string;
+    };
+  };
+  config_schema?: {
+    type?: string;
+    required?: string[];
+    properties?: Record<string, {
+      type?: string;
+      title?: string;
+      format?: string;
+      description?: string;
+      default?: string | number;
+      minimum?: number;
+      maximum?: number;
+    }>;
+  };
+  secrets?: Array<{
+    name: string;
+    field: string;
+    title?: string;
+    description?: string;
+    required?: boolean;
+    configured?: boolean;
+  }>;
+  activation?: {
+    restart_required?: boolean;
+    requires_azure_relay?: boolean;
+    relay_function_path?: string;
+    [key: string]: unknown;
+  };
+  deployment?: {
+    skill_root_path?: string;
+    readme_path?: string;
+    docs_path?: string;
+    infra_path?: string;
+    runtime_path?: string;
+    [key: string]: unknown;
+  };
+  permissions?: Record<string, unknown>;
+  capabilities?: Array<{ id: string; description: string; prompt?: string }>;
+  source?: {
+    kind: "official" | "registry" | "package" | "unknown";
+    path?: string;
+    registry?: string;
+    artifact?: Record<string, unknown>;
+  };
+  registry_status?: string;
+  local_status?: "available" | "installed" | "configured" | "enabled" | string;
+  external_deployment_required?: boolean;
+  installed: boolean;
+  enabled: boolean;
+  configured: boolean;
+  missing_required_fields: string[];
+  config?: Record<string, unknown>;
+  installed_at?: string;
+  updated_at?: string;
+}
+
+export interface SkillListResponse {
+  items: SkillSummary[];
+}
+
+export interface SkillMarketplaceSettings {
+  schema_version?: string;
+  registry_url: string;
+  registry_auth_mode?: "none" | "function_key";
+  registry_consumer_key_configured?: boolean;
+  registry_admin_key_configured?: boolean;
+  updated_at?: string;
+}
+
+export interface SkillRegistryProbeResult {
+  status: "local_only" | "ok" | "error";
+  registry_url: string;
+  registry_auth_mode?: "none" | "function_key";
+  registry_consumer_key_configured?: boolean;
+  registry_admin_key_configured?: boolean;
+  health_ok: boolean;
+  catalog_ok: boolean;
+  registry_name?: string;
+  skill_count?: number;
+  checked_at?: string;
+  message?: string;
+  error?: string;
+}
+
+export interface SkillRuntimeStatus {
+  skill_id: string;
+  skill_name: string;
+  status: "connected" | "error";
+  tool_count: number;
+  message: string;
+}
+
+export interface RegistryVersionRecord {
+  id: string;
+  name: string;
+  version: string;
+  publisher: string;
+  description: string;
+  kind: SkillKind | string;
+  runtime_kind: SkillRuntimeKind | string;
+  status: "draft" | "approved" | "revoked";
+  approved: boolean;
+  artifact?: {
+    filename?: string;
+    sha256?: string;
+    size_bytes?: number;
+    files?: number;
+    path?: string;
+  };
+  published_at?: string;
+  published_by?: string;
+  approved_at?: string;
+  approved_by?: string;
+  revoked_at?: string;
+  revoked_by?: string;
+  updated_at?: string;
+  publish_source?: string;
+  manifest_snapshot?: Record<string, unknown>;
+  activation?: Record<string, unknown>;
+  config_schema?: Record<string, unknown>;
+  presentation?: Record<string, unknown>;
+  capabilities?: Array<{ id: string; description: string; prompt?: string }>;
+}
+
+export interface RegistrySkillItem {
+  id: string;
+  name: string;
+  publisher: string;
+  kind: SkillKind | string;
+  latest_version: string;
+  approved_version: string;
+  version_count: number;
+  draft_count?: number;
+  revoked_count?: number;
+  versions?: RegistryVersionRecord[];
+}
+
+export interface RegistryOverview {
+  schema_version?: string;
+  registry: string;
+  storage_backend?: "local" | "azure" | string;
+  totals: {
+    skills: number;
+    versions: number;
+    approved_skills: number;
+    draft_versions: number;
+    revoked_versions: number;
+  };
+  recent_versions?: RegistryVersionRecord[];
+  items?: RegistrySkillItem[];
+}
+
+export interface RegistrySkillListResponse {
+  schema_version?: string;
+  registry: string;
+  storage_backend?: "local" | "azure" | string;
+  items: RegistrySkillItem[];
+}
+
+export interface RegistrySkillVersionResponse {
+  schema_version?: string;
+  registry: string;
+  storage_backend?: "local" | "azure" | string;
+  skill: {
+    id: string;
+    name: string;
+    publisher: string;
+    kind: SkillKind | string;
+  };
+  versions: RegistryVersionRecord[];
+}
+
+export interface RegistryBundlePreview {
+  filename: string;
+  bundle_path: string;
+  sha256: string;
+  size_bytes: number;
+  files: number;
+  manifest: Record<string, unknown>;
 }

@@ -97,9 +97,10 @@ export const defaultSetupProfile: SetupProfile = {
   archetype: "Companion",
   workspace_root: "C:\\Users\\<user>\\Desktop\\AzulWorkspace",
   confirm_sensitive_actions: true,
+  require_authenticator_for_sensitive_actions: false,
   is_hatched: false,
   completed_at: "",
-  skills: ["Email", "Telegram", "Workspace"],
+  skills: [],
   skill_configs: {},
 };
 
@@ -110,6 +111,9 @@ export const defaultChatRuntime: ChatRuntimeMeta = {
   model_id: "slow",
   model_label: "Slow Brain",
   process_id: "local-fallback",
+  attempt_count: 0,
+  skipped_models: [],
+  failed_attempts: [],
 };
 
 export const runtimeOverview: RuntimeOverview = {

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Folder Organizer Approval Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["action_kind", "title", "summary", "payload"],
+  "properties": {
+    "action_kind": { "type": "string", "const": "move_files" },
+    "title": { "type": "string" },
+    "summary": { "type": "string" },
+    "risk": { "type": "string", "enum": ["low", "medium", "high"], "default": "medium" },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

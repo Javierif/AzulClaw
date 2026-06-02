@@ -87,10 +87,11 @@ Memory, runtime settings, jobs, and process history are persisted locally so the
 ```text
 azul_backend/       Local runtime and MCP server
 azul_desktop/       Desktop shell
-azure/              Cloud relay for channels
+azure/              Core Azure platform, marketplace, and shared Terraform
 docs/               Canonical documentation
 memory/             Generated local runtime state
 scripts/            Utility scripts
+skills/             First-party skills, templates, manifests, and skill infra
 ```
 
 ## Related documents

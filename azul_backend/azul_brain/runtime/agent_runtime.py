@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import inspect
+import logging
 import os
 import re
 import shutil
@@ -15,17 +17,38 @@ from typing import Any
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
-from agent_framework import Message
+from agent_framework import Content, Message
 
 from ..azure_auth import describe_azure_openai_auth
 from ..cortex.kernel_setup import create_agent
 from .process_registry import ProcessRegistry
 from .store import RuntimeModelProfile, RuntimeSettings, RuntimeStore, to_iso_z
 
+LOGGER = logging.getLogger(__name__)
 
 _THINK_BLOCK_RE = re.compile(r"<think\b[^>]*>[\s\S]*?</think\s*>", re.IGNORECASE)
 _THINK_OPEN_RE = re.compile(r"<think\b[^>]*>", re.IGNORECASE)
 _THINK_CLOSE_RE = re.compile(r"</think\s*>", re.IGNORECASE)
+_CONTEXT_RETRY_NOTE = (
+    "Previous attempt hit the model context limit. Work only with the compacted context. "
+    "If a task spans many files or tool results, summarize first and continue in smaller batches."
+)
+_CONTEXT_PREFLIGHT_NOTE = (
+    "The request context was pre-compacted to stay within the request budget. "
+    "Work from the most relevant recent context and keep multi-step work in smaller batches."
+)
+_CONTEXT_COMPACTION_NOTE = (
+    "Earlier context was compacted after a context-length rejection. "
+    "Prioritize the most recent request and keep any plan batched."
+)
+_CONTEXT_RETRY_SYSTEM_LIMIT = 2
+_CONTEXT_RETRY_SYSTEM_TEXT_LIMIT = 3_000
+_CONTEXT_RETRY_HISTORY_LIMIT = 4
+_CONTEXT_RETRY_HISTORY_TEXT_LIMIT = 1_500
+_CONTEXT_RETRY_FINAL_TEXT_LIMIT = 4_000
+_TRUNCATED_CONTEXT_SUFFIX = "\n\n[Context truncated]"
+_PREFLIGHT_TEXT_CHAR_LIMIT = 250_000
+_PREFLIGHT_BINARY_BYTE_LIMIT = 2_000_000
 
 
 @dataclass
@@ -36,6 +59,9 @@ class RuntimeTurnResult:
     model: RuntimeModelProfile | None
     attempts: list[dict[str, str]]
     process_id: str
+    attempt_count: int = 0
+    skipped_models: list[dict[str, str]] | None = None
+    failed_attempts: list[dict[str, str]] | None = None
     value: Any = None
 
 
@@ -76,6 +102,161 @@ def _strip_reasoning_artifacts(text: str) -> str:
     if _THINK_OPEN_RE.search(cleaned) and not _THINK_CLOSE_RE.search(cleaned):
         cleaned = _THINK_OPEN_RE.sub("", cleaned)
     return cleaned.strip()
+
+
+def _is_context_overflow_error(error_text: str) -> bool:
+    normalized = (error_text or "").strip().lower()
+    if not normalized:
+        return False
+    if (
+        "context length" in normalized
+        or "maximum context length" in normalized
+        or "longer than the model's context length" in normalized
+        or "too many tokens" in normalized
+    ):
+        return True
+    return "input (" in normalized and "tokens" in normalized and "longer than" in normalized
+
+
+def _truncate_context_text(text: str, limit: int) -> str:
+    if limit <= 0:
+        return ""
+    if len(text) <= limit:
+        return text
+    if limit <= len(_TRUNCATED_CONTEXT_SUFFIX):
+        return text[:limit]
+    return text[: limit - len(_TRUNCATED_CONTEXT_SUFFIX)].rstrip() + _TRUNCATED_CONTEXT_SUFFIX
+
+
+def _copy_message_with_text_limit(message: Message, *, max_text_chars: int) -> Message:
+    raw_contents = getattr(message, "contents", []) or []
+    if isinstance(raw_contents, str):
+        return Message(
+            role=getattr(message, "role", "user"),
+            contents=_truncate_context_text(raw_contents, max_text_chars),
+        )
+
+    if not isinstance(raw_contents, list):
+        raw_contents = list(raw_contents)
+
+    remaining = max_text_chars
+    new_contents: list[Content] = []
+    for content in raw_contents:
+        if isinstance(content, str):
+            trimmed = _truncate_context_text(content, remaining)
+            if trimmed:
+                new_contents.append(Content.from_text(trimmed))
+                remaining = max(0, remaining - len(trimmed))
+            continue
+
+        content_type = getattr(content, "type", None)
+        if content_type == "text":
+            text = str(getattr(content, "text", "") or "")
+            trimmed = _truncate_context_text(text, remaining)
+            if trimmed:
+                new_contents.append(Content.from_text(trimmed))
+                remaining = max(0, remaining - len(trimmed))
+            continue
+        new_contents.append(content)
+
+    if not new_contents:
+        new_contents = [Content.from_text("")]
+    return Message(role=getattr(message, "role", "user"), contents=new_contents)
+
+
+def _context_retry_instructions(instructions: str | None) -> str:
+    scoped = (instructions or "").strip()
+    if not scoped:
+        return _CONTEXT_RETRY_NOTE
+    if _CONTEXT_RETRY_NOTE in scoped:
+        return scoped
+    return f"{scoped}\n\n{_CONTEXT_RETRY_NOTE}"
+
+
+def _context_preflight_instructions(instructions: str | None) -> str:
+    scoped = (instructions or "").strip()
+    if not scoped:
+        return _CONTEXT_PREFLIGHT_NOTE
+    if _CONTEXT_PREFLIGHT_NOTE in scoped:
+        return scoped
+    return f"{scoped}\n\n{_CONTEXT_PREFLIGHT_NOTE}"
+
+
+def _compact_messages_for_context_retry(messages: list[Message]) -> list[Message]:
+    if not messages:
+        return []
+
+    final_message = messages[-1]
+    leading_system = [
+        _copy_message_with_text_limit(message, max_text_chars=_CONTEXT_RETRY_SYSTEM_TEXT_LIMIT)
+        for message in messages[:-1]
+        if getattr(message, "role", "") == "system"
+    ][:_CONTEXT_RETRY_SYSTEM_LIMIT]
+    history = [
+        _copy_message_with_text_limit(message, max_text_chars=_CONTEXT_RETRY_HISTORY_TEXT_LIMIT)
+        for message in messages[:-1]
+        if getattr(message, "role", "") != "system"
+    ][-_CONTEXT_RETRY_HISTORY_LIMIT:]
+
+    compacted: list[Message] = [*leading_system]
+    omitted_count = max(0, len(messages[:-1]) - len(leading_system) - len(history))
+    if omitted_count:
+        compacted.append(Message(role="system", contents=_CONTEXT_COMPACTION_NOTE))
+    compacted.append(
+        _copy_message_with_text_limit(final_message, max_text_chars=_CONTEXT_RETRY_FINAL_TEXT_LIMIT)
+    )
+    return compacted
+
+
+def _estimate_message_payload(messages: list[Message]) -> dict[str, int]:
+    text_chars = 0
+    binary_bytes = 0
+    content_parts = 0
+    for message in messages:
+        contents = getattr(message, "contents", []) or []
+        if isinstance(contents, str):
+            contents = [contents]
+        elif not isinstance(contents, list):
+            contents = list(contents)
+
+        for content in contents:
+            content_parts += 1
+            if isinstance(content, str):
+                text_chars += len(content)
+                continue
+            content_type = getattr(content, "type", None)
+            if content_type == "text":
+                text_chars += len(str(getattr(content, "text", "") or ""))
+                continue
+            if content_type == "data":
+                data = getattr(content, "data", b"") or b""
+                if isinstance(data, bytes):
+                    binary_bytes += len(data)
+                else:
+                    text_chars += len(str(data))
+                continue
+            if content_type == "uri":
+                text_chars += len(str(getattr(content, "uri", "") or ""))
+                continue
+            text_chars += len(str(content))
+    return {
+        "message_count": len(messages),
+        "content_parts": content_parts,
+        "text_chars": text_chars,
+        "binary_bytes": binary_bytes,
+    }
+
+
+def _preflight_limits() -> tuple[int, int]:
+    try:
+        text_limit = int(os.environ.get("AZUL_RUNTIME_PREFLIGHT_TEXT_CHARS", str(_PREFLIGHT_TEXT_CHAR_LIMIT)))
+    except ValueError:
+        text_limit = _PREFLIGHT_TEXT_CHAR_LIMIT
+    try:
+        binary_limit = int(os.environ.get("AZUL_RUNTIME_PREFLIGHT_BINARY_BYTES", str(_PREFLIGHT_BINARY_BYTE_LIMIT)))
+    except ValueError:
+        binary_limit = _PREFLIGHT_BINARY_BYTE_LIMIT
+    return max(0, text_limit), max(0, binary_limit)
 
 
 class AgentRuntimeManager:
@@ -152,13 +333,126 @@ class AgentRuntimeManager:
             for item in capabilities
             if str(item).strip()
         ]
-        visual_hints = ("vision", "image", "multimodal")
         for capability in normalized:
             if "embedding" in capability:
                 continue
-            if any(hint in capability for hint in visual_hints):
+            if "vision" in capability or "image" in capability or "multimodal" in capability:
                 return True
         return False
+
+    def _log_request_payload(
+        self,
+        *,
+        model: RuntimeModelProfile,
+        messages: list[Message],
+        source: str,
+        title: str,
+        tools_enabled: bool,
+        instructions: str | None,
+        phase: str,
+    ) -> None:
+        stats = _estimate_message_payload(messages)
+        LOGGER.info(
+            "[Runtime] %s model=%s deployment=%s source=%s title=%s tools=%s messages=%s contents=%s text_chars=%s binary_bytes=%s task_instructions_chars=%s",
+            phase,
+            model.label,
+            model.deployment,
+            source,
+            title,
+            tools_enabled,
+            stats["message_count"],
+            stats["content_parts"],
+            stats["text_chars"],
+            stats["binary_bytes"],
+            len((instructions or "").strip()),
+        )
+
+    def _maybe_preflight_compact_messages(
+        self,
+        *,
+        model: RuntimeModelProfile,
+        messages: list[Message],
+        source: str,
+        title: str,
+        tools_enabled: bool,
+        instructions: str | None,
+        process_id: str,
+    ) -> tuple[list[Message], str | None]:
+        stats = _estimate_message_payload(messages)
+        text_limit, binary_limit = _preflight_limits()
+        should_compact = (
+            (text_limit > 0 and stats["text_chars"] > text_limit)
+            or (binary_limit > 0 and stats["binary_bytes"] > binary_limit)
+        )
+        if not should_compact:
+            return messages, instructions
+
+        compacted_messages = _compact_messages_for_context_retry(messages)
+        compacted_instructions = _context_preflight_instructions(instructions)
+        self.process_registry.update(
+            process_id,
+            detail=f"Compacting context before dispatch to {model.label}.",
+            model_id=model.id,
+            model_label=model.label,
+        )
+        self._log_request_payload(
+            model=model,
+            messages=compacted_messages,
+            source=source,
+            title=title,
+            tools_enabled=tools_enabled,
+            instructions=compacted_instructions,
+            phase="Preflight compacted runtime payload",
+        )
+        return compacted_messages, compacted_instructions
+
+    async def _retry_with_compacted_context(
+        self,
+        *,
+        model: RuntimeModelProfile,
+        messages: list[Message],
+        error_text: str,
+        process_id: str,
+        source: str,
+        title: str,
+        response_format: Any | None = None,
+        tools_enabled: bool = True,
+        instructions: str | None = None,
+    ) -> tuple[Any | None, str]:
+        if not _is_context_overflow_error(error_text):
+            return None, ""
+
+        compacted_messages = _compact_messages_for_context_retry(messages)
+        self.process_registry.update(
+            process_id,
+            detail=f"{model.label} exceeded the context window. Retrying with compacted context.",
+            model_id=model.id,
+            model_label=model.label,
+        )
+        retry_instructions = _context_retry_instructions(instructions)
+        self._log_request_payload(
+            model=model,
+            messages=compacted_messages,
+            source=source,
+            title=title,
+            tools_enabled=tools_enabled,
+            instructions=retry_instructions,
+            phase="Retrying with compacted context",
+        )
+        try:
+            retry_agent = await self._get_agent(
+                model,
+                tools_enabled=tools_enabled,
+                instructions=retry_instructions,
+            )
+            result = await retry_agent.invoke_messages(
+                compacted_messages,
+                response_format=response_format,
+            )
+            return result, ""
+        except Exception as retry_error:
+            retry_text = str(retry_error).strip() or retry_error.__class__.__name__
+            return None, retry_text
 
     async def execute_messages_stream(
         self,
@@ -174,6 +468,7 @@ class AgentRuntimeManager:
     ) -> RuntimeTurnResult:
         """Runs an inference with streaming when the profile supports it."""
         candidates = self._resolve_candidates(lane)
+        skipped_models = self._inspect_candidate_skips(lane, selected_model_ids={model.id for model in candidates})
         process = self.process_registry.start(
             title=title,
             kind=kind,
@@ -186,7 +481,14 @@ class AgentRuntimeManager:
         if not candidates:
             detail = "No enabled model profiles found."
             self.process_registry.finish(process.id, status="failed", detail=detail)
-            return RuntimeTurnResult(text=detail, model=None, attempts=attempts, process_id=process.id)
+            return RuntimeTurnResult(
+                text=detail,
+                model=None,
+                attempts=attempts,
+                process_id=process.id,
+                skipped_models=skipped_models,
+                failed_attempts=attempts,
+            )
 
         for index, model in enumerate(candidates, start=1):
             self.process_registry.update(
@@ -196,16 +498,36 @@ class AgentRuntimeManager:
                 model_label=model.label,
                 attempts=index,
             )
+            streamed_parts: list[str] = []
             try:
+                dispatch_messages, dispatch_instructions = self._maybe_preflight_compact_messages(
+                    model=model,
+                    messages=messages,
+                    source=source,
+                    title=title,
+                    tools_enabled=tools_enabled,
+                    instructions=instructions,
+                    process_id=process.id,
+                )
+                self._log_request_payload(
+                    model=model,
+                    messages=dispatch_messages,
+                    source=source,
+                    title=title,
+                    tools_enabled=tools_enabled,
+                    instructions=dispatch_instructions,
+                    phase="Invoking runtime stream",
+                )
                 agent = await self._get_agent(
                     model,
                     tools_enabled=tools_enabled,
-                    instructions=instructions,
+                    instructions=dispatch_instructions,
                 )
                 value = None
                 if model.streaming_enabled:
-                    stream = agent.stream_messages(messages)
-                    streamed_parts: list[str] = []
+                    stream = agent.stream_messages(dispatch_messages)
+                    if inspect.isawaitable(stream):
+                        stream = await stream
                     async for update in stream:
                         chunk = self._extract_stream_chunk(update)
                         if not chunk:
@@ -216,7 +538,7 @@ class AgentRuntimeManager:
                     value = getattr(final_response, "value", None)
                     text = self._extract_final_text(final_response, fallback="".join(streamed_parts))
                 else:
-                    result = await agent.invoke_messages(messages)
+                    result = await agent.invoke_messages(dispatch_messages)
                     value = getattr(result, "value", None)
                     text = _serialize_runtime_text(result)
                     if text:
@@ -240,10 +562,51 @@ class AgentRuntimeManager:
                     model=model,
                     attempts=attempts,
                     process_id=process.id,
+                    attempt_count=index,
+                    skipped_models=skipped_models,
+                    failed_attempts=attempts,
                     value=value,
                 )
             except Exception as error:
                 error_text = str(error).strip() or error.__class__.__name__
+                if not streamed_parts:
+                    recovered, retry_error = await self._retry_with_compacted_context(
+                        model=model,
+                        messages=dispatch_messages,
+                        error_text=error_text,
+                        process_id=process.id,
+                        source=source,
+                        title=title,
+                        tools_enabled=tools_enabled,
+                        instructions=dispatch_instructions,
+                    )
+                    if recovered is not None:
+                        value = getattr(recovered, "value", None)
+                        text = _serialize_runtime_text(recovered)
+                        if text:
+                            await on_delta(text)
+                        self.last_errors.pop(model.id, None)
+                        self.cooldowns.pop(model.id, None)
+                        self.process_registry.finish(
+                            process.id,
+                            status="done",
+                            detail=f"Completed with {model.label} after compacting context.",
+                            model_id=model.id,
+                            model_label=model.label,
+                            attempts=index,
+                        )
+                        return RuntimeTurnResult(
+                            text=text,
+                            model=model,
+                            attempts=attempts,
+                            process_id=process.id,
+                            attempt_count=index,
+                            skipped_models=skipped_models,
+                            failed_attempts=attempts,
+                            value=value,
+                        )
+                    if retry_error:
+                        error_text = f"{error_text} | Compacted retry failed: {retry_error}"
                 attempts.append({"model_id": model.id, "label": model.label, "error": error_text})
                 self.last_errors[model.id] = error_text
                 self.cooldowns[model.id] = time.time() + 30
@@ -262,7 +625,15 @@ class AgentRuntimeManager:
             detail=summary,
             attempts=len(attempts),
         )
-        return RuntimeTurnResult(text=summary, model=None, attempts=attempts, process_id=process.id)
+        return RuntimeTurnResult(
+            text=summary,
+            model=None,
+            attempts=attempts,
+            process_id=process.id,
+            attempt_count=len(attempts),
+            skipped_models=skipped_models,
+            failed_attempts=attempts,
+        )
 
     async def execute_messages(
         self,
@@ -278,6 +649,7 @@ class AgentRuntimeManager:
     ) -> RuntimeTurnResult:
         """Runs an inference with fallback between profiles."""
         candidates = self._resolve_candidates(lane)
+        skipped_models = self._inspect_candidate_skips(lane, selected_model_ids={model.id for model in candidates})
         process = self.process_registry.start(
             title=title,
             kind=kind,
@@ -290,7 +662,14 @@ class AgentRuntimeManager:
         if not candidates:
             detail = "No enabled model profiles found."
             self.process_registry.finish(process.id, status="failed", detail=detail)
-            return RuntimeTurnResult(text=detail, model=None, attempts=attempts, process_id=process.id)
+            return RuntimeTurnResult(
+                text=detail,
+                model=None,
+                attempts=attempts,
+                process_id=process.id,
+                skipped_models=skipped_models,
+                failed_attempts=attempts,
+            )
 
         for index, model in enumerate(candidates, start=1):
             self.process_registry.update(
@@ -301,12 +680,30 @@ class AgentRuntimeManager:
                 attempts=index,
             )
             try:
+                dispatch_messages, dispatch_instructions = self._maybe_preflight_compact_messages(
+                    model=model,
+                    messages=messages,
+                    source=source,
+                    title=title,
+                    tools_enabled=tools_enabled,
+                    instructions=instructions,
+                    process_id=process.id,
+                )
+                self._log_request_payload(
+                    model=model,
+                    messages=dispatch_messages,
+                    source=source,
+                    title=title,
+                    tools_enabled=tools_enabled,
+                    instructions=dispatch_instructions,
+                    phase="Invoking runtime",
+                )
                 agent = await self._get_agent(
                     model,
                     tools_enabled=tools_enabled,
-                    instructions=instructions,
+                    instructions=dispatch_instructions,
                 )
-                result = await agent.invoke_messages(messages, response_format=response_format)
+                result = await agent.invoke_messages(dispatch_messages, response_format=response_format)
                 value = getattr(result, "value", None)
                 text = _serialize_runtime_text(result)
                 self.last_errors.pop(model.id, None)
@@ -324,10 +721,49 @@ class AgentRuntimeManager:
                     model=model,
                     attempts=attempts,
                     process_id=process.id,
+                    attempt_count=index,
+                    skipped_models=skipped_models,
+                    failed_attempts=attempts,
                     value=value,
                 )
             except Exception as error:
                 error_text = str(error).strip() or error.__class__.__name__
+                recovered, retry_error = await self._retry_with_compacted_context(
+                    model=model,
+                    messages=dispatch_messages,
+                    error_text=error_text,
+                    process_id=process.id,
+                    source=source,
+                    title=title,
+                    response_format=response_format,
+                    tools_enabled=tools_enabled,
+                    instructions=dispatch_instructions,
+                )
+                if recovered is not None:
+                    value = getattr(recovered, "value", None)
+                    text = _serialize_runtime_text(recovered)
+                    self.last_errors.pop(model.id, None)
+                    self.cooldowns.pop(model.id, None)
+                    self.process_registry.finish(
+                        process.id,
+                        status="done",
+                        detail=f"Completed with {model.label} after compacting context.",
+                        model_id=model.id,
+                        model_label=model.label,
+                        attempts=index,
+                    )
+                    return RuntimeTurnResult(
+                        text=text,
+                        model=model,
+                        attempts=attempts,
+                        process_id=process.id,
+                        attempt_count=index,
+                        skipped_models=skipped_models,
+                        failed_attempts=attempts,
+                        value=value,
+                    )
+                if retry_error:
+                    error_text = f"{error_text} | Compacted retry failed: {retry_error}"
                 attempts.append({"model_id": model.id, "label": model.label, "error": error_text})
                 self.last_errors[model.id] = error_text
                 self.cooldowns[model.id] = time.time() + 30
@@ -346,7 +782,15 @@ class AgentRuntimeManager:
             detail=summary,
             attempts=len(attempts),
         )
-        return RuntimeTurnResult(text=summary, model=None, attempts=attempts, process_id=process.id)
+        return RuntimeTurnResult(
+            text=summary,
+            model=None,
+            attempts=attempts,
+            process_id=process.id,
+            attempt_count=len(attempts),
+            skipped_models=skipped_models,
+            failed_attempts=attempts,
+        )
 
     def _resolve_candidates(self, lane: str) -> list[RuntimeModelProfile]:
         settings = self.load_settings()
@@ -389,6 +833,102 @@ class AgentRuntimeManager:
             seen.add(model.id)
 
         return ordered
+
+    def _skip_detail_for_model(
+        self,
+        model: RuntimeModelProfile,
+        *,
+        now: float,
+    ) -> dict[str, str] | None:
+        if not model.enabled:
+            return {
+                "model_id": model.id,
+                "model_label": model.label,
+                "lane": model.lane,
+                "reason": "disabled",
+                "reason_label": "Profile disabled",
+                "detail": "",
+            }
+        if not model.deployment.strip():
+            return {
+                "model_id": model.id,
+                "model_label": model.label,
+                "lane": model.lane,
+                "reason": "no-deployment",
+                "reason_label": "No deployment configured",
+                "detail": "",
+            }
+        cooldown_until = self.cooldowns.get(model.id, 0.0)
+        if cooldown_until > now:
+            last_error = self.last_errors.get(model.id, "").strip()
+            return {
+                "model_id": model.id,
+                "model_label": model.label,
+                "lane": model.lane,
+                "reason": "cooldown",
+                "reason_label": "Cooling down after a previous failure",
+                "detail": json.dumps(
+                    {
+                        "cooldown_until": to_iso_z(datetime.fromtimestamp(cooldown_until, timezone.utc)),
+                        "last_error": last_error,
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        probe = self._probe_status_for_model(model)
+        if not bool(probe["available"]):
+            return {
+                "model_id": model.id,
+                "model_label": model.label,
+                "lane": model.lane,
+                "reason": "probe-unavailable",
+                "reason_label": "Availability probe failed",
+                "detail": str(probe["detail"]),
+            }
+        return None
+
+    def _inspect_candidate_skips(
+        self,
+        lane: str,
+        *,
+        selected_model_ids: set[str],
+    ) -> list[dict[str, str]]:
+        if self.store is None:
+            return []
+        settings = self.load_settings()
+        effective_lane = lane if lane in {"auto", "fast", "slow"} else settings.default_lane
+        preferred = [settings.default_lane, "slow", "fast"]
+        if effective_lane == "fast":
+            preferred = ["fast", "slow"]
+        elif effective_lane == "slow":
+            preferred = ["slow", "fast"]
+
+        models_by_id = {model.id: model for model in settings.models}
+        ordered_ids: list[str] = []
+        seen_ids: set[str] = set()
+
+        for wanted in preferred:
+            if wanted in models_by_id and wanted not in seen_ids:
+                ordered_ids.append(wanted)
+                seen_ids.add(wanted)
+
+        for model in settings.models:
+            if model.id not in seen_ids:
+                ordered_ids.append(model.id)
+                seen_ids.add(model.id)
+
+        now = time.time()
+        skipped: list[dict[str, str]] = []
+        for model_id in ordered_ids:
+            if model_id in selected_model_ids:
+                continue
+            model = models_by_id.get(model_id)
+            if model is None:
+                continue
+            detail = self._skip_detail_for_model(model, now=now)
+            if detail is not None:
+                skipped.append(detail)
+        return skipped
 
     async def _get_agent(
         self,

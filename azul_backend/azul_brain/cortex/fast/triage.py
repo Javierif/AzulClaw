@@ -14,68 +14,14 @@ class TriageDecision:
     reason: str
 
 
-SIMPLE_EXACT = {
-    "hola",
-    "buenas",
-    "hey",
-    "hello",
-    "gracias",
-    "muchas gracias",
-    "ok",
-    "vale",
-    "perfecto",
-}
-
-COMPLEX_MARKERS = (
-    "refactor",
-    "implement",
-    "codigo",
-    "code",
-    "bug",
-    "error",
-    "stacktrace",
-    "traceback",
-    "archivo",
-    "workspace",
-    "pdf",
-    "resume",
-    "resum",
-    "revisa",
-    "revisar",
-    "contenido",
-    "analiza",
-    "analizar",
-    "depura",
-    "debug",
-    "cron",
-    "heartbeat",
-    "modelo",
-    "arquitectura",
-    "test",
-    "tool",
-    "mcp",
-    "paso a paso",
-    "detall",
-    "estrateg",
-    "investiga",
-    "investigar",
-)
-
-
 def classify_message(user_message: str) -> TriageDecision:
-    """Decides whether the message can be resolved via the fast or slow route."""
+    """Cheap structural fallback when semantic triage is unavailable."""
     normalized = " ".join((user_message or "").strip().lower().split())
     if not normalized:
         return TriageDecision(lane="fast", reason="empty")
 
-    if normalized in SIMPLE_EXACT:
-        return TriageDecision(lane="fast", reason="phatic")
-
     if "```" in normalized:
         return TriageDecision(lane="slow", reason="code-block")
-
-    if any(marker in normalized for marker in COMPLEX_MARKERS):
-        return TriageDecision(lane="slow", reason="complex-marker")
 
     words = re.findall(r"\S+", normalized)
     if len(words) <= 16 and "?" not in normalized:

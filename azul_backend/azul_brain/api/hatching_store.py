@@ -126,6 +126,7 @@ class HatchingProfile:
 
     workspace_root: str = field(default_factory=_default_workspace_root)
     confirm_sensitive_actions: bool = True
+    require_authenticator_for_sensitive_actions: bool = False
     is_hatched: bool = False
     completed_at: str = ""
     skills: list[str] = field(

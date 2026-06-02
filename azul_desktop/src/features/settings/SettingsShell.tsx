@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { SectionTopbarPortal } from "../../components/SectionTopbarPortal";
+import { Toggle } from "../../components/Toggle";
 import {
   DATA_WIPE_CONFIRM_PHRASE,
   ensureBackendAuth,
@@ -8,8 +9,12 @@ import {
   loadSetupProfile,
   loadMemorySettings,
   loadRuntime,
+  loadSkillMarketplaceSettings,
   resetLocalSetupData,
   saveMemorySettings,
+  saveSetupProfile,
+  saveSkillMarketplaceSettings,
+  testSkillMarketplaceSettings,
 } from "../../lib/api";
 import { profileCanRenewAzureLogin, renewAzureLoginFromProfile } from "../../lib/azure-session";
 import {
@@ -23,16 +28,20 @@ import type {
   DesktopShellPreferences,
   MemorySettings,
   RuntimeOverview,
+  SkillMarketplaceSettings,
+  SkillRegistryProbeResult,
   SetupProfile,
 } from "../../lib/contracts";
 import { defaultSetupProfile, memorySettings as defaultMemorySettings, runtimeOverview } from "../../lib/mock-data";
 
 interface SettingsShellProps {
   headerPortalTarget?: HTMLElement | null;
+  initialTab?: SettingsTab;
   onLocalDataWiped?: (profile: SetupProfile) => void;
+  onMarketplaceSettingsChanged?: (settings: SkillMarketplaceSettings) => void;
 }
 
-type SettingsTab = "azure" | "desktop" | "runtime" | "memory" | "identity" | "security" | "data";
+export type SettingsTab = "azure" | "desktop" | "runtime" | "marketplace" | "memory" | "identity" | "security" | "data";
 
 const initialBackendStatus: BackendStatus = {
   status: "offline",
@@ -57,13 +66,19 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: "azure", label: "Azure" },
   { id: "desktop", label: "Desktop" },
   { id: "runtime", label: "Runtime" },
+  { id: "marketplace", label: "Marketplace" },
   { id: "memory", label: "Memory" },
   { id: "identity", label: "Identity" },
   { id: "security", label: "Workspace & Security" },
   { id: "data", label: "Data" },
 ];
 
-export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: SettingsShellProps) {
+export function SettingsShell({
+  headerPortalTarget = null,
+  initialTab = "azure",
+  onLocalDataWiped,
+  onMarketplaceSettingsChanged,
+}: SettingsShellProps) {
   const [runtime, setRuntime] = useState<RuntimeOverview>(runtimeOverview);
   const [backendStatus, setBackendStatus] = useState<BackendStatus>(initialBackendStatus);
   const [isSaving, setIsSaving] = useState(false);
@@ -77,6 +92,17 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
   const [authError, setAuthError] = useState("");
   const [profile, setProfile] = useState<SetupProfile>(defaultSetupProfile);
   const [memorySettings, setMemorySettings] = useState<MemorySettings>(defaultMemorySettings);
+  const [marketplaceSettings, setMarketplaceSettings] = useState<SkillMarketplaceSettings>({ registry_url: "" });
+  const [marketplaceRegistryUrlDraft, setMarketplaceRegistryUrlDraft] = useState("");
+  const [marketplaceRegistryAuthModeDraft, setMarketplaceRegistryAuthModeDraft] = useState<"none" | "function_key">("none");
+  const [marketplaceRegistryConsumerKeyDraft, setMarketplaceRegistryConsumerKeyDraft] = useState("");
+  const [marketplaceRegistryAdminKeyDraft, setMarketplaceRegistryAdminKeyDraft] = useState("");
+  const [marketplaceSettingsBusy, setMarketplaceSettingsBusy] = useState(false);
+  const [marketplaceSettingsMessage, setMarketplaceSettingsMessage] = useState("");
+  const [marketplaceSettingsError, setMarketplaceSettingsError] = useState("");
+  const [marketplaceProbeBusy, setMarketplaceProbeBusy] = useState(false);
+  const [marketplaceProbeResult, setMarketplaceProbeResult] = useState<SkillRegistryProbeResult | null>(null);
+  const [marketplaceProbeError, setMarketplaceProbeError] = useState("");
   const [memoryPathDraft, setMemoryPathDraft] = useState("");
   const [memorySettingsBusy, setMemorySettingsBusy] = useState(false);
   const [memorySettingsMessage, setMemorySettingsMessage] = useState("");
@@ -85,9 +111,17 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
   const [desktopShellBusy, setDesktopShellBusy] = useState(false);
   const [desktopShellMessage, setDesktopShellMessage] = useState("");
   const [desktopShellError, setDesktopShellError] = useState("");
-  const [azureWizardOpen, setAzureWizardOpen] = useState(false);
-  const [settingsWizardStep, setSettingsWizardStep] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<SettingsTab>("azure");
+  const [securityBusy, setSecurityBusy] = useState(false);
+  const [securityMessage, setSecurityMessage] = useState("");
+  const [securityError, setSecurityError] = useState("");
+  const [azureEditorOpen, setAzureEditorOpen] = useState(false);
+  const [profileEditorOpen, setProfileEditorOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+  const marketplaceDraftTouchedRef = useRef(false);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   const azureConfig = profile.skill_configs?.Azure ?? {};
   const azureAuthMethod = azureConfig.authMethod === "api_key" ? "api_key" : "entra";
@@ -112,12 +146,13 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
   );
 
   async function refreshSettings() {
-    const [runtimeData, backendData, profileData, memoryData, shellData] = await Promise.all([
+    const [runtimeData, backendData, profileData, memoryData, shellData, marketplaceData] = await Promise.all([
       loadRuntime(),
       loadBackendStatus(),
       loadSetupProfile(),
       loadMemorySettings(),
       loadDesktopShellPreferences(),
+      loadSkillMarketplaceSettings(),
     ]);
     setRuntime(runtimeData);
     setBackendStatus(backendData);
@@ -125,18 +160,26 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
     setMemorySettings(memoryData);
     setMemoryPathDraft(memoryData.memory_db_path_override || "");
     setDesktopShellPreferences(shellData);
+    setMarketplaceSettings(marketplaceData);
+    onMarketplaceSettingsChanged?.(marketplaceData);
+    marketplaceDraftTouchedRef.current = false;
+    setMarketplaceRegistryUrlDraft(marketplaceData.registry_url || "");
+    setMarketplaceRegistryAuthModeDraft(marketplaceData.registry_auth_mode || "none");
+    setMarketplaceRegistryConsumerKeyDraft("");
+    setMarketplaceRegistryAdminKeyDraft("");
   }
 
   useEffect(() => {
     let isMounted = true;
 
     async function refreshMountedSettings() {
-      const [runtimeData, backendData, profileData, memoryData, shellData] = await Promise.all([
+      const [runtimeData, backendData, profileData, memoryData, shellData, marketplaceData] = await Promise.all([
         loadRuntime(),
         loadBackendStatus(),
         loadSetupProfile(),
         loadMemorySettings(),
         loadDesktopShellPreferences(),
+        loadSkillMarketplaceSettings(),
       ]);
       if (!isMounted) {
         return;
@@ -147,6 +190,14 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
       setMemorySettings(memoryData);
       setMemoryPathDraft((current) => current || memoryData.memory_db_path_override || "");
       setDesktopShellPreferences(shellData);
+      setMarketplaceSettings(marketplaceData);
+      onMarketplaceSettingsChanged?.(marketplaceData);
+      if (!marketplaceDraftTouchedRef.current) {
+        setMarketplaceRegistryUrlDraft(marketplaceData.registry_url || "");
+        setMarketplaceRegistryAuthModeDraft(marketplaceData.registry_auth_mode || "none");
+        setMarketplaceRegistryConsumerKeyDraft("");
+        setMarketplaceRegistryAdminKeyDraft("");
+      }
     }
 
     void refreshMountedSettings();
@@ -158,7 +209,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
       isMounted = false;
       window.clearInterval(pollId);
     };
-  }, []);
+  }, [onMarketplaceSettingsChanged]);
 
   function handleCopyPhrase() {
     void navigator.clipboard.writeText(DATA_WIPE_CONFIRM_PHRASE);
@@ -208,6 +259,63 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
     setMemorySettingsError("");
   }
 
+  async function handleSaveMarketplaceSettings() {
+    setMarketplaceSettingsBusy(true);
+    setMarketplaceSettingsMessage("");
+    setMarketplaceSettingsError("");
+    try {
+      const saved = await saveSkillMarketplaceSettings({
+        registry_url: marketplaceRegistryUrlDraft.trim(),
+        registry_auth_mode: marketplaceRegistryAuthModeDraft,
+        registry_consumer_key: marketplaceRegistryConsumerKeyDraft.trim(),
+        registry_admin_key: marketplaceRegistryAdminKeyDraft.trim(),
+      });
+      setMarketplaceSettings(saved);
+      onMarketplaceSettingsChanged?.(saved);
+      marketplaceDraftTouchedRef.current = false;
+      setMarketplaceRegistryUrlDraft(saved.registry_url || "");
+      setMarketplaceRegistryAuthModeDraft(saved.registry_auth_mode || "none");
+      setMarketplaceRegistryConsumerKeyDraft("");
+      setMarketplaceRegistryAdminKeyDraft("");
+      setMarketplaceSettingsMessage("Marketplace settings saved.");
+    } catch (error) {
+      setMarketplaceSettingsError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMarketplaceSettingsBusy(false);
+    }
+  }
+
+  async function handleTestMarketplaceSettings() {
+    setMarketplaceProbeBusy(true);
+    setMarketplaceProbeError("");
+    try {
+      const result = await testSkillMarketplaceSettings({
+        registry_url: marketplaceRegistryUrlDraft.trim(),
+        registry_auth_mode: marketplaceRegistryAuthModeDraft,
+        registry_consumer_key: marketplaceRegistryConsumerKeyDraft.trim(),
+        registry_admin_key: marketplaceRegistryAdminKeyDraft.trim(),
+      });
+      setMarketplaceProbeResult(result);
+    } catch (error) {
+      setMarketplaceProbeResult(null);
+      setMarketplaceProbeError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMarketplaceProbeBusy(false);
+    }
+  }
+
+  function handleClearMarketplaceRegistryUrl() {
+    setMarketplaceRegistryUrlDraft("");
+    setMarketplaceRegistryAuthModeDraft("none");
+    setMarketplaceRegistryConsumerKeyDraft("");
+    setMarketplaceRegistryAdminKeyDraft("");
+    marketplaceDraftTouchedRef.current = true;
+    setMarketplaceSettingsMessage("");
+    setMarketplaceSettingsError("");
+    setMarketplaceProbeResult(null);
+    setMarketplaceProbeError("");
+  }
+
   async function handleSaveDesktopShellPreferences() {
     setDesktopShellBusy(true);
     setDesktopShellMessage("");
@@ -220,6 +328,26 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
       setDesktopShellError(error instanceof Error ? error.message : String(error));
     } finally {
       setDesktopShellBusy(false);
+    }
+  }
+
+  async function handleSaveSecuritySettings(nextProfile?: SetupProfile) {
+    const payload = nextProfile ?? profile;
+    setSecurityBusy(true);
+    setSecurityMessage("");
+    setSecurityError("");
+    try {
+      const saved = await saveSetupProfile(payload);
+      setProfile(saved);
+      setSecurityMessage(
+        saved.require_authenticator_for_sensitive_actions
+          ? "Security preference saved. Authenticator approval is stored but not enforced yet."
+          : "Security preference saved."
+      );
+    } catch (error) {
+      setSecurityError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSecurityBusy(false);
     }
   }
 
@@ -266,8 +394,8 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
   }
 
   function openAzureWizard() {
-    setSettingsWizardStep(null);
-    setAzureWizardOpen(true);
+    setProfileEditorOpen(false);
+    setAzureEditorOpen(true);
     setActiveTab("azure");
   }
 
@@ -285,7 +413,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
         </div>
 
         <p className="settings-card-desc">
-          Re-run the same Azure connection flow used during onboarding: sign in, discover resources, choose deployments and authorize Azure OpenAI access.
+          Review the current Azure connection and, when needed, reopen the Azure editor to re-authorize, switch auth mode or change model routes.
         </p>
 
         <div className="runtime-kv-list">
@@ -371,24 +499,34 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
           <button
             type="button"
             className="primary-button"
-            onClick={() => {
-              setSettingsWizardStep(null);
-              setAzureWizardOpen((open) => !open);
-            }}
+            onClick={openAzureWizard}
           >
-            {azureWizardOpen ? "Close Azure setup" : "Configure Azure connection"}
+            Reconfigure Azure
           </button>
         </div>
 
-        {azureWizardOpen && (
+        {azureEditorOpen && (
           <div className="settings-azure-wizard">
+            <div className="settings-inline-editor-head">
+              <div>
+                <p className="eyebrow">Azure editor</p>
+                <h4 className="settings-inline-editor-title">Connection, discovery and deployment routing</h4>
+                <p className="settings-inline-editor-desc">
+                  This editor is scoped to Azure only. It does not continue the onboarding flow or move through unrelated setup sections.
+                </p>
+              </div>
+              <button type="button" className="ghost-button" onClick={() => setAzureEditorOpen(false)}>
+                Close
+              </button>
+            </div>
             <SetupWizardShell
               profile={profile}
-              initialStep={4}
+              initialStep={2}
               forceWizard
+              singleStepMode
               onProfileSaved={(saved) => {
                 setProfile(saved);
-                setAzureWizardOpen(false);
+                setAzureEditorOpen(false);
                 void refreshSettings();
               }}
             />
@@ -715,6 +853,224 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
     );
   }
 
+  function renderMarketplaceTab() {
+    return (
+      <section className="subcard settings-card panel-tab-panel">
+        <div className="settings-card-header">
+          <div className="settings-card-icon settings-icon-models">
+            <span>MK</span>
+          </div>
+          <div>
+            <p className="eyebrow">Marketplace</p>
+            <h3 className="settings-card-title">Skill Registry</h3>
+          </div>
+        </div>
+
+        <p className="settings-card-desc">
+          Configure the Skill Registry endpoint AzulClaw uses to refresh the company marketplace and download approved .azulskill packages.
+        </p>
+
+        <div className="runtime-kv-list">
+          <p className="runtime-kv-section-title">Registry source</p>
+          <div className="runtime-kv-row">
+            <span className="runtime-kv-key">Status</span>
+            <span className={`status-tag ${marketplaceSettings.registry_url ? "status-done" : "status-waiting"}`}>
+              {marketplaceSettings.registry_url ? "Configured" : "Local official skills only"}
+            </span>
+          </div>
+          {marketplaceSettings.registry_url ? (
+            <div className="runtime-kv-row">
+              <span className="runtime-kv-key">Registry URL</span>
+              <code className="runtime-kv-code">{marketplaceSettings.registry_url}</code>
+            </div>
+          ) : null}
+          {marketplaceSettings.registry_url ? (
+            <div className="runtime-kv-row">
+              <span className="runtime-kv-key">Auth</span>
+              <span className={`status-tag ${marketplaceSettings.registry_auth_mode === "function_key" ? "status-done" : "status-idle"}`}>
+                {marketplaceSettings.registry_auth_mode === "function_key"
+                  ? marketplaceSettings.registry_consumer_key_configured
+                    ? marketplaceSettings.registry_admin_key_configured
+                      ? "Consumer and admin keys configured"
+                      : "Consumer key configured"
+                    : "Registry keys missing"
+                  : "None"}
+              </span>
+            </div>
+          ) : null}
+          {marketplaceSettings.updated_at ? (
+            <div className="runtime-kv-row">
+              <span className="runtime-kv-key">Updated</span>
+              <code className="runtime-kv-code">{new Date(marketplaceSettings.updated_at).toLocaleString()}</code>
+            </div>
+          ) : null}
+        </div>
+
+        <div style={{ display: "grid", gap: "12px", marginTop: "14px" }}>
+          <label className="hw-modal-field">
+            <span className="hw-field-label">Skill Registry URL</span>
+            <input
+              className="hw-modal-input hw-input-mono"
+              type="url"
+              value={marketplaceRegistryUrlDraft}
+              placeholder="https://<function-app>.azurewebsites.net"
+              onChange={(event) => {
+                marketplaceDraftTouchedRef.current = true;
+                setMarketplaceRegistryUrlDraft(event.target.value);
+                setMarketplaceSettingsMessage("");
+                setMarketplaceSettingsError("");
+                setMarketplaceProbeResult(null);
+                setMarketplaceProbeError("");
+              }}
+            />
+            <span className="hw-inline-note">
+              Leave empty to show only first-party skills included with this AzulClaw installation.
+            </span>
+          </label>
+          <label className="hw-modal-field">
+            <span className="hw-field-label">Registry auth</span>
+            <select
+              className="hw-modal-input"
+              value={marketplaceRegistryAuthModeDraft}
+              onChange={(event) => {
+                marketplaceDraftTouchedRef.current = true;
+                const nextMode = event.target.value === "function_key" ? "function_key" : "none";
+                setMarketplaceRegistryAuthModeDraft(nextMode);
+                if (nextMode === "none") {
+                  setMarketplaceRegistryConsumerKeyDraft("");
+                  setMarketplaceRegistryAdminKeyDraft("");
+                }
+                setMarketplaceSettingsMessage("");
+                setMarketplaceSettingsError("");
+                setMarketplaceProbeResult(null);
+                setMarketplaceProbeError("");
+              }}
+            >
+              <option value="none">None</option>
+              <option value="function_key">Azure Function key</option>
+            </select>
+          </label>
+          {marketplaceRegistryAuthModeDraft === "function_key" ? (
+            <>
+              <label className="hw-modal-field">
+                <span className="hw-field-label">Consumer key</span>
+                <input
+                  className="hw-modal-input hw-input-mono"
+                  type="password"
+                  value={marketplaceRegistryConsumerKeyDraft}
+                  placeholder={marketplaceSettings.registry_consumer_key_configured ? "<configured>" : "Paste consumer key"}
+                  onChange={(event) => {
+                    marketplaceDraftTouchedRef.current = true;
+                    setMarketplaceRegistryConsumerKeyDraft(event.target.value);
+                    setMarketplaceSettingsMessage("");
+                    setMarketplaceSettingsError("");
+                    setMarketplaceProbeResult(null);
+                    setMarketplaceProbeError("");
+                  }}
+                />
+                <span className="hw-inline-note">
+                  Used for catalog refresh and artifact download. Leave blank to keep the saved value.
+                </span>
+              </label>
+              <label className="hw-modal-field">
+                <span className="hw-field-label">Admin key</span>
+                <input
+                  className="hw-modal-input hw-input-mono"
+                  type="password"
+                  value={marketplaceRegistryAdminKeyDraft}
+                  placeholder={marketplaceSettings.registry_admin_key_configured ? "<configured>" : "Paste admin key"}
+                  onChange={(event) => {
+                    marketplaceDraftTouchedRef.current = true;
+                    setMarketplaceRegistryAdminKeyDraft(event.target.value);
+                    setMarketplaceSettingsMessage("");
+                    setMarketplaceSettingsError("");
+                    setMarketplaceProbeResult(null);
+                    setMarketplaceProbeError("");
+                  }}
+                />
+                <span className="hw-inline-note">
+                  Enables Registry Admin inside AzulClaw. Leave blank to keep the saved value.
+                </span>
+              </label>
+            </>
+          ) : null}
+        </div>
+
+        {marketplaceSettingsMessage && (
+          <p className="hw-inline-note" style={{ marginTop: "10px" }}>{marketplaceSettingsMessage}</p>
+        )}
+        {marketplaceSettingsError && (
+          <p className="hw-inline-note hw-inline-note-warning" style={{ marginTop: "10px" }}>{marketplaceSettingsError}</p>
+        )}
+        {marketplaceProbeError && (
+          <p className="hw-inline-note hw-inline-note-warning" style={{ marginTop: "10px" }}>{marketplaceProbeError}</p>
+        )}
+        {marketplaceProbeResult && (
+          <div className="runtime-kv-list" style={{ marginTop: "14px" }}>
+            <p className="runtime-kv-section-title">Connection test</p>
+            <div className="runtime-kv-row">
+              <span className="runtime-kv-key">Result</span>
+              <span className={`status-tag ${marketplaceProbeResult.status === "ok" ? "status-done" : marketplaceProbeResult.status === "local_only" ? "status-idle" : "status-waiting"}`}>
+                {marketplaceProbeResult.status === "ok" ? "Connected" : marketplaceProbeResult.status === "local_only" ? "Local only" : "Failed"}
+              </span>
+            </div>
+            {marketplaceProbeResult.registry_name ? (
+              <div className="runtime-kv-row">
+                <span className="runtime-kv-key">Registry</span>
+                <code className="runtime-kv-code">{marketplaceProbeResult.registry_name}</code>
+              </div>
+            ) : null}
+            {typeof marketplaceProbeResult.skill_count === "number" ? (
+              <div className="runtime-kv-row">
+                <span className="runtime-kv-key">Catalog skills</span>
+                <code className="runtime-kv-code">{String(marketplaceProbeResult.skill_count)}</code>
+              </div>
+            ) : null}
+            <div className="runtime-kv-row">
+              <span className="runtime-kv-key">Health</span>
+              <span className={`status-tag ${marketplaceProbeResult.health_ok ? "status-done" : "status-idle"}`}>
+                {marketplaceProbeResult.health_ok ? "OK" : "Not checked"}
+              </span>
+            </div>
+            <div className="runtime-kv-row">
+              <span className="runtime-kv-key">Catalog</span>
+              <span className={`status-tag ${marketplaceProbeResult.catalog_ok ? "status-done" : "status-idle"}`}>
+                {marketplaceProbeResult.catalog_ok ? "Readable" : "Not checked"}
+              </span>
+            </div>
+            <div className="runtime-kv-row">
+              <span className="runtime-kv-key">Consumer key</span>
+              <span className={`status-tag ${marketplaceProbeResult.registry_consumer_key_configured ? "status-done" : "status-idle"}`}>
+                {marketplaceProbeResult.registry_consumer_key_configured ? "Configured" : "Missing"}
+              </span>
+            </div>
+            <div className="runtime-kv-row">
+              <span className="runtime-kv-key">Admin key</span>
+              <span className={`status-tag ${marketplaceProbeResult.registry_admin_key_configured ? "status-done" : "status-idle"}`}>
+                {marketplaceProbeResult.registry_admin_key_configured ? "Configured" : "Missing"}
+              </span>
+            </div>
+            {marketplaceProbeResult.message ? (
+              <p className="hw-inline-note" style={{ marginTop: "6px" }}>{marketplaceProbeResult.message}</p>
+            ) : null}
+          </div>
+        )}
+
+        <div className="settings-card-footer" style={{ gap: "10px", justifyContent: "flex-start" }}>
+          <button type="button" className="primary-button" onClick={() => void handleSaveMarketplaceSettings()} disabled={marketplaceSettingsBusy}>
+            {marketplaceSettingsBusy ? "Saving..." : "Save marketplace settings"}
+          </button>
+          <button type="button" className="ghost-button" onClick={() => void handleTestMarketplaceSettings()} disabled={marketplaceSettingsBusy || marketplaceProbeBusy}>
+            {marketplaceProbeBusy ? "Testing..." : "Test connection"}
+          </button>
+          <button type="button" className="ghost-button" onClick={handleClearMarketplaceRegistryUrl} disabled={marketplaceSettingsBusy}>
+            Clear registry URL
+          </button>
+        </div>
+      </section>
+    );
+  }
+
   function renderMemoryTab() {
     return (
       <section className="subcard settings-card panel-tab-panel">
@@ -813,7 +1169,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
         </div>
 
         <p className="settings-card-desc">
-          Configure how AzulClaw presents itself - its name, tone, style and base role.
+          Configure how AzulClaw presents itself: its name, core role, and default communication style.
         </p>
 
         <div className="runtime-kv-list">
@@ -840,7 +1196,10 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
         </div>
 
         <div className="settings-card-footer">
-          <button type="button" className="skill-action-btn" onClick={() => setSettingsWizardStep(0)}>
+          <button type="button" className="skill-action-btn" onClick={() => {
+            setAzureEditorOpen(false);
+            setProfileEditorOpen(true);
+          }}>
             Edit identity
           </button>
         </div>
@@ -862,7 +1221,7 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
         </div>
 
         <p className="settings-card-desc">
-          Manage confirmation boundaries, workspace location and the local guardrails around file and tool access.
+          Manage the local workspace boundary, approval mode and the guardrails around file and tool access.
         </p>
 
         <div className="runtime-kv-list">
@@ -870,6 +1229,12 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
             <span className="runtime-kv-key">Confirm sensitive</span>
             <span className={`status-tag ${profile.confirm_sensitive_actions ? "status-done" : "status-waiting"}`}>
               {profile.confirm_sensitive_actions ? "Enabled" : "Disabled"}
+            </span>
+          </div>
+          <div className="runtime-kv-row">
+            <span className="runtime-kv-key">Authenticator approval</span>
+            <span className={`status-tag ${profile.require_authenticator_for_sensitive_actions ? "status-waiting" : "status-done"}`}>
+              {profile.require_authenticator_for_sensitive_actions ? "Requested" : "Off"}
             </span>
           </div>
           <div className="runtime-kv-row">
@@ -892,8 +1257,63 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
           </div>
         </div>
 
-        <div className="settings-card-footer">
-          <button type="button" className="skill-action-btn" onClick={() => setSettingsWizardStep(7)}>
+        <div
+          className="subcard"
+          style={{
+            marginTop: "18px",
+            padding: "16px 18px",
+            display: "grid",
+            gap: "10px",
+            borderColor: "rgba(76, 154, 255, 0.24)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "16px",
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ minWidth: "260px", flex: 1 }}>
+              <p className="runtime-kv-key" style={{ marginBottom: "4px" }}>Microsoft Authenticator approval</p>
+              <p className="settings-card-desc" style={{ margin: 0 }}>
+                Store a preference to require Microsoft Authenticator before sensitive actions. The toggle is saved now, but runtime enforcement is not wired yet.
+              </p>
+            </div>
+            <Toggle
+              checked={profile.require_authenticator_for_sensitive_actions}
+              onChange={(checked) => {
+                setProfile((current) => ({
+                  ...current,
+                  require_authenticator_for_sensitive_actions: checked,
+                }));
+                setSecurityMessage("");
+                setSecurityError("");
+              }}
+              disabled={securityBusy}
+              label="Enable Microsoft Authenticator approval for sensitive actions"
+            />
+          </div>
+
+          {securityError && <p className="hw-inline-note hw-inline-note-warning">{securityError}</p>}
+          {securityMessage && <p className="hw-inline-note">{securityMessage}</p>}
+        </div>
+
+        <div className="settings-card-footer" style={{ gap: "10px", justifyContent: "flex-start" }}>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => void handleSaveSecuritySettings()}
+            disabled={securityBusy}
+          >
+            {securityBusy ? "Saving..." : "Save security preferences"}
+          </button>
+          <button type="button" className="skill-action-btn" onClick={() => {
+            setAzureEditorOpen(false);
+            setProfileEditorOpen(true);
+          }}>
             Review workspace and approvals
           </button>
         </div>
@@ -954,30 +1374,32 @@ export function SettingsShell({ headerPortalTarget = null, onLocalDataWiped }: S
         {activeTab === "azure" && renderAzureTab()}
         {activeTab === "desktop" && renderDesktopTab()}
         {activeTab === "runtime" && renderRuntimeTab()}
+        {activeTab === "marketplace" && renderMarketplaceTab()}
         {activeTab === "memory" && renderMemoryTab()}
         {activeTab === "identity" && renderIdentityTab()}
         {activeTab === "security" && renderSecurityTab()}
         {activeTab === "data" && renderDataTab()}
 
-        {settingsWizardStep !== null && (
+        {profileEditorOpen && (
           <section className="subcard settings-card">
-            <div className="settings-card-header">
+            <div className="settings-inline-editor-head">
               <div>
-                <p className="eyebrow">Edit profile</p>
-                <h3 className="settings-card-title">Profile setup</h3>
+                <p className="eyebrow">Profile editor</p>
+                <h3 className="settings-inline-editor-title">Identity and workspace</h3>
+                <p className="settings-inline-editor-desc">
+                  A compact local editor for name, role, behaviour, workspace boundary and confirmation mode.
+                </p>
               </div>
-              <button type="button" className="ghost-button" onClick={() => setSettingsWizardStep(null)}>
+              <button type="button" className="ghost-button" onClick={() => setProfileEditorOpen(false)}>
                 Close
               </button>
             </div>
             <div className="settings-azure-wizard">
               <SetupWizardShell
                 profile={profile}
-                initialStep={settingsWizardStep}
-                forceWizard
                 onProfileSaved={(saved) => {
                   setProfile(saved);
-                  setSettingsWizardStep(null);
+                  setProfileEditorOpen(false);
                   void refreshSettings();
                 }}
               />

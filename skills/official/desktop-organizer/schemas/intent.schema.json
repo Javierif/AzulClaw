@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Folder Organizer Intent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decision", "reason"],
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": ["plan_request", "preview_request", "apply_request", "revise_plan", "other"]
+    },
+    "reason": { "type": "string" }
+  }
+}
+

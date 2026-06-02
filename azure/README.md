@@ -1,30 +1,38 @@
-# Azure Relay
+# Azure Platform
 
-`azure/` contains the cloud-side relay used when AzulClaw needs public channel connectivity without exposing the local runtime directly.
+`azure/` contains Azure platform code shared by AzulClaw itself. It does not
+own skill-specific runtime or deployment code.
 
-## What lives here
+## Layout
 
 ```text
 azure/
-`- functions/
-   `- bot_relay/
-      |- function_app.py
-      |- access_control.py
-      |- local.settings.example.json
-      `- requirements.txt
+|- core/             Base Azure resources for AzulClaw as a product
+|- marketplace/      Skill Registry API and marketplace infrastructure
+`- shared/           Reusable Terraform modules
 ```
 
-## Current role
+## Ownership
 
-The relay:
+- `azure/core/` is for base AzulClaw resources that are not tied to a specific
+  skill.
+- `azure/marketplace/` is for the private Skill Registry API, artifact storage,
+  registry identity, signing, and marketplace telemetry.
+- `azure/shared/terraform/modules/` contains Terraform modules reused by core,
+  marketplace, and skills.
+- Skill-specific code belongs under `skills/official/<skill>/`.
 
-- accepts Bot Framework traffic at `POST /api/messages`
-- validates Bot Framework auth when enabled
-- applies early Telegram allowlists
-- pushes inbound activities to Azure Service Bus
-- optionally waits for a synchronous reply on the outbound queue
+For example, the Telegram Bot relay Function now lives at:
 
-The health endpoint is `GET /health`.
+```text
+skills/official/telegram/src/relay_function/
+```
+
+Its deployment scaffolding lives at:
+
+```text
+skills/official/telegram/infra/terraform/
+```
 
 ## Related documentation
 

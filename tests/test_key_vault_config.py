@@ -149,6 +149,7 @@ class KeyVaultConfigTests(unittest.TestCase):
             config.apply_hatching_azure_runtime_settings()
 
             self.assertEqual(os.environ["AZURE_OPENAI_ENDPOINT"], "https://profile.openai.azure.com")
+            self.assertEqual(os.environ["AZURE_OPENAI_FAST_ENDPOINT"], "https://profile.openai.azure.com/openai/v1")
             self.assertEqual(os.environ["AZURE_OPENAI_DEPLOYMENT"], "gpt-main")
             self.assertEqual(os.environ["AZURE_OPENAI_SLOW_DEPLOYMENT"], "gpt-main")
             self.assertEqual(os.environ["AZURE_OPENAI_FAST_DEPLOYMENT"], "gpt-fast")
@@ -189,6 +190,7 @@ class KeyVaultConfigTests(unittest.TestCase):
             config.apply_hatching_azure_runtime_settings()
 
             self.assertEqual(os.environ["AZURE_OPENAI_ENDPOINT"], "https://profile.openai.azure.com")
+            self.assertEqual(os.environ["AZURE_OPENAI_FAST_ENDPOINT"], "https://profile.openai.azure.com/openai/v1")
             self.assertEqual(os.environ["AZURE_OPENAI_DEPLOYMENT"], "gpt-main")
             self.assertEqual(os.environ["AZURE_TENANT_ID"], "profile-tenant")
             self.assertEqual(os.environ["AZUL_ENTRA_BROWSER_CLIENT_ID"], "profile-client")
@@ -212,6 +214,7 @@ class KeyVaultConfigTests(unittest.TestCase):
             patch.dict(
                 os.environ,
                 {
+                    "AZURE_OPENAI_FAST_ENDPOINT": "https://old.openai.azure.com/openai/v1",
                     "AZURE_OPENAI_FAST_DEPLOYMENT": "old-fast",
                     "AZURE_OPENAI_EMBEDDING_DEPLOYMENT": "old-embedding",
                     "AZUL_KEY_VAULT_URL": "https://old.vault.azure.net",
@@ -226,6 +229,7 @@ class KeyVaultConfigTests(unittest.TestCase):
 
             config.apply_hatching_azure_runtime_settings()
 
+            self.assertEqual(os.environ["AZURE_OPENAI_FAST_ENDPOINT"], "https://profile.openai.azure.com/openai/v1")
             self.assertNotIn("AZURE_OPENAI_FAST_DEPLOYMENT", os.environ)
             self.assertNotIn("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", os.environ)
             self.assertNotIn("AZUL_KEY_VAULT_URL", os.environ)
@@ -260,6 +264,30 @@ class KeyVaultConfigTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaises(ValueError):
                     config.normalize_azure_openai_endpoint(value)
+
+    def test_normalize_azure_openai_profile_endpoint_preserves_openai_v1(self) -> None:
+        self.assertEqual(
+            config.normalize_azure_openai_profile_endpoint("https://profile.openai.azure.com/openai/v1"),
+            "https://profile.openai.azure.com/openai/v1",
+        )
+        self.assertEqual(
+            config.normalize_azure_openai_profile_endpoint("https://profile.services.ai.azure.com/openai/v1"),
+            "https://profile.services.ai.azure.com/openai/v1",
+        )
+
+    def test_derive_fast_azure_openai_endpoint_supports_classic_and_v1_hosts(self) -> None:
+        self.assertEqual(
+            config.derive_fast_azure_openai_endpoint("https://profile.openai.azure.com"),
+            "https://profile.openai.azure.com/openai/v1",
+        )
+        self.assertEqual(
+            config.derive_fast_azure_openai_endpoint("https://profile.openai.azure.com/openai/v1"),
+            "https://profile.openai.azure.com/openai/v1",
+        )
+        self.assertEqual(
+            config.derive_fast_azure_openai_endpoint("https://profile.cognitiveservices.azure.com"),
+            "https://profile.openai.azure.com/openai/v1",
+        )
 
     def test_load_key_vault_secrets_hydrates_unset_values(self) -> None:
         client = _FakeSecretClient(

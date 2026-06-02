@@ -1,0 +1,68 @@
+{
+  "schema_version": "1.0",
+  "id": "dev.azulclaw.gemini",
+  "name": "Gemini",
+  "version": "0.1.0",
+  "publisher": "AzulClaw",
+  "description": "Connect AzulClaw to a Gemini-compatible remote agent or provider endpoint.",
+  "kind": "remote_agent",
+  "runtime": {
+    "kind": "remote_agent",
+    "endpoint": "https://example.invalid/gemini-agent",
+    "auth": {
+      "type": "api_key",
+      "secret_name": "GEMINI_API_KEY",
+      "header": "x-api-key"
+    }
+  },
+  "compatibility": {
+    "azulclaw_min_version": "0.1.0"
+  },
+  "categories": ["models", "agents"],
+  "tags": ["gemini", "remote-agent"],
+  "presentation": {
+    "icon_text": "G",
+    "banner": {
+      "variant": "gemini",
+      "title": "Gemini",
+      "accent": "#a78bfa"
+    }
+  },
+  "config_schema": {
+    "type": "object",
+    "required": ["endpoint"],
+    "properties": {
+      "endpoint": {
+        "type": "string",
+        "title": "Gemini agent endpoint",
+        "format": "uri"
+      }
+    },
+    "additionalProperties": false
+  },
+  "secrets": [
+    {
+      "name": "GEMINI_API_KEY",
+      "title": "Gemini API key",
+      "description": "Credential used by the Gemini remote agent or provider.",
+      "required": true
+    }
+  ],
+  "permissions": {
+    "filesystem": [],
+    "process": false,
+    "network": ["example.invalid"],
+    "memory": "none",
+    "channels": [],
+    "sensitive_actions": []
+  },
+  "capabilities": [
+    {
+      "id": "gemini.remote_agent",
+      "description": "Delegate selected model or agent requests to the configured Gemini endpoint."
+    }
+  ],
+  "activation": {
+    "restart_required": false
+  }
+}

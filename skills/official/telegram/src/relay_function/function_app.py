@@ -104,9 +104,13 @@ def _get_servicebus_client() -> ServiceBusClient:
 def _is_session_capability_error(error: Exception) -> bool:
     """Returns True when the queue rejects session-based operations."""
     error_text = str(error).lower()
-    return "session" in error_text and any(
-        marker in error_text
-        for marker in ("require", "enabled", "accept", "disabled", "sessionful", "sessionless")
+    return "session" in error_text and (
+        "require" in error_text
+        or "enabled" in error_text
+        or "accept" in error_text
+        or "disabled" in error_text
+        or "sessionful" in error_text
+        or "sessionless" in error_text
     )
 
 

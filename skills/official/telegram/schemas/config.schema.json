@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "required": ["botToken"],
+  "properties": {
+    "botToken": {
+      "type": "string",
+      "title": "Telegram bot token",
+      "format": "password"
+    },
+    "allowedUserIds": {
+      "type": "string",
+      "title": "Allowed Telegram user IDs"
+    },
+    "allowedChatIds": {
+      "type": "string",
+      "title": "Allowed Telegram chat IDs"
+    }
+  },
+  "additionalProperties": false
+}

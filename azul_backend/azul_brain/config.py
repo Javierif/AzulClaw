@@ -4,9 +4,12 @@ from dataclasses import dataclass
 import logging
 import os
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 from .channels.access_control import parse_csv_allowlist
+from .api.skill_services import list_enabled_channel_connector_runtime_specs
+from .foundry_url import normalize_foundry_base_url
 
 ENV_LOCAL_FILENAME = ".env.local"
 KEY_VAULT_URL_ENV = "AZUL_KEY_VAULT_URL"
@@ -96,6 +99,7 @@ class RuntimeConfig:
     service_bus_outbound_queue: str = "bot-outbound"
     service_bus_use_sessions: str = "auto"
     bot_sync_reply_timeout_seconds: float = 6.8
+    channel_connector_policies: dict[str, dict[str, Any]] | None = None
     telegram_allowed_user_ids: frozenset[str] = frozenset()
     telegram_allowed_chat_ids: frozenset[str] = frozenset()
 
@@ -226,6 +230,48 @@ def normalize_azure_openai_endpoint(raw_url: str) -> str:
     return f"https://{host}"
 
 
+def normalize_azure_openai_profile_endpoint(raw_url: str) -> str:
+    """Validates Azure OpenAI endpoints while preserving an optional ``/openai/v1`` path."""
+    parsed = urlparse(raw_url.strip().rstrip("/"))
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not host:
+        raise ValueError("Azure OpenAI endpoint must be an HTTPS Azure endpoint.")
+    if parsed.username or parsed.password:
+        raise ValueError("Azure OpenAI endpoint must not contain credentials.")
+    normalized_path = (parsed.path or "").rstrip("/").lower()
+    if normalized_path not in ("", "/openai", "/openai/v1") or parsed.params or parsed.query or parsed.fragment:
+        raise ValueError(
+            "Azure OpenAI endpoint must be the resource base URL or end with /openai or /openai/v1."
+        )
+    if parsed.port not in (None, 443):
+        raise ValueError("Azure OpenAI endpoint must not include a custom port.")
+    if not any(host.endswith(f".{suffix}") for suffix in AZURE_OPENAI_ENDPOINT_HOST_SUFFIXES):
+        raise ValueError("Azure OpenAI endpoint must point to an Azure OpenAI host.")
+    if normalized_path == "/openai/v1":
+        return f"https://{host}/openai/v1"
+    if normalized_path == "/openai":
+        return f"https://{host}/openai"
+    return f"https://{host}"
+
+
+def derive_fast_azure_openai_endpoint(raw_url: str) -> str:
+    """Derives the OpenAI-compatible v1 endpoint the fast lane should use."""
+    normalized = normalize_azure_openai_profile_endpoint(raw_url)
+    parsed = urlparse(normalized)
+    host = (parsed.hostname or "").lower()
+    path = (parsed.path or "").rstrip("/")
+    if host.endswith(".services.ai.azure.com"):
+        return normalize_foundry_base_url(normalized)
+    if host.endswith(".openai.azure.com"):
+        if path == "/openai/v1":
+            return normalized
+        return f"https://{host}/openai/v1"
+    if host.endswith(".cognitiveservices.azure.com"):
+        resource_name = host[: -len(".cognitiveservices.azure.com")]
+        return f"https://{resource_name}.openai.azure.com/openai/v1"
+    return normalized
+
+
 def apply_hatching_azure_runtime_settings() -> None:
     """Applies persisted desktop Azure settings to the backend process.
 
@@ -241,11 +287,18 @@ def apply_hatching_azure_runtime_settings() -> None:
     endpoint = azure_config.get("endpoint", "").strip().rstrip("/")
     if endpoint:
         try:
-            endpoint = normalize_azure_openai_endpoint(endpoint)
+            profile_endpoint = normalize_azure_openai_profile_endpoint(endpoint)
+            endpoint = normalize_azure_openai_endpoint(profile_endpoint)
+            fast_endpoint = derive_fast_azure_openai_endpoint(profile_endpoint)
         except ValueError as error:
             LOGGER.warning("Ignoring invalid Azure endpoint in desktop profile: %s", error)
             endpoint = ""
+            fast_endpoint = ""
+    else:
+        fast_endpoint = ""
     if _sync_required_profile_env("AZURE_OPENAI_ENDPOINT", endpoint):
+        loaded += 1
+    if _sync_optional_profile_env("AZURE_OPENAI_FAST_ENDPOINT", fast_endpoint):
         loaded += 1
 
     deployment = azure_config.get("deployment", "").strip()
@@ -470,6 +523,34 @@ def parse_float(raw_value: str, default_value: float, variable_name: str) -> flo
         return default_value
 
 
+def _resolve_channel_connector_policies(
+    default_policies: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Lets enabled channel skills override or enrich legacy env-based policies."""
+    policies = {
+        channel_id: dict(policy)
+        for channel_id, policy in default_policies.items()
+    }
+    for spec in list_enabled_channel_connector_runtime_specs():
+        channels = spec.get("channels", [])
+        if not isinstance(channels, list):
+            continue
+        config = spec.get("config", {})
+        if not isinstance(config, dict):
+            config = {}
+        for channel_id in channels:
+            normalized = str(channel_id).strip().lower()
+            if not normalized:
+                continue
+            policy = dict(policies.get(normalized, {}))
+            if normalized == "telegram":
+                policy["allowed_user_ids"] = parse_csv_allowlist(str(config.get("allowedUserIds", "")))
+                policy["allowed_chat_ids"] = parse_csv_allowlist(str(config.get("allowedChatIds", "")))
+            policy["skill_id"] = str(spec.get("skill_id", "")).strip()
+            policies[normalized] = policy
+    return policies
+
+
 def load_runtime_config(base_path: Path) -> RuntimeConfig:
     """Loads environment variables and returns typed runtime configuration."""
     load_env_files(base_path)
@@ -490,12 +571,16 @@ def load_runtime_config(base_path: Path) -> RuntimeConfig:
         6.8,
         "BOT_SYNC_REPLY_TIMEOUT_SECONDS",
     )
-    telegram_allowed_user_ids = parse_csv_allowlist(
-        os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "")
-    )
-    telegram_allowed_chat_ids = parse_csv_allowlist(
-        os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", "")
-    )
+    default_channel_policies = {
+        "telegram": {
+            "allowed_user_ids": parse_csv_allowlist(os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "")),
+            "allowed_chat_ids": parse_csv_allowlist(os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", "")),
+        }
+    }
+    channel_connector_policies = _resolve_channel_connector_policies(default_channel_policies)
+    telegram_policy = channel_connector_policies.get("telegram", {})
+    telegram_allowed_user_ids = telegram_policy.get("allowed_user_ids", frozenset())
+    telegram_allowed_chat_ids = telegram_policy.get("allowed_chat_ids", frozenset())
 
     return RuntimeConfig(
         app_id=app_id,
@@ -507,6 +592,7 @@ def load_runtime_config(base_path: Path) -> RuntimeConfig:
         service_bus_outbound_queue=service_bus_outbound,
         service_bus_use_sessions=service_bus_use_sessions,
         bot_sync_reply_timeout_seconds=bot_sync_reply_timeout_seconds,
+        channel_connector_policies=channel_connector_policies,
         telegram_allowed_user_ids=telegram_allowed_user_ids,
         telegram_allowed_chat_ids=telegram_allowed_chat_ids,
     )

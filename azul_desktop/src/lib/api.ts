@@ -2,6 +2,7 @@ import type {
   ChatExchange,
   ChatStreamEvent,
   ChatRuntimeMeta,
+  SkillWorkflowEvent,
   BackendStatus,
   BackendAuthStatus,
   AzureDeploymentOption,
@@ -15,11 +16,28 @@ import type {
   MemoryRecord,
   MemorySettings,
   ProcessSummary,
+  RegistryBundlePreview,
+  RegistryOverview,
+  RegistrySkillListResponse,
+  RegistryVersionRecord,
+  RegistrySkillVersionResponse,
   RuntimeOverview,
   ScheduledJob,
   SetupProfile,
+  SkillListResponse,
+  SkillMarketplaceSettings,
+  SkillRegistryProbeResult,
+  SkillRuntimeStatus,
+  SkillSummary,
   WorkspaceEntry,
 } from "./contracts";
+
+const PROGRESS_EVENT_TYPES = new Set([
+  "progress-init",
+  "progress-update",
+  "progress-idle",
+  "progress-done",
+]);
 import {
   chatMessages,
   defaultChatRuntime,
@@ -45,12 +63,23 @@ function getApiBase() {
   return (import.meta.env.VITE_AZUL_API_BASE ?? DEFAULT_API_BASE).replace(/\/$/, "");
 }
 
+export function apiUrl(path: string): string {
+  return `${getApiBase()}${path}`;
+}
+
 const SETUP_PROFILE_ENDPOINT = "/api/desktop/hatching";
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${getApiBase()}${path}`, init);
+  const response = await fetch(apiUrl(path), init);
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    let detail = `HTTP ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      detail = payload.error || detail;
+    } catch {
+      /* ignore non-JSON error bodies */
+    }
+    throw new Error(detail);
   }
   return response.json() as Promise<T>;
 }
@@ -129,6 +158,7 @@ export async function sendDesktopMessage(
   attachmentIds: string[] = [],
   userId = "desktop-user",
   conversationId?: string,
+  pendingAction?: { id: string; decision: "approve" | "reject" },
 ) : Promise<{
   reply: string;
   history: ChatExchange[];
@@ -136,35 +166,52 @@ export async function sendDesktopMessage(
   conversation_id?: string;
   conversation_title?: string;
 }> {
-  try {
-    const data = await fetchJson<{
-      reply: string;
-      history: ChatExchange[];
-      runtime: ChatRuntimeMeta;
-      conversation_id?: string;
-      conversation_title?: string;
-    }>(
-      "/api/desktop/chat",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId,
-          message,
-          conversation_id: conversationId,
-          attachment_ids: attachmentIds,
-        }),
-      },
-    );
-    return data;
-  } catch {
-    return {
-      reply:
-        "Could not reach the real backend. Keeping the visual shell active with fallback data.",
-      history: chatMessages,
-      runtime: defaultChatRuntime,
-    };
-  }
+  return fetchJson<{
+    reply: string;
+    history: ChatExchange[];
+    runtime: ChatRuntimeMeta;
+    conversation_id?: string;
+    conversation_title?: string;
+  }>(
+    "/api/desktop/chat",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: userId,
+        message,
+        conversation_id: conversationId,
+        attachment_ids: attachmentIds,
+        pending_action_id: pendingAction?.id,
+        pending_action_decision: pendingAction?.decision,
+      }),
+    },
+  );
+}
+
+export async function decideWorkflowRequest(
+  runId: string,
+  requestId: string,
+  decision: "approve" | "reject",
+  userId = "desktop-user",
+): Promise<{
+  run_id: string;
+  request_id: string;
+  status: string;
+  approved: boolean;
+  workflow_status?: string;
+  events?: SkillWorkflowEvent[];
+  reply?: string;
+  conversation_id?: string;
+}> {
+  return fetchJson(
+    `/api/desktop/workflows/${encodeURIComponent(runId)}/requests/${encodeURIComponent(requestId)}/decision`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, decision }),
+    },
+  );
 }
 
 export async function listConversations(userId = "desktop-user", query = ""): Promise<ConversationSummary[]> {
@@ -202,15 +249,28 @@ export async function getConversationMessages(
   conversationId: string,
   userId = "desktop-user",
 ): Promise<ChatExchange[]> {
-  const data = await fetchJson<{ messages: Array<{ message_id?: string; role: string; content: string; created_at?: string; attachments?: AttachmentSummary[] }> }>(
+  const data = await fetchJson<{ messages: Array<{
+    id?: string;
+    message_id?: string;
+    role: string;
+    content: string;
+    created_at?: string;
+    attachments?: AttachmentSummary[];
+    approval_action_id?: string;
+    approval_status?: string;
+    approval_status_label?: string;
+    workflow_events?: SkillWorkflowEvent[];
+  }> }>(
     `/api/desktop/conversations/${encodeURIComponent(conversationId)}/messages?user_id=${encodeURIComponent(userId)}`,
   );
   return data.messages.map((m, i) => ({
-    id: m.message_id?.trim() || `loaded-${i}`,
+    ...m,
+    id: m.id?.trim() || m.message_id?.trim() || `loaded-${i}`,
     role: m.role as "user" | "assistant",
     content: m.content,
     created_at: m.created_at || "",
     attachments: Array.isArray(m.attachments) ? m.attachments : [],
+    workflow_events: Array.isArray(m.workflow_events) ? m.workflow_events : [],
   }));
 }
 
@@ -220,6 +280,7 @@ export async function sendDesktopMessageStream(
   userId = "desktop-user",
   conversationId?: string,
   attachmentIds: string[] = [],
+  pendingAction?: { id: string; decision: "approve" | "reject" },
 ): Promise<{
   reply: string;
   history: ChatExchange[];
@@ -228,6 +289,7 @@ export async function sendDesktopMessageStream(
   conversation_title?: string;
 }> {
   let receivedContent = false;
+  let receivedDone = false;
   let finalReply = "";
   let finalHistory = chatMessages;
   let finalRuntime = defaultChatRuntime;
@@ -243,10 +305,27 @@ export async function sendDesktopMessageStream(
         message,
         conversation_id: conversationId,
         attachment_ids: attachmentIds,
+        pending_action_id: pendingAction?.id,
+        pending_action_decision: pendingAction?.decision,
       }),
     });
-    if (!response.ok || !response.body) {
-      throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) {
+      let detail = `HTTP ${response.status}`;
+      try {
+        const payload = (await response.json()) as { error?: string; message?: string };
+        detail = payload.error || payload.message || detail;
+      } catch {
+        try {
+          const bodyText = (await response.text()).trim();
+          detail = bodyText || detail;
+        } catch {
+          /* ignore */
+        }
+      }
+      throw new Error(detail);
+    }
+    if (!response.body) {
+      throw new Error("Streaming response body missing.");
     }
 
     const reader = response.body.getReader();
@@ -269,10 +348,11 @@ export async function sendDesktopMessageStream(
         }
         const event = JSON.parse(line) as ChatStreamEvent;
         onEvent(event);
-        if (event.type === "commentary" || event.type === "progress" || event.type === "delta" || event.type === "done") {
+        if (event.type === "commentary" || PROGRESS_EVENT_TYPES.has(event.type) || event.type === "delta" || event.type === "done") {
           receivedContent = true;
         }
         if (event.type === "done") {
+          receivedDone = true;
           finalReply = event.reply || "";
           finalHistory = event.history || finalHistory;
           finalRuntime = event.runtime || finalRuntime;
@@ -288,10 +368,11 @@ export async function sendDesktopMessageStream(
     if (buffer.trim()) {
       const event = JSON.parse(buffer.trim()) as ChatStreamEvent;
       onEvent(event);
-      if (event.type === "commentary" || event.type === "progress" || event.type === "delta" || event.type === "done") {
+      if (event.type === "commentary" || PROGRESS_EVENT_TYPES.has(event.type) || event.type === "delta" || event.type === "done") {
         receivedContent = true;
       }
       if (event.type === "done") {
+        receivedDone = true;
         finalReply = event.reply || "";
         finalHistory = event.history || finalHistory;
         finalRuntime = event.runtime || finalRuntime;
@@ -303,6 +384,10 @@ export async function sendDesktopMessageStream(
       }
     }
 
+    if (!receivedDone) {
+      throw new Error("Stream interrupted before completion.");
+    }
+
     return {
       reply: finalReply,
       history: finalHistory,
@@ -310,8 +395,8 @@ export async function sendDesktopMessageStream(
       conversation_id: finalConversationId,
       conversation_title: finalConversationTitle,
     };
-  } catch {
-    if (receivedContent) {
+  } catch (error) {
+    if (receivedDone) {
       return {
         reply: finalReply,
         history: finalHistory,
@@ -320,7 +405,11 @@ export async function sendDesktopMessageStream(
         conversation_title: finalConversationTitle,
       };
     }
-    return sendDesktopMessage(message, attachmentIds, userId, conversationId);
+    throw (error instanceof Error ? error : new Error(
+      receivedContent
+        ? "Stream interrupted before completion."
+        : "Could not start the streaming response.",
+    ));
   }
 }
 
@@ -592,6 +681,177 @@ export async function loadBackendStatus(): Promise<BackendStatus> {
       error: error instanceof Error ? error.message : "Backend unreachable",
     };
   }
+}
+
+export async function loadSkillMarketplace(): Promise<SkillListResponse> {
+  try {
+    return await fetchJson<SkillListResponse>("/api/desktop/skills/marketplace");
+  } catch {
+    return { items: [] };
+  }
+}
+
+export async function refreshSkillMarketplace(): Promise<SkillListResponse> {
+  return fetchJson<SkillListResponse>("/api/desktop/skills/marketplace/refresh", {
+    method: "POST",
+  });
+}
+
+export async function loadInstalledSkills(): Promise<SkillListResponse> {
+  try {
+    return await fetchJson<SkillListResponse>("/api/desktop/skills/installed");
+  } catch {
+    return { items: [] };
+  }
+}
+
+export async function loadSkillRuntimeStatus(): Promise<{ items: SkillRuntimeStatus[] }> {
+  try {
+    return await fetchJson<{ items: SkillRuntimeStatus[] }>("/api/desktop/skills/runtime");
+  } catch {
+    return { items: [] };
+  }
+}
+
+export async function loadSkillMarketplaceSettings(): Promise<SkillMarketplaceSettings> {
+  try {
+    return await fetchJson<SkillMarketplaceSettings>("/api/desktop/skills/settings");
+  } catch {
+    return {
+      registry_url: "",
+      registry_auth_mode: "none",
+      registry_consumer_key_configured: false,
+      registry_admin_key_configured: false,
+    };
+  }
+}
+
+export async function saveSkillMarketplaceSettings(payload: {
+  registry_url: string;
+  registry_auth_mode?: "none" | "function_key";
+  registry_consumer_key?: string;
+  registry_admin_key?: string;
+}): Promise<SkillMarketplaceSettings> {
+  return fetchJson<SkillMarketplaceSettings>("/api/desktop/skills/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function testSkillMarketplaceSettings(payload: {
+  registry_url: string;
+  registry_auth_mode?: "none" | "function_key";
+  registry_consumer_key?: string;
+  registry_admin_key?: string;
+}): Promise<SkillRegistryProbeResult> {
+  return fetchJson<SkillRegistryProbeResult>("/api/desktop/skills/settings/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function installSkill(skillId: string): Promise<SkillSummary> {
+  return fetchJson<SkillSummary>("/api/desktop/skills/install", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ skill_id: skillId }),
+  });
+}
+
+export async function installSkillBundle(bundlePath: string, sha256 = ""): Promise<SkillSummary> {
+  return fetchJson<SkillSummary>("/api/desktop/skills/install-bundle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bundle_path: bundlePath, sha256 }),
+  });
+}
+
+export async function saveSkillConfig(skillId: string, config: Record<string, unknown>): Promise<SkillSummary> {
+  return fetchJson<SkillSummary>(`/api/desktop/skills/${encodeURIComponent(skillId)}/config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ config }),
+  });
+}
+
+export async function setSkillEnabled(skillId: string, enabled: boolean): Promise<SkillSummary> {
+  return fetchJson<SkillSummary>(`/api/desktop/skills/${encodeURIComponent(skillId)}/enabled`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export async function uninstallSkill(skillId: string): Promise<{ deleted: boolean; skill_id: string }> {
+  return fetchJson<{ deleted: boolean; skill_id: string }>(
+    `/api/desktop/skills/${encodeURIComponent(skillId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function loadRegistryOverview(): Promise<RegistryOverview> {
+  return fetchJson<RegistryOverview>("/api/desktop/registry/overview");
+}
+
+export async function loadRegistrySkills(): Promise<RegistrySkillListResponse> {
+  return fetchJson<RegistrySkillListResponse>("/api/desktop/registry/skills");
+}
+
+export async function loadRegistrySkillVersions(skillId: string): Promise<RegistrySkillVersionResponse> {
+  return fetchJson<RegistrySkillVersionResponse>(
+    `/api/desktop/registry/skills/${encodeURIComponent(skillId)}/versions`,
+  );
+}
+
+export async function inspectRegistryBundle(bundlePath: string): Promise<RegistryBundlePreview> {
+  return fetchJson<RegistryBundlePreview>("/api/desktop/registry/bundles/inspect", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bundle_path: bundlePath }),
+  });
+}
+
+export async function publishRegistryBundle(
+  bundlePath: string,
+  publishedBy = "AzulClaw Desktop",
+): Promise<RegistryVersionRecord> {
+  return fetchJson<RegistryVersionRecord>("/api/desktop/registry/publish", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bundle_path: bundlePath, published_by: publishedBy }),
+  });
+}
+
+export async function approveRegistryVersion(
+  skillId: string,
+  version: string,
+  actor = "AzulClaw Desktop",
+): Promise<RegistryVersionRecord> {
+  return fetchJson<RegistryVersionRecord>(
+    `/api/desktop/registry/skills/${encodeURIComponent(skillId)}/versions/${encodeURIComponent(version)}/approve`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actor }),
+    },
+  );
+}
+
+export async function revokeRegistryVersion(
+  skillId: string,
+  version: string,
+  actor = "AzulClaw Desktop",
+): Promise<RegistryVersionRecord> {
+  return fetchJson<RegistryVersionRecord>(
+    `/api/desktop/registry/skills/${encodeURIComponent(skillId)}/versions/${encodeURIComponent(version)}/revoke`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actor }),
+    },
+  );
 }
 
 export async function ensureBackendAuth(): Promise<BackendAuthStatus> {

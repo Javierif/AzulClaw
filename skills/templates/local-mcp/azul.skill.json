@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "id": "com.example.local-mcp",
+  "name": "Example Local MCP",
+  "version": "0.1.0",
+  "publisher": "Example",
+  "description": "Adds local tools through an isolated MCP server.",
+  "kind": "local_mcp",
+  "runtime": {
+    "kind": "mcp",
+    "transport": "stdio",
+    "command": "python",
+    "args": ["mcp/server.py"]
+  },
+  "compatibility": {
+    "azulclaw_min_version": "0.1.0"
+  },
+  "categories": ["tools"],
+  "tags": ["mcp", "local"],
+  "presentation": {
+    "icon_text": "MCP",
+    "banner": {
+      "variant": "desktop",
+      "title": "Local Tool",
+      "accent": "#22d3ee"
+    }
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "secrets": [],
+  "permissions": {
+    "filesystem": [
+      {
+        "scope": "workspace",
+        "access": "read_write",
+        "purpose": "Allow the MCP tool to operate inside the AzulClaw workspace."
+      }
+    ],
+    "process": true,
+    "network": [],
+    "memory": "none",
+    "channels": [],
+    "sensitive_actions": ["execute_local_tool"]
+  },
+  "capabilities": [
+    {
+      "id": "example.local_tool",
+      "description": "Use the example local MCP tool."
+    }
+  ],
+  "activation": {
+    "restart_required": false
+  }
+}

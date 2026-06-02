@@ -13,6 +13,7 @@ This document maps the main source areas to their responsibilities so new contri
 | `azul_backend/azul_brain/main_launcher.py` | Bootstraps the local HTTP app, scheduler, MCP client, and optional Service Bus worker |
 | `azul_backend/azul_brain/conversation.py` | Main conversation orchestration, lane selection, streaming, and memory injection |
 | `azul_backend/azul_brain/api/routes.py` | Desktop and local Bot Framework HTTP routes, including backend diagnostics |
+| `azul_backend/azul_brain/api/skill_services.py` | Marketplace manifest loading, bundle install, local skill state, and runtime skill resolution |
 | `azul_backend/azul_brain/api/services.py` | Aggregation helpers for workspace, memory, runtime, and onboarding data |
 | `azul_backend/azul_brain/runtime/store.py` | Persistence for runtime settings, jobs, and process history |
 | `azul_backend/azul_brain/runtime/scheduler.py` | Heartbeat execution loop, cron runs, manual runs, and proactive desktop delivery |
@@ -34,18 +35,22 @@ This document maps the main source areas to their responsibilities so new contri
 | `azul_desktop/src/features/hatching/HatchingShell.tsx` | First-run setup flow |
 | `azul_desktop/src/features/heartbeats/HeartbeatsShell.tsx` | Scheduler and automation UI, including manual run output and delivery status |
 | `azul_desktop/src/features/context/ContextShell.tsx` | Context shell with overview, process visibility, memory inspection, and workspace browser |
-| `azul_desktop/src/features/settings/SettingsShell.tsx` | Local reset, runtime summary, and packaged backend diagnostics |
+| `azul_desktop/src/features/settings/SettingsShell.tsx` | Local reset, runtime summary, Skill Registry settings, and packaged backend diagnostics |
 | `azul_desktop/src-tauri/src/main.rs` | Native process launcher for repo and packaged backend modes |
 | `azul_desktop/src-tauri/tauri.conf.json` | Tauri bundling config, backend resources, NSIS target, and desktop shortcut hook |
 | `azul_desktop/src-tauri/nsis/desktop-shortcut.nsh` | NSIS hook that creates and removes the desktop shortcut |
 
-## Azure relay
+## Azure platform and skills
 
 | Path | Responsibility |
 |---|---|
-| `azure/functions/bot_relay/function_app.py` | Azure Function relay for Bot Framework traffic |
-| `azure/functions/bot_relay/access_control.py` | Channel allowlist parsing and evaluation |
-| `azure/functions/bot_relay/local.settings.example.json` | Local development settings example |
+| `azure/core/` | Base Azure resources used by AzulClaw as a product |
+| `azure/marketplace/registry_api/` | Skill Registry API scaffold for enterprise marketplace catalogs |
+| `azure/shared/terraform/modules/` | Shared Terraform modules for core, marketplace, and skills |
+| `skills/schema/azul.skill.schema.json` | Manifest contract for installable skills |
+| `skills/templates/` | Starter structures for new marketplace skills |
+| `skills/official/telegram/src/relay_function/` | First-party Telegram channel relay Function |
+| `memory/skills/packages/` | Local runtime extraction target for installed `.azulskill` bundles |
 
 ## Local data
 
@@ -55,6 +60,8 @@ This document maps the main source areas to their responsibilities so new contri
 | `memory/runtime_jobs.json` | Scheduled jobs, cron expressions, and delivery metadata |
 | `memory/runtime_pending_actions.json` | Pending heartbeat creation confirmations |
 | `memory/runtime_process_history.json` | Recent process execution history |
+| `memory/skills/settings.json` | Local Marketplace registry URL and optional function-key auth state |
+| `memory/skills/installed_skills.json` | Installed skill state, local config, and redacted secret-backed settings |
 | `<workspace>/.azul/azul_memory.db` | Durable chat memory and learned facts |
 | `%AppData%/com.azulclaw.desktop/runtime/` | Runtime state used by packaged desktop installs |
 | `%AppData%/com.azulclaw.desktop/logs/` | Backend and MCP launcher logs used by packaged desktop installs |
@@ -63,5 +70,6 @@ This document maps the main source areas to their responsibilities so new contri
 
 - Backend behavior belongs in `azul_backend`.
 - Product interaction design belongs in `azul_desktop`.
-- Public channel ingress belongs in `azure`.
+- Shared Azure platform resources belong in `azure`.
+- Skill-specific runtime and deployment code belongs under the owning `skills/official/<skill>/` folder.
 - Canonical explanation belongs in `docs`.
