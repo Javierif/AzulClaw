@@ -1802,6 +1802,9 @@ def list_enabled_workflow_runtime_specs() -> list[dict[str, Any]]:
             "input_defaults": workflow.get("input_defaults", {})
             if isinstance(workflow.get("input_defaults", {}), dict)
             else {},
+            "semantic_grouping": workflow.get("semantic_grouping", {})
+            if isinstance(workflow.get("semantic_grouping", {}), dict)
+            else {},
             "sensitive_actions": workflow.get("sensitive_actions", [])
             if isinstance(workflow.get("sensitive_actions", []), list)
             else [],

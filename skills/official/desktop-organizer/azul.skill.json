@@ -100,6 +100,16 @@
         "include_moves": true
       }
     },
+    "semantic_grouping": {
+      "enabled_config": "semanticCategorization",
+      "list_tool": "list_target_folder_contents",
+      "depth_config": "organizationDepth",
+      "depth_argument": "max_depth",
+      "override_argument": "category_overrides",
+      "item_kind": "files (each given as a relative path)",
+      "group_kind": "destination folder names",
+      "context": "Organize the folder the way the user describes — for example by event, project, subject, client, or topic. Each destination is a single folder name with no slashes."
+    },
     "sensitive_actions": ["move_files"],
     "capability_prompt": "prompts/capability.md",
     "schemas": {

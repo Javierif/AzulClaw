@@ -315,15 +315,30 @@ def _effective_plan_depth(*, recursive: bool, max_depth: object = None) -> int:
     return _coerce_max_depth(max_depth, default=_configured_organization_depth())
 
 
-def _collect_files_for_plan(scope_root: Path, folder: Path, *, remaining_depth: int) -> list[Path]:
+def _collect_files_for_plan(
+    scope_root: Path,
+    folder: Path,
+    *,
+    remaining_depth: int,
+    include_categorized: bool = False,
+) -> list[Path]:
     files: list[Path] = []
     for path in _visible_entries(folder):
         if path.is_file():
             files.append(path)
             continue
-        if remaining_depth <= 1 or _is_scope_category_directory(scope_root, path):
+        if remaining_depth <= 1:
             continue
-        files.extend(_collect_files_for_plan(scope_root, path, remaining_depth=remaining_depth - 1))
+        if _is_scope_category_directory(scope_root, path) and not include_categorized:
+            continue
+        files.extend(
+            _collect_files_for_plan(
+                scope_root,
+                path,
+                remaining_depth=remaining_depth - 1,
+                include_categorized=include_categorized,
+            )
+        )
     return files
 
 
@@ -337,11 +352,25 @@ def _sort_plan_files(scope_root: Path, files: list[Path]) -> list[Path]:
     )
 
 
-def _candidate_files(scope_root: Path, *, recursive: bool, max_depth: object = None) -> list[Path]:
+def _candidate_files(
+    scope_root: Path,
+    *,
+    recursive: bool,
+    max_depth: object = None,
+    include_categorized: bool = False,
+) -> list[Path]:
     depth = _effective_plan_depth(recursive=recursive, max_depth=max_depth)
     if depth == 1:
         return _top_level_files(scope_root)
-    return _sort_plan_files(scope_root, _collect_files_for_plan(scope_root, scope_root, remaining_depth=depth))
+    return _sort_plan_files(
+        scope_root,
+        _collect_files_for_plan(
+            scope_root,
+            scope_root,
+            remaining_depth=depth,
+            include_categorized=include_categorized,
+        ),
+    )
 
 
 def _slice_tool_items(
@@ -712,15 +741,21 @@ def _build_base_plan(
     relative_path: object = ".",
     recursive: bool = False,
     max_depth: object = None,
+    override_paths: frozenset[str] = frozenset(),
 ) -> list[dict[str, object]]:
     target = _resolve_relative_folder(root, relative_path)
     plan: list[dict[str, object]] = []
     reserved_destinations: dict[str, Path] = {}
-    for path in _candidate_files(target, recursive=recursive, max_depth=max_depth):
+    for path in _candidate_files(
+        target,
+        recursive=recursive,
+        max_depth=max_depth,
+        include_categorized=bool(override_paths),
+    ):
         source_relative_path = _relative_display_path(root, path)
         category = _category_for_file(path)
         destination = target / category / path.name
-        if path.resolve() == destination.resolve():
+        if path.resolve() == destination.resolve() and source_relative_path not in override_paths:
             continue
         destination_key = str(destination).lower()
         item: dict[str, object] = {
@@ -766,6 +801,8 @@ def _apply_category_overrides_to_plan(
         override_category = category_overrides.get(source_relative_path)
         category = override_category or str(item.get("category") or _category_for_file(source))
         destination = target / category / source.name
+        if destination.resolve() == source.resolve():
+            continue
         destination_key = str(destination).lower()
         item["category"] = category
         item["category_source"] = "semantic_override" if override_category else str(
@@ -803,6 +840,7 @@ def _build_plan(
         relative_path=relative_path,
         recursive=recursive,
         max_depth=max_depth,
+        override_paths=frozenset(category_overrides or {}),
     )
     if category_overrides:
         return _apply_category_overrides_to_plan(

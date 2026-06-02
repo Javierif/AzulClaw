@@ -408,6 +408,59 @@ class SemanticJudgeService:
             )
         )
 
+    async def judge_skill_workflow_semantic_groups(
+        self,
+        *,
+        user_message: str,
+        items: list[str],
+        item_kind: str = "items",
+        group_kind: str = "groups",
+        grouping_context: str = "",
+        skill_name: str = "",
+        language_sample: str = "",
+    ) -> dict[str, Any] | None:
+        """Generic semantic grouping: maps each item to a user-intended group label. No lists/regex.
+
+        The caller supplies the domain framing (``item_kind``, ``group_kind`` and the
+        ``grouping_context`` criterion) so this primitive stays reusable across skills
+        rather than being hard-coded for any one of them.
+        """
+        if not items:
+            return None
+        skill_line = f"Skill name: {skill_name}\n" if skill_name.strip() else ""
+        context_line = (
+            f"Grouping intent (how to group): {grouping_context}\n" if grouping_context.strip() else ""
+        )
+        return await self.judge_json(
+            SemanticJudgeRequest(
+                title="Skill workflow semantic grouping",
+                source="skill-workflow-semantic-grouping",
+                prompt=(
+                    f"You assign {item_kind} to {group_kind} that reflect what the user wants.\n"
+                    "Use semantic reasoning over the meaning of the user's request and each item. "
+                    "Do not rely on keyword lists or regex; infer intent in any language.\n"
+                    "Group items the way the user describes. "
+                    f"Choose short, human-readable {group_kind} written in the SAME language the user writes in.\n"
+                    "Only include an item when you are confident it belongs to one of the groups the user "
+                    "described; omit any item you are unsure about so it keeps its default handling.\n"
+                    "Never invent items that are not in the provided list. Assign each chosen item to exactly "
+                    "one group label, and follow any formatting rule given in the grouping intent below.\n\n"
+                    "Return JSON only with key 'groups': an object mapping each chosen item's exact value "
+                    "to its group label. Return an empty object when nothing should be grouped.\n\n"
+                    f"{skill_line}"
+                    f"{context_line}"
+                    f"Language reference (recent user messages — match this language for labels):\n"
+                    f"{language_sample or user_message}\n\n"
+                    f"User request:\n{user_message}\n\n"
+                    f"Items:\n{json.dumps(items, ensure_ascii=False)}\n"
+                ),
+                instructions=(
+                    "Return JSON only. "
+                    'Schema: {"groups":{"<item>":"<group label>"}}'
+                ),
+            )
+        )
+
     async def judge_skill_workflow_plan_follow_up(
         self,
         *,

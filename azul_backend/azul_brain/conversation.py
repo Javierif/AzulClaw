@@ -58,6 +58,14 @@ from .api.skill_services import (
 LOGGER = logging.getLogger(__name__)
 PROGRESS_UPDATE_MIN_SECONDS = 10.0
 PROGRESS_UPDATE_MAX_SECONDS = 20.0
+# Generic skill-workflow listing protocol contract used by semantic grouping.
+# These describe the neutral shape of a workflow list tool's response, not any
+# single skill — the skill-specific framing is declared in its manifest.
+_WORKFLOW_LISTING_ENTRIES_FIELD = "entries"
+_WORKFLOW_LISTING_ITEM_FIELD = "path"
+_WORKFLOW_LISTING_ITEM_FILTER_FIELD = "kind"
+_WORKFLOW_LISTING_ITEM_FILTER_VALUE = "file"
+_MAX_SEMANTIC_GROUPING_ITEMS = 300
 _TURN_CLOSURE_ALLOWED_STATUSES = {"final_answer", "blocking_question", "action_pending", "tool_failure"}
 TURN_CLOSURE_FAILURE_TEXT = (
     "I couldn't complete that request reliably just now, so I stopped instead of ending with an incomplete promise. "
@@ -867,6 +875,133 @@ class ConversationOrchestrator:
             return value
         return result
 
+    @staticmethod
+    def _spec_semantic_grouping(spec: dict[str, object]) -> dict[str, object]:
+        """Returns the skill-declared semantic-grouping framing block (empty when absent)."""
+        grouping = spec.get("semantic_grouping", {})
+        return grouping if isinstance(grouping, dict) else {}
+
+    @staticmethod
+    def _spec_config_flag_enabled(spec: dict[str, object], config_key: str) -> bool:
+        """Reads a boolean skill config flag by its declared config key."""
+        if not config_key:
+            return False
+        env = spec.get("env", {})
+        if not isinstance(env, dict):
+            return False
+        env_key = f"AZUL_SKILL_CONFIG_{config_key.upper()}"
+        return str(env.get(env_key, "")).strip().lower() == "true"
+
+    @staticmethod
+    def _spec_config_int(
+        spec: dict[str, object],
+        config_key: str,
+        *,
+        default: int,
+        minimum: int,
+        maximum: int,
+    ) -> int:
+        """Reads a clamped integer skill config value by its declared config key."""
+        env = spec.get("env", {})
+        raw = (
+            str(env.get(f"AZUL_SKILL_CONFIG_{config_key.upper()}", "")).strip()
+            if config_key and isinstance(env, dict)
+            else ""
+        )
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return default
+        return value if minimum <= value <= maximum else default
+
+    async def _maybe_build_semantic_overrides(
+        self,
+        *,
+        spec: dict[str, object],
+        user_id: str,
+        conversation_id: str | None,
+        user_message: str,
+    ) -> dict[str, str] | None:
+        """Generic semantic grouping driven by the skill's manifest. Returns None when not applicable.
+
+        The skill declares its framing under ``workflow.semantic_grouping`` (which config flag
+        gates it, which list tool to call, the item/group wording and grouping criterion). The
+        brain stays skill-agnostic — no skill-specific names live here.
+        """
+        grouping = self._spec_semantic_grouping(spec)
+        if not grouping:
+            return None
+        if not self._spec_config_flag_enabled(spec, str(grouping.get("enabled_config", "")).strip()):
+            return None
+        skill_id = str(spec.get("skill_id", "")).strip()
+        list_tool = str(grouping.get("list_tool", "")).strip()
+        if not skill_id or not list_tool:
+            return None
+        service = getattr(self, "semantic_judges", None)
+        judge = getattr(service, "judge_skill_workflow_semantic_groups", None)
+        if not callable(judge):
+            return None
+        list_arguments: dict[str, object] = {"recursive": True}
+        depth_config = str(grouping.get("depth_config", "")).strip()
+        depth_argument = str(grouping.get("depth_argument", "")).strip()
+        if depth_config and depth_argument:
+            list_arguments[depth_argument] = self._spec_config_int(
+                spec, depth_config, default=3, minimum=1, maximum=8
+            )
+        try:
+            listing = await self._invoke_skill_workflow_tool(
+                skill_id=skill_id,
+                tool_name=list_tool,
+                arguments=list_arguments,
+            )
+        except Exception as error:
+            LOGGER.debug("[Skills] Semantic listing failed: %s", error)
+            return None
+        entries = listing.get(_WORKFLOW_LISTING_ENTRIES_FIELD) if isinstance(listing, dict) else None
+        if not isinstance(entries, list):
+            return None
+        items: list[str] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get(_WORKFLOW_LISTING_ITEM_FILTER_FIELD) != _WORKFLOW_LISTING_ITEM_FILTER_VALUE:
+                continue
+            value = str(entry.get(_WORKFLOW_LISTING_ITEM_FIELD, "")).strip()
+            if value and value not in items:
+                items.append(value)
+            if len(items) >= _MAX_SEMANTIC_GROUPING_ITEMS:
+                break
+        if not items:
+            return None
+        skill_name = str(spec.get("skill_name", skill_id)).strip() or skill_id
+        try:
+            verdict = await judge(
+                user_message=user_message,
+                items=items,
+                item_kind=str(grouping.get("item_kind", "")).strip() or "items",
+                group_kind=str(grouping.get("group_kind", "")).strip() or "groups",
+                grouping_context=str(grouping.get("context", "")).strip(),
+                skill_name=skill_name,
+                language_sample=self._workflow_language_sample(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    user_message=user_message,
+                ),
+            )
+        except Exception as error:
+            LOGGER.debug("[Skills] Semantic grouping judge failed: %s", error)
+            return None
+        if not isinstance(verdict, dict) or not isinstance(verdict.get("groups"), dict):
+            return None
+        allowed = set(items)
+        overrides: dict[str, str] = {}
+        for raw_path, raw_name in verdict["groups"].items():
+            path = str(raw_path).strip()
+            name = str(raw_name).strip()
+            if path in allowed and name:
+                overrides[path] = name
+        return overrides or None
+
     def _workflow_language_sample(
         self,
         *,
@@ -1243,11 +1378,28 @@ class ConversationOrchestrator:
         spec = await self._select_marketplace_skill_workflow_spec(user_message=user_message)
         if spec is None:
             return None
+        input_payload: dict[str, object] | None = None
+        overrides = await self._maybe_build_semantic_overrides(
+            spec=spec,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_message=user_message,
+        )
+        override_argument = str(self._spec_semantic_grouping(spec).get("override_argument", "")).strip()
+        if overrides and override_argument:
+            input_payload = self._workflow_input_payload(spec=spec, user_message=user_message)
+            for argument_key in ("preview_arguments", "execution_arguments"):
+                arguments = input_payload.get(argument_key)
+                if not isinstance(arguments, dict):
+                    arguments = {}
+                arguments[override_argument] = dict(overrides)
+                input_payload[argument_key] = arguments
         return await self._start_marketplace_skill_workflow(
             spec=spec,
             user_id=user_id,
             user_message=user_message,
             conversation_id=conversation_id,
+            input_payload=input_payload,
         )
 
     async def _try_handle_skill_workflow_plan_follow_up(
