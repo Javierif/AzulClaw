@@ -6,6 +6,7 @@ import type {
   BackendStatus,
   BackendAuthStatus,
   AzureDeploymentOption,
+  AzureFunctionAppOption,
   AzureKeyVaultOption,
   AzureKeyVaultSecretOption,
   AzureOpenAIResourceOption,
@@ -927,6 +928,34 @@ export async function discoverAzureKeyVaults(
     body: JSON.stringify({ access_token: accessToken, subscription_id: subscriptionId }),
   });
   return data.items;
+}
+
+export async function discoverAzureFunctionApps(
+  accessToken: string,
+  subscriptionId: string,
+): Promise<AzureFunctionAppOption[]> {
+  const data = await fetchJson<{ items: AzureFunctionAppOption[] }>("/api/desktop/azure/discovery/function-apps", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ access_token: accessToken, subscription_id: subscriptionId }),
+  });
+  return data.items;
+}
+
+export async function importTelegramFunctionAppSettings(payload: {
+  access_token: string;
+  subscription_id: string;
+  resource_group: string;
+  function_app_name: string;
+}): Promise<{ config: Record<string, string>; imported: string[]; missing: string[] }> {
+  return fetchJson<{ config: Record<string, string>; imported: string[]; missing: string[] }>(
+    "/api/desktop/azure/discovery/function-app-settings",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export async function discoverAzureKeyVaultSecrets(

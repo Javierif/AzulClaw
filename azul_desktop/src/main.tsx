@@ -6,6 +6,8 @@ import { DesktopApp } from "./app/DesktopApp";
 import "./styles/global.css";
 
 function AzureAuthCallbackBridge() {
+  const [bridgeError, setBridgeError] = React.useState<string | null>(null);
+
   React.useEffect(() => {
     if (!isTauri()) {
       return;
@@ -22,8 +24,19 @@ function AzureAuthCallbackBridge() {
 
       const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
       const currentWindow = getCurrentWebviewWindow();
-      await currentWindow.emitTo("main", "azure-auth-callback", payload);
-      await currentWindow.close();
+      let emitted = false;
+      try {
+        await currentWindow.emitTo("main", "azure-auth-callback", payload);
+        emitted = true;
+      } catch (error) {
+        setBridgeError(
+          error instanceof Error ? error.message : "Could not return your Microsoft session to AzulClaw.",
+        );
+      } finally {
+        if (emitted) {
+          await currentWindow.close().catch(() => {});
+        }
+      }
     })();
   }, []);
 
@@ -31,8 +44,18 @@ function AzureAuthCallbackBridge() {
     <div className="onboarding-stage">
       <section className="onboarding-card">
         <p className="eyebrow">Microsoft Login</p>
-        <h1>Completing sign-in</h1>
-        <p>Returning your Microsoft session to AzulClaw.</p>
+        {bridgeError ? (
+          <>
+            <h1>Sign-in could not complete</h1>
+            <p>{bridgeError}</p>
+            <p>You can close this window and try signing in again.</p>
+          </>
+        ) : (
+          <>
+            <h1>Completing sign-in</h1>
+            <p>Returning your Microsoft session to AzulClaw.</p>
+          </>
+        )}
       </section>
     </div>
   );

@@ -3,6 +3,7 @@
 from botbuilder.core import ActivityHandler, MessageFactory, TurnContext
 from botbuilder.schema import ChannelAccount
 
+from ..channels.conversation_identity import resolve_channel_conversation_identity
 from ..conversation import ConversationOrchestrator
 
 
@@ -16,11 +17,6 @@ class AzulBot(ActivityHandler):
     async def on_message_activity(self, turn_context: TurnContext):
         """Handles an incoming message and produces an agent response."""
         user_message = (turn_context.activity.text or "").strip()
-        user_id = (
-            turn_context.activity.from_property.id
-            if turn_context.activity.from_property
-            else "anonymous"
-        )
 
         if not user_message:
             await turn_context.send_activity(
@@ -28,7 +24,20 @@ class AzulBot(ActivityHandler):
             )
             return
 
-        reply = await self.orchestrator.process_user_message(user_id, user_message)
+        activity_payload = (
+            turn_context.activity.serialize()
+            if hasattr(turn_context.activity, "serialize")
+            else {}
+        )
+        identity = resolve_channel_conversation_identity(
+            activity_payload,
+            self.orchestrator.memory,
+        )
+        reply = await self.orchestrator.process_user_message(
+            identity.user_id,
+            user_message,
+            conversation_id=identity.conversation_id,
+        )
         await turn_context.send_activity(MessageFactory.text(reply.text, reply.text))
 
     async def on_members_added_activity(

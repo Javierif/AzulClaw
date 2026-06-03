@@ -23,9 +23,11 @@ from ..runtime.skill_workflow_runtime import HumanApprovalResponse, SkillWorkflo
 
 from ..azure_auth import AZURE_OPENAI_SCOPE, set_frontend_azure_token
 from ..bootstrap import build_adapter
+from ..channels.servicebus_worker import ServiceBusWorker
 from ..config import (
     apply_hatching_azure_runtime_settings,
     derive_fast_azure_openai_endpoint,
+    load_runtime_config,
     normalize_azure_openai_endpoint,
     normalize_azure_openai_profile_endpoint,
 )
@@ -74,6 +76,7 @@ AZURE_ARM_BASE_URL = "https://management.azure.com"
 AZURE_SUBSCRIPTIONS_API_VERSION = "2022-12-01"
 AZURE_COGNITIVE_API_VERSION = "2024-10-01"
 AZURE_KEY_VAULT_API_VERSION = "2023-07-01"
+AZURE_WEB_API_VERSION = "2023-12-01"
 AZURE_ARM_HOST = "management.azure.com"
 MAX_AZURE_DISCOVERY_PAGES = 50
 KEY_VAULT_HOST_SUFFIXES = (
@@ -634,12 +637,52 @@ async def _arm_get_json(access_token: str, url: str) -> dict:
         )
 
 
+async def _arm_post_json(access_token: str, url: str, payload: dict | None = None) -> dict:
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            url,
+            headers=_arm_headers(access_token),
+            json=payload or {},
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as response:
+            data = await response.json(content_type=None)
+            if response.status >= 400:
+                detail = data.get("error", {}).get("message") if isinstance(data, dict) else ""
+                raise web.HTTPBadRequest(
+                    text=json.dumps({"error": detail or f"Azure request failed ({response.status})"}),
+                    content_type="application/json",
+                )
+            return data if isinstance(data, dict) else {}
+
+
 def _resource_group_from_id(resource_id: str) -> str:
     parts = [part for part in (resource_id or "").split("/") if part]
     for index, part in enumerate(parts):
         if part.lower() == "resourcegroups" and index + 1 < len(parts):
             return parts[index + 1]
     return ""
+
+
+def _map_telegram_function_app_settings(properties: dict[str, object]) -> dict[str, str]:
+    mapping = {
+        "SERVICE_BUS_CONNECTION_STRING": "serviceBusConnectionString",
+        "SERVICE_BUS_INBOUND_QUEUE": "serviceBusInboundQueue",
+        "SERVICE_BUS_OUTBOUND_QUEUE": "serviceBusOutboundQueue",
+        "SERVICE_BUS_USE_SESSIONS": "serviceBusUseSessions",
+        "BOT_SYNC_REPLY_TIMEOUT_SECONDS": "botSyncReplyTimeoutSeconds",
+        "MicrosoftAppId": "microsoftAppId",
+        "MicrosoftAppPassword": "microsoftAppPassword",
+        "MicrosoftAppTenantId": "microsoftAppTenantId",
+        "BOT_RELAY_REQUIRE_AUTH": "botRelayRequireAuth",
+        "TELEGRAM_ALLOWED_USER_IDS": "allowedUserIds",
+        "TELEGRAM_ALLOWED_CHAT_IDS": "allowedChatIds",
+    }
+    config: dict[str, str] = {}
+    for env_key, config_key in mapping.items():
+        value = str(properties.get(env_key, "")).strip()
+        if value:
+            config[config_key] = value
+    return config
 
 
 def _cognitive_account_endpoint(item: dict) -> str:
@@ -814,6 +857,81 @@ async def desktop_azure_discovery_resources_handler(req: web.Request) -> web.Res
         )
     items.sort(key=lambda item: (item["name"].lower(), item["location"].lower()))
     return web.json_response({"items": items})
+
+
+async def desktop_azure_discovery_function_apps_handler(req: web.Request) -> web.Response:
+    payload = await req.json()
+    access_token = str(payload.get("access_token", "")).strip()
+    subscription_id = str(payload.get("subscription_id", "")).strip()
+    if not access_token or not subscription_id:
+        return web.json_response({"error": "access_token and subscription_id are required"}, status=400)
+
+    data = await _arm_get_json(
+        access_token,
+        (
+            f"{AZURE_ARM_BASE_URL}/subscriptions/{quote(subscription_id)}"
+            f"/providers/Microsoft.Web/sites?api-version={AZURE_WEB_API_VERSION}"
+        ),
+    )
+    items = []
+    for item in data.get("value", []):
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind", "")).strip()
+        if "functionapp" not in kind.lower():
+            continue
+        resource_id = str(item.get("id", "")).strip()
+        properties = item.get("properties", {}) if isinstance(item.get("properties"), dict) else {}
+        name = str(item.get("name", "")).strip()
+        if not resource_id or not name:
+            continue
+        items.append(
+            {
+                "id": resource_id,
+                "name": name,
+                "location": str(item.get("location", "")).strip(),
+                "resource_group": _resource_group_from_id(resource_id),
+                "subscription_id": subscription_id,
+                "kind": kind,
+                "state": str(properties.get("state", "")).strip(),
+                "default_hostname": str(properties.get("defaultHostName", "")).strip(),
+            }
+        )
+    items.sort(key=lambda item: (item["name"].lower(), item["resource_group"].lower()))
+    return web.json_response({"items": items})
+
+
+async def desktop_azure_discovery_function_app_settings_handler(req: web.Request) -> web.Response:
+    payload = await req.json()
+    access_token = str(payload.get("access_token", "")).strip()
+    subscription_id = str(payload.get("subscription_id", "")).strip()
+    resource_group = str(payload.get("resource_group", "")).strip()
+    function_app_name = str(payload.get("function_app_name", "")).strip()
+    if not access_token or not subscription_id or not resource_group or not function_app_name:
+        return web.json_response(
+            {"error": "access_token, subscription_id, resource_group and function_app_name are required"},
+            status=400,
+        )
+
+    data = await _arm_post_json(
+        access_token,
+        (
+            f"{AZURE_ARM_BASE_URL}/subscriptions/{quote(subscription_id)}"
+            f"/resourceGroups/{quote(resource_group)}"
+            f"/providers/Microsoft.Web/sites/{quote(function_app_name)}"
+            f"/config/appsettings/list?api-version={AZURE_WEB_API_VERSION}"
+        ),
+    )
+    properties = data.get("properties", {}) if isinstance(data.get("properties"), dict) else {}
+    config = _map_telegram_function_app_settings(properties)
+    required = {"serviceBusConnectionString", "microsoftAppId", "microsoftAppPassword"}
+    return web.json_response(
+        {
+            "config": config,
+            "missing": sorted(required - set(config)),
+            "imported": sorted(config),
+        }
+    )
 
 
 async def desktop_azure_discovery_key_vaults_handler(req: web.Request) -> web.Response:
@@ -1667,7 +1785,7 @@ async def desktop_skills_marketplace_handler(_: web.Request) -> web.Response:
 
 
 async def _reload_skill_runtimes(app: web.Application) -> None:
-    """Refreshes connected Marketplace MCP skill runtimes after skill state changes."""
+    """Refreshes connected Marketplace runtimes after skill state changes."""
     mcp_client = app.get("mcp_client")
     if mcp_client is not None and hasattr(mcp_client, "reload_skill_clients"):
         try:
@@ -1675,6 +1793,55 @@ async def _reload_skill_runtimes(app: web.Application) -> None:
         except Exception as error:
             LOGGER.warning("[Skills] MCP skill runtime reload failed: %s", error)
     invalidate_runtime_model_caches(app.get("runtime_manager"))
+    await _reload_channel_connector_runtime(app)
+
+
+async def _reload_channel_connector_runtime(app: web.Application) -> None:
+    """Rebuilds Bot Framework adapter and Service Bus worker from enabled channel skills."""
+    try:
+        runtime_config = load_runtime_config(Path(__file__).resolve().parents[1])
+    except Exception as error:
+        LOGGER.warning("[Skills] Channel connector config reload failed: %s", error)
+        return
+
+    adapter = build_adapter(
+        runtime_config.app_id,
+        runtime_config.app_password,
+        runtime_config.tenant_id,
+    )
+    app["runtime_config"] = runtime_config
+    app["adapter"] = adapter
+
+    existing_worker = app.pop("servicebus_worker", None)
+    if existing_worker is not None:
+        try:
+            await existing_worker.stop()
+        except Exception as error:
+            LOGGER.warning("[Skills] Existing Service Bus worker stop failed: %s", error)
+
+    if not runtime_config.service_bus_connection_string:
+        LOGGER.info("[Skills] Channel connector runtime disabled; no Service Bus connection string configured.")
+        return
+
+    orchestrator = app.get("orchestrator")
+    if orchestrator is None:
+        LOGGER.warning("[Skills] Channel connector runtime unavailable; orchestrator missing.")
+        return
+
+    worker = ServiceBusWorker(
+        orchestrator=orchestrator,
+        adapter=adapter,
+        connection_str=runtime_config.service_bus_connection_string,
+        inbound_queue=runtime_config.service_bus_inbound_queue,
+        outbound_queue=runtime_config.service_bus_outbound_queue,
+        use_sessions=runtime_config.service_bus_use_sessions,
+        sync_reply_timeout_seconds=runtime_config.bot_sync_reply_timeout_seconds,
+        channel_connector_policies=runtime_config.channel_connector_policies or {},
+        telegram_allowed_user_ids=runtime_config.telegram_allowed_user_ids,
+        telegram_allowed_chat_ids=runtime_config.telegram_allowed_chat_ids,
+    )
+    await worker.start()
+    app["servicebus_worker"] = worker
 
 
 async def desktop_skills_marketplace_refresh_handler(_: web.Request) -> web.Response:
@@ -1902,6 +2069,8 @@ def register_desktop_routes(app: web.Application) -> None:
     app.router.add_post("/api/desktop/azure/key-vault/hydrate", desktop_azure_key_vault_hydrate_handler)
     app.router.add_post("/api/desktop/azure/discovery/subscriptions", desktop_azure_discovery_subscriptions_handler)
     app.router.add_post("/api/desktop/azure/discovery/resources", desktop_azure_discovery_resources_handler)
+    app.router.add_post("/api/desktop/azure/discovery/function-apps", desktop_azure_discovery_function_apps_handler)
+    app.router.add_post("/api/desktop/azure/discovery/function-app-settings", desktop_azure_discovery_function_app_settings_handler)
     app.router.add_post("/api/desktop/azure/discovery/key-vaults", desktop_azure_discovery_key_vaults_handler)
     app.router.add_post("/api/desktop/azure/discovery/key-vault-secrets", desktop_azure_discovery_key_vault_secrets_handler)
     app.router.add_post("/api/desktop/azure/discovery/deployments", desktop_azure_discovery_deployments_handler)

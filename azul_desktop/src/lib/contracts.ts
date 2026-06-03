@@ -298,6 +298,17 @@ export interface AzureKeyVaultOption {
   vault_uri: string;
 }
 
+export interface AzureFunctionAppOption {
+  id: string;
+  name: string;
+  location: string;
+  resource_group: string;
+  subscription_id: string;
+  kind: string;
+  state: string;
+  default_hostname: string;
+}
+
 export interface AzureKeyVaultSecretOption {
   id: string;
   name: string;
@@ -417,7 +428,8 @@ export interface SkillSummary {
       title?: string;
       format?: string;
       description?: string;
-      default?: string | number;
+      default?: string | number | boolean;
+      enum?: string[];
       minimum?: number;
       maximum?: number;
     }>;

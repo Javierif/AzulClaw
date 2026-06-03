@@ -9,6 +9,7 @@ from azure.servicebus import ServiceBusMessage
 from azure.servicebus.aio import ServiceBusClient
 
 from .access_control import evaluate_channel_connector_access
+from .conversation_identity import resolve_channel_conversation_identity
 from .proactive_sender import send_proactive_reply
 
 LOGGER = logging.getLogger(__name__)
@@ -263,7 +264,9 @@ class ServiceBusWorker:
             return
 
         text = (activity.get("text") or "").strip()
-        user_id = activity.get("from", {}).get("id", "anonymous")
+        identity = resolve_channel_conversation_identity(activity, self.orchestrator.memory)
+        user_id = identity.user_id
+        conversation_id = identity.conversation_id
 
         if not text:
             LOGGER.info("[Worker] Received empty-text message from %s.", user_id)
@@ -287,6 +290,7 @@ class ServiceBusWorker:
                         user_id=user_id,
                         user_message=text,
                         lane="slow",
+                        conversation_id=conversation_id,
                     )
                 )
                 try:
@@ -306,6 +310,7 @@ class ServiceBusWorker:
                         user_id=user_id,
                         user_message=text,
                         lane="fast",
+                        conversation_id=conversation_id,
                     )
                 )
                 try:

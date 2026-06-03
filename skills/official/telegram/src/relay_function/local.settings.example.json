@@ -11,6 +11,7 @@
     "TELEGRAM_ALLOWED_USER_IDS": "123456789",
     "TELEGRAM_ALLOWED_CHAT_IDS": "",
     "MicrosoftAppId": "<bot-app-id>",
-    "MicrosoftAppPassword": "<bot-app-password>"
+    "MicrosoftAppPassword": "<bot-app-password>",
+    "MicrosoftAppTenantId": "<bot-app-tenant-id>"
   }
 }

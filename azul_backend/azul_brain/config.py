@@ -70,6 +70,7 @@ DEFAULT_KEY_VAULT_ENV_KEYS = (
     "AZUL_SLOW_STREAMING_ENABLED",
     "AZUL_WORKSPACE_ROOT",
     "AZURE_TENANT_ID",
+    "BOT_RELAY_REQUIRE_AUTH",
     "BOT_SYNC_REPLY_TIMEOUT_SECONDS",
     "MEMORY_MAX_MESSAGES",
     "MicrosoftAppId",
@@ -551,30 +552,50 @@ def _resolve_channel_connector_policies(
     return policies
 
 
+def _enabled_channel_connector_runtime_env() -> dict[str, str]:
+    """Returns runtime env resolved from enabled channel connector skills."""
+    env: dict[str, str] = {}
+    for spec in list_enabled_channel_connector_runtime_specs():
+        runtime_env = spec.get("runtime_env", {})
+        if not isinstance(runtime_env, dict):
+            continue
+        for key, value in runtime_env.items():
+            safe_key = str(key).strip()
+            safe_value = str(value).strip()
+            if safe_key and safe_value:
+                env[safe_key] = safe_value
+    return env
+
+
 def load_runtime_config(base_path: Path) -> RuntimeConfig:
     """Loads environment variables and returns typed runtime configuration."""
     load_env_files(base_path)
     apply_hatching_azure_runtime_settings()
     load_key_vault_secrets()
-    app_id = os.environ.get("MicrosoftAppId", "")
-    app_password = os.environ.get("MicrosoftAppPassword", "")
-    tenant_id = os.environ.get("MicrosoftAppTenantId", "")
+    channel_runtime_env = _enabled_channel_connector_runtime_env()
+    app_id = channel_runtime_env.get("MicrosoftAppId") or os.environ.get("MicrosoftAppId", "")
+    app_password = channel_runtime_env.get("MicrosoftAppPassword") or os.environ.get("MicrosoftAppPassword", "")
+    tenant_id = channel_runtime_env.get("MicrosoftAppTenantId") or os.environ.get("MicrosoftAppTenantId", "")
     port = parse_port(os.environ.get("PORT", str(DEFAULT_PORT)))
 
     # Service Bus Extensions
-    service_bus_conn = os.environ.get("SERVICE_BUS_CONNECTION_STRING", "")
-    service_bus_inbound = os.environ.get("SERVICE_BUS_INBOUND_QUEUE", "bot-inbound")
-    service_bus_outbound = os.environ.get("SERVICE_BUS_OUTBOUND_QUEUE", "bot-outbound")
-    service_bus_use_sessions = os.environ.get("SERVICE_BUS_USE_SESSIONS", "auto")
+    service_bus_conn = channel_runtime_env.get("SERVICE_BUS_CONNECTION_STRING") or os.environ.get("SERVICE_BUS_CONNECTION_STRING", "")
+    service_bus_inbound = channel_runtime_env.get("SERVICE_BUS_INBOUND_QUEUE") or os.environ.get("SERVICE_BUS_INBOUND_QUEUE", "bot-inbound")
+    service_bus_outbound = channel_runtime_env.get("SERVICE_BUS_OUTBOUND_QUEUE") or os.environ.get("SERVICE_BUS_OUTBOUND_QUEUE", "bot-outbound")
+    service_bus_use_sessions = channel_runtime_env.get("SERVICE_BUS_USE_SESSIONS") or os.environ.get("SERVICE_BUS_USE_SESSIONS", "auto")
     bot_sync_reply_timeout_seconds = parse_float(
-        os.environ.get("BOT_SYNC_REPLY_TIMEOUT_SECONDS", "6.8"),
+        channel_runtime_env.get("BOT_SYNC_REPLY_TIMEOUT_SECONDS") or os.environ.get("BOT_SYNC_REPLY_TIMEOUT_SECONDS", "6.8"),
         6.8,
         "BOT_SYNC_REPLY_TIMEOUT_SECONDS",
     )
     default_channel_policies = {
         "telegram": {
-            "allowed_user_ids": parse_csv_allowlist(os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "")),
-            "allowed_chat_ids": parse_csv_allowlist(os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", "")),
+            "allowed_user_ids": parse_csv_allowlist(
+                channel_runtime_env.get("TELEGRAM_ALLOWED_USER_IDS") or os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "")
+            ),
+            "allowed_chat_ids": parse_csv_allowlist(
+                channel_runtime_env.get("TELEGRAM_ALLOWED_CHAT_IDS") or os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", "")
+            ),
         }
     }
     channel_connector_policies = _resolve_channel_connector_policies(default_channel_policies)

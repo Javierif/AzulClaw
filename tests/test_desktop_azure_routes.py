@@ -362,6 +362,83 @@ class DesktopAzureRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["hydrated"], ["MicrosoftAppId"])
         self.assertEqual(body["missing"], ["MicrosoftAppPassword", "MicrosoftAppTenantId"])
 
+    async def test_function_app_discovery_lists_existing_functions(self) -> None:
+        payload = {"access_token": "token", "subscription_id": "sub-1"}
+        request = make_mocked_request("POST", "/api/desktop/azure/discovery/function-apps")
+        request._read_bytes = json.dumps(payload).encode("utf-8")
+
+        async def fake_arm_get(_token: str, url: str) -> dict:
+            self.assertIn("/subscriptions/sub-1/providers/Microsoft.Web/sites", url)
+            return {
+                "value": [
+                    {
+                        "id": "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Web/sites/func-telegram",
+                        "name": "func-telegram",
+                        "location": "spaincentral",
+                        "kind": "functionapp,linux",
+                        "properties": {
+                            "state": "Running",
+                            "defaultHostName": "func-telegram.azurewebsites.net",
+                        },
+                    },
+                    {
+                        "id": "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Web/sites/web-ignored",
+                        "name": "web-ignored",
+                        "kind": "app,linux",
+                    },
+                ]
+            }
+
+        with patch("azul_backend.azul_brain.api.routes._arm_get_json", new=AsyncMock(side_effect=fake_arm_get)):
+            response = await routes.desktop_azure_discovery_function_apps_handler(request)
+            body = json.loads(response.text)
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(len(body["items"]), 1)
+        self.assertEqual(body["items"][0]["name"], "func-telegram")
+        self.assertEqual(body["items"][0]["resource_group"], "rg-1")
+        self.assertEqual(body["items"][0]["default_hostname"], "func-telegram.azurewebsites.net")
+
+    async def test_function_app_settings_import_maps_telegram_config_only(self) -> None:
+        payload = {
+            "access_token": "token",
+            "subscription_id": "sub-1",
+            "resource_group": "rg-1",
+            "function_app_name": "func-telegram",
+        }
+        request = make_mocked_request("POST", "/api/desktop/azure/discovery/function-app-settings")
+        request._read_bytes = json.dumps(payload).encode("utf-8")
+
+        async def fake_arm_post(_token: str, url: str, payload=None) -> dict:
+            self.assertIn("/resourceGroups/rg-1/providers/Microsoft.Web/sites/func-telegram/config/appsettings/list", url)
+            return {
+                "properties": {
+                    "SERVICE_BUS_CONNECTION_STRING": "Endpoint=sb://example/;",
+                    "SERVICE_BUS_INBOUND_QUEUE": "in",
+                    "SERVICE_BUS_OUTBOUND_QUEUE": "out",
+                    "SERVICE_BUS_USE_SESSIONS": "auto",
+                    "BOT_SYNC_REPLY_TIMEOUT_SECONDS": "7.5",
+                    "MicrosoftAppId": "app-id",
+                    "MicrosoftAppPassword": "app-secret",
+                    "MicrosoftAppTenantId": "tenant-id",
+                    "BOT_RELAY_REQUIRE_AUTH": "true",
+                    "TELEGRAM_ALLOWED_USER_IDS": "1,2",
+                    "TELEGRAM_ALLOWED_CHAT_IDS": "10",
+                    "UNRELATED_SECRET": "do-not-return",
+                }
+            }
+
+        with patch("azul_backend.azul_brain.api.routes._arm_post_json", new=AsyncMock(side_effect=fake_arm_post)):
+            response = await routes.desktop_azure_discovery_function_app_settings_handler(request)
+            body = json.loads(response.text)
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(body["missing"], [])
+        self.assertEqual(body["config"]["serviceBusConnectionString"], "Endpoint=sb://example/;")
+        self.assertEqual(body["config"]["microsoftAppPassword"], "app-secret")
+        self.assertEqual(body["config"]["allowedChatIds"], "10")
+        self.assertNotIn("UNRELATED_SECRET", body["config"])
+
     async def test_hatching_save_syncs_runtime_model_deployments(self) -> None:
         payload = {
             "skill_configs": {
