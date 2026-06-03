@@ -54,6 +54,7 @@ from .cortex.fast.commentary import (
 )
 from .cortex.fast.triage import TriageDecision, classify_message
 from .conversation_memory import MemoryMixin
+from .conversation_titles import TitleMixin
 from .runtime.agent_runtime import AgentRuntimeManager
 from .runtime.approval_protocol import contains_pending_action_block
 from .runtime.heartbeat_intent import HeartbeatIntentService
@@ -84,7 +85,7 @@ _MAX_SEMANTIC_GROUPING_ITEMS = 300
 _TURN_CLOSURE_ALLOWED_STATUSES = {"final_answer", "blocking_question", "action_pending", "tool_failure"}
 
 
-class ConversationOrchestrator(MemoryMixin):
+class ConversationOrchestrator(MemoryMixin, TitleMixin):
     """Orchestrates memory, semantic retrieval, and agent invocation."""
 
     def __init__(
@@ -103,72 +104,6 @@ class ConversationOrchestrator(MemoryMixin):
         self.pending_sensitive_actions = PendingSensitiveActionService()
         self.semantic_judges = SemanticJudgeService(runtime_manager)
         self._setup_memory_layers()
-
-    def _should_generate_conversation_title(
-        self,
-        conversation_id: str | None,
-        user_message: str,
-        *,
-        is_first_turn: bool,
-    ) -> bool:
-        """Sidebar title once: first substantive turn, or next substantive turn if still placeholder."""
-        if not conversation_id:
-            return False
-        if is_first_turn:
-            return True
-        current = self.memory.get_conversation_title(conversation_id)
-        return _is_placeholder_conversation_title(current)
-
-    def _finalize_generated_title(self, title: str, source_message: str) -> str:
-        """Falls back to the user's message only when the model returned nothing usable."""
-        cleaned = (title or "").strip().strip('"').strip()
-        if cleaned:
-            return cleaned
-        fallback = source_message[:60].strip()
-        return fallback
-
-    async def _refine_conversation_title_with_llm(
-        self,
-        conversation_id: str,
-        user_message: str,
-        assistant_reply: str,
-    ) -> None:
-        """LLM sidebar title from the first exchange (question + answer excerpt)."""
-        deployment = os.environ.get("AZURE_OPENAI_FAST_DEPLOYMENT", "").strip()
-        if not deployment:
-            return
-
-        ans = (assistant_reply or "").strip()
-        if len(ans) > 1200:
-            ans = ans[:1200] + "â€¦"
-
-        title_prompt = (
-            "You name chat threads for a sidebar list.\n\n"
-            f"User asked:\n\"\"\"{user_message[:500]}\"\"\"\n\n"
-            f"Assistant answered (excerpt):\n\"\"\"{ans}\"\"\"\n\n"
-            "Write ONE short title (4â€“7 words) summarizing the topic or outcome of this exchange. "
-            "Prefer concrete subject matter (e.g. weather in Barcelona, Python error) over generic words. "
-            "Do not start with Hello, Hi, or Hey. "
-            "Do not use 'Conversation Starter', 'New chat', 'Chat', or 'Main conversation'. "
-            "Reply with the title only, no quotes."
-        )
-        try:
-            result = await self.runtime_manager.execute_messages(
-                messages=[Message(role="user", contents=title_prompt)],
-                lane="fast",
-                title="Conversation title",
-                source="conversation-title",
-                kind="agent-run",
-                tools_enabled=False,
-                instructions="Return only a concise conversation title.",
-            )
-            raw = (result.text or "").strip()
-            title = self._finalize_generated_title(raw, user_message)
-            if title:
-                self.memory.update_conversation_title(conversation_id, title)
-                return
-        except Exception as error:
-            LOGGER.debug("[Brain] Title generation failed: %s", error)
 
     def _reply_contains_pending_action_block(self, text: str) -> bool:
         return contains_pending_action_block(text)
