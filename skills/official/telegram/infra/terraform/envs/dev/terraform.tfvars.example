@@ -1,0 +1,30 @@
+resource_group_name        = "rg-azulclaw-telegram-dev"
+location                   = "spaincentral"
+function_app_name          = "func-azulclaw-telegram-dev"
+storage_account_name       = "stazultgdev01"
+service_plan_name          = "asp-azulclaw-telegram-dev"
+application_insights_name  = "appi-azulclaw-telegram-dev"
+service_bus_namespace_name = "sb-azulclaw-telegram-dev"
+bot_service_name           = "bot-azulclaw-telegram-dev"
+bot_service_sku            = "F0"
+microsoft_app_type         = "SingleTenant"
+
+service_bus_inbound_queue             = "bot-inbound"
+service_bus_outbound_queue            = "bot-outbound"
+service_bus_use_sessions              = "auto"
+service_bus_outbound_requires_session = true
+bot_sync_reply_timeout_seconds        = 6.8
+bot_relay_require_auth                = true
+
+microsoft_app_id        = "00000000-0000-0000-0000-000000000000"
+microsoft_app_password  = "<bot-app-password>"
+microsoft_app_tenant_id = "00000000-0000-0000-0000-000000000000"
+
+telegram_allowed_user_ids = ""
+telegram_allowed_chat_ids = ""
+
+tags = {
+  environment = "dev"
+  product     = "azulclaw"
+  component   = "telegram"
+}

@@ -50,17 +50,44 @@ BOT_SYNC_REPLY_TIMEOUT_SECONDS=6.8
 BOT_RELAY_REQUIRE_AUTH=true
 MicrosoftAppId
 MicrosoftAppPassword
+MicrosoftAppTenantId
 TELEGRAM_ALLOWED_USER_IDS
 TELEGRAM_ALLOWED_CHAT_IDS
 ```
 
+Configure the BotFather token in Azure Bot Service when enabling the Telegram
+channel. The relay Function does not need `TELEGRAM_BOT_TOKEN` as an app setting.
+
 ## Configure the local runtime
 
-For managed installed desktops, store the Service Bus and channel settings in
-Key Vault and configure the local machine with `AZUL_KEY_VAULT_URL`.
+For managed installed desktops, configure and enable the Telegram skill from
+the Marketplace. The skill configuration now owns the local runtime values for
+Service Bus, Bot Framework credentials, sync timeout, and Telegram allowlists.
+Saving or enabling the skill reloads the local Bot Framework adapter and
+Service Bus worker with the new settings.
+
+For shared deployments, the same values still need to exist as Azure Function
+app settings for the relay. The local Marketplace configuration does not push
+settings into the Function App by itself.
 
 For local development only, the same values can be set in
 `azul_backend/azul_brain/.env.local`.
+
+The legacy env vars remain supported as fallback when the Telegram skill is not
+enabled:
+
+```text
+SERVICE_BUS_CONNECTION_STRING
+SERVICE_BUS_INBOUND_QUEUE=bot-inbound
+SERVICE_BUS_OUTBOUND_QUEUE=bot-outbound
+SERVICE_BUS_USE_SESSIONS=auto
+BOT_SYNC_REPLY_TIMEOUT_SECONDS=6.8
+MicrosoftAppId
+MicrosoftAppPassword
+MicrosoftAppTenantId
+TELEGRAM_ALLOWED_USER_IDS
+TELEGRAM_ALLOWED_CHAT_IDS
+```
 
 ## Validate the deployment
 
