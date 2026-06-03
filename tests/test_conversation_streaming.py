@@ -297,7 +297,7 @@ class ConversationStreamingCommentaryTests(unittest.IsolatedAsyncioTestCase):
 
         try:
             with unittest.mock.patch(
-                "azul_backend.azul_brain.conversation.list_enabled_workflow_runtime_specs",
+                "azul_backend.azul_brain.conversation_skills.list_enabled_workflow_runtime_specs",
                 return_value=[],
             ):
                 reply = await orchestrator.process_user_message_stream(

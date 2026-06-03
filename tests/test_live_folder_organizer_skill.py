@@ -281,7 +281,7 @@ class LiveFolderOrganizerSkillTests(unittest.IsolatedAsyncioTestCase):
         orchestrator.embedding_service = None
 
         with patch(
-            "azul_backend.azul_brain.conversation.list_enabled_workflow_runtime_specs",
+            "azul_backend.azul_brain.conversation_skills.list_enabled_workflow_runtime_specs",
             return_value=[_workflow_spec()],
         ):
             reply = await orchestrator.process_user_message(
@@ -334,7 +334,7 @@ class LiveFolderOrganizerSkillTests(unittest.IsolatedAsyncioTestCase):
         orchestrator.embedding_service = None
 
         with patch(
-            "azul_backend.azul_brain.conversation.list_enabled_workflow_runtime_specs",
+            "azul_backend.azul_brain.conversation_skills.list_enabled_workflow_runtime_specs",
             return_value=[_workflow_spec()],
         ):
             plan_reply = await orchestrator.process_user_message(

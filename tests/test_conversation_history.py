@@ -632,7 +632,7 @@ class ConversationHistoryTests(unittest.TestCase):
 
         try:
             with unittest.mock.patch(
-                "azul_backend.azul_brain.conversation.list_enabled_workflow_runtime_specs",
+                "azul_backend.azul_brain.conversation_skills.list_enabled_workflow_runtime_specs",
                 return_value=[],
             ):
                 reply = asyncio.run(
@@ -746,7 +746,7 @@ class ConversationHistoryTests(unittest.TestCase):
 
         try:
             with unittest.mock.patch(
-                "azul_backend.azul_brain.conversation.list_enabled_workflow_runtime_specs",
+                "azul_backend.azul_brain.conversation_skills.list_enabled_workflow_runtime_specs",
                 return_value=[workflow_spec],
             ):
                 plan_reply = asyncio.run(
@@ -860,7 +860,7 @@ class ConversationHistoryTests(unittest.TestCase):
 
         try:
             with unittest.mock.patch(
-                "azul_backend.azul_brain.conversation.list_enabled_workflow_runtime_specs",
+                "azul_backend.azul_brain.conversation_skills.list_enabled_workflow_runtime_specs",
                 return_value=[workflow_spec],
             ):
                 reply = asyncio.run(
@@ -946,7 +946,7 @@ class ConversationHistoryTests(unittest.TestCase):
 
         try:
             with unittest.mock.patch(
-                "azul_backend.azul_brain.conversation.list_enabled_workflow_runtime_specs",
+                "azul_backend.azul_brain.conversation_skills.list_enabled_workflow_runtime_specs",
                 return_value=[workflow_spec],
             ):
                 reply = asyncio.run(
@@ -1022,7 +1022,7 @@ class ConversationHistoryTests(unittest.TestCase):
 
         try:
             with unittest.mock.patch(
-                "azul_backend.azul_brain.conversation.list_enabled_workflow_runtime_specs",
+                "azul_backend.azul_brain.conversation_skills.list_enabled_workflow_runtime_specs",
                 return_value=[workflow_spec],
             ):
                 reply = asyncio.run(
@@ -1096,7 +1096,7 @@ class ConversationHistoryTests(unittest.TestCase):
 
         try:
             with unittest.mock.patch(
-                "azul_backend.azul_brain.conversation.list_enabled_workflow_runtime_specs",
+                "azul_backend.azul_brain.conversation_skills.list_enabled_workflow_runtime_specs",
                 return_value=[workflow_spec],
             ):
                 reply = asyncio.run(
