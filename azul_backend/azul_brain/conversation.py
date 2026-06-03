@@ -240,6 +240,7 @@ class ConversationOrchestrator(
             visual_contents=visual_contents,
             allow_pending_action_staging=not confirmed_sensitive_action,
             pending_plan_revision=pending_plan_revision,
+            folder_organizer_context_hint=bool(folder_preview_system_messages),
         )
 
         user_message_id = await self.persist_with_vector_memory(
@@ -696,6 +697,7 @@ class ConversationOrchestrator(
             visual_contents=visual_contents,
             allow_pending_action_staging=not confirmed_sensitive_action,
             pending_plan_revision=pending_plan_revision,
+            folder_organizer_context_hint=bool(folder_preview_system_messages),
         )
         if defer_stream_until_final_reply and reply.text:
             await emit_delta(reply.text, mark_streaming=False)

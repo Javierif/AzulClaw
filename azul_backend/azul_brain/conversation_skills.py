@@ -903,12 +903,14 @@ class SkillWorkflowMixin:
         *,
         user_id: str,
         conversation_id: str | None,
-        user_message: str,
-        candidate_reply: str,
+        context_hint: bool = False,
     ) -> bool:
-        if "folder organizer" in (user_message or "").casefold():
-            return True
-        if "folder organizer" in (candidate_reply or "").casefold():
+        # ``context_hint`` is a semantic, language-independent signal computed
+        # upstream by ``_judge_folder_organizer_request`` (through
+        # ``_maybe_prepare_folder_organizer_plan_context``). We never match
+        # natural-language literals like "folder organizer" here, which would
+        # only ever fire for English and silently miss every other language.
+        if context_hint:
             return True
         service = self._get_pending_sensitive_action_service()
         if service is None:
@@ -924,12 +926,12 @@ class SkillWorkflowMixin:
         conversation_id: str | None,
         user_message: str,
         candidate_reply: str,
+        context_hint: bool = False,
     ) -> CapabilityContractVerdict | None:
         if not self._folder_organizer_context_active(
             user_id=user_id,
             conversation_id=conversation_id,
-            user_message=user_message,
-            candidate_reply=candidate_reply,
+            context_hint=context_hint,
         ):
             return None
         service = self._get_semantic_judge_service()
