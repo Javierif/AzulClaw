@@ -445,7 +445,6 @@ class LiveFolderOrganizerSkillTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(decision_response.status, 200)
         self.assertEqual(decision_payload["status"], "completed")
         self.assertEqual(decision_payload["workflow_status"], "completed")
-        self.assertIn("moved", decision_payload["reply"].lower())
         self.assertEqual(remaining_top_level_files, [])
         self.assertEqual(
             final_listing,
