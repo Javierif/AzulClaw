@@ -7,12 +7,22 @@ import os
 import random
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
 from agent_framework import Content, Message
 
+from .conversation_types import (
+    CapabilityContractVerdict,
+    ConversationReply,
+    FolderOrganizerPreviewContextVerdict,
+    FolderOrganizerRequestVerdict,
+    PendingActionStageVerdict,
+    PendingActionUserIntentVerdict,
+    TURN_CLOSURE_FAILURE_TEXT,
+    TurnClosureVerdict,
+)
 from .attachments import (
     AttachmentError,
     build_attachment_context,
@@ -62,10 +72,6 @@ _WORKFLOW_LISTING_ITEM_FILTER_FIELD = "kind"
 _WORKFLOW_LISTING_ITEM_FILTER_VALUE = "file"
 _MAX_SEMANTIC_GROUPING_ITEMS = 300
 _TURN_CLOSURE_ALLOWED_STATUSES = {"final_answer", "blocking_question", "action_pending", "tool_failure"}
-TURN_CLOSURE_FAILURE_TEXT = (
-    "I couldn't complete that request reliably just now, so I stopped instead of ending with an incomplete promise. "
-    "Please try again or ask me to rerun the plan."
-)
 
 
 def _random_progress_delay_seconds() -> float:
@@ -74,70 +80,6 @@ def _random_progress_delay_seconds() -> float:
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-@dataclass
-class ConversationReply:
-    """Enriched reply from the orchestrator."""
-
-    text: str
-    model_id: str = ""
-    model_label: str = ""
-    process_id: str = ""
-    attempt_count: int = 0
-    skipped_models: list[dict[str, str]] | None = None
-    failed_attempts: list[dict[str, str]] | None = None
-    lane: str = "auto"
-    triage_reason: str = ""
-    conversation_title: str | None = None
-    turn_status: str = "final_answer"
-    workflow_events: list[dict] | None = None
-
-
-@dataclass
-class TurnClosureVerdict:
-    status: str
-    should_retry: bool = False
-    reason: str = ""
-
-
-@dataclass
-class PendingActionStageVerdict:
-    decision: str
-    action_kind: str = ""
-    title: str = ""
-    summary: str = ""
-    reason: str = ""
-
-
-@dataclass
-class PendingActionUserIntentVerdict:
-    decision: str
-    reason: str = ""
-
-
-@dataclass
-class CapabilityContractVerdict:
-    decision: str
-    should_retry: bool = False
-    turn_status: str = "final_answer"
-    reason: str = ""
-    guidance: str = ""
-
-
-@dataclass
-class FolderOrganizerRequestVerdict:
-    decision: str
-    reason: str = ""
-
-
-@dataclass
-class FolderOrganizerPreviewContextVerdict:
-    reply_language: str = "en"
-    has_executable_plan: bool = False
-    conceptual_plan_requested: bool = False
-    status_summary: str = ""
-    reason: str = ""
 
 
 def _map_verdict_to_turn_status(status: str) -> str:
