@@ -30,7 +30,6 @@ from .conversation_helpers import (
     _format_folder_organizer_preview_text,
     _is_placeholder_conversation_title,
     _map_verdict_to_turn_status,
-    _random_progress_delay_seconds,
     _strip_machine_pending_blocks,
     _strip_markdown_emphasis,
     _utcnow_iso,
@@ -49,6 +48,7 @@ from .cortex.fast.commentary import (
 from .cortex.fast.triage import TriageDecision
 from .conversation_attachments import AttachmentMixin
 from .conversation_memory import MemoryMixin
+from .conversation_progress import ProgressMixin
 from .conversation_routing import RoutingMixin
 from .conversation_titles import TitleMixin
 from .runtime.agent_runtime import AgentRuntimeManager
@@ -81,7 +81,7 @@ _MAX_SEMANTIC_GROUPING_ITEMS = 300
 _TURN_CLOSURE_ALLOWED_STATUSES = {"final_answer", "blocking_question", "action_pending", "tool_failure"}
 
 
-class ConversationOrchestrator(MemoryMixin, TitleMixin, AttachmentMixin, RoutingMixin):
+class ConversationOrchestrator(MemoryMixin, TitleMixin, AttachmentMixin, RoutingMixin, ProgressMixin):
     """Orchestrates memory, semantic retrieval, and agent invocation."""
 
     def __init__(
@@ -2840,61 +2840,4 @@ class ConversationOrchestrator(MemoryMixin, TitleMixin, AttachmentMixin, Routing
         )
         return reply
 
-    async def _slow_commentary_loop(
-        self,
-        user_message: str,
-        *,
-        reason: str,
-        on_commentary: Callable[[str], Awaitable[None]],
-        on_progress: Callable[..., Awaitable[None]] | None = None,
-        started_at: str,
-        progress_blueprint: dict | None = None,
-    ) -> None:
-        """Emits lightweight feedback while the slow brain is still working."""
-        updates = [
-            "Still thinking this through to give you a thorough answer.",
-            "Structuring the response and making sure the approach makes sense.",
-            "Almost there. Closing the key points before responding.",
-        ]
-        index = 0
-        while True:
-            await asyncio.sleep(_random_progress_delay_seconds())
-            commentary = updates[index % len(updates)]
-            await on_commentary(commentary)
-            if on_progress is not None:
-                stage = "thinking" if index < 2 else "finalizing"
-                await on_progress(
-                    "progress-update",
-                    stage=stage,
-                    summary=commentary,
-                    tick=index,
-                    blueprint=progress_blueprint,
-                )
-            index += 1
-
-    async def _progress_idle_watchdog(
-        self,
-        get_last_visible_update: Callable[[], float],
-        emit_commentary: Callable[[str], Awaitable[None]],
-        emit_progress: Callable[..., Awaitable[None]],
-        lane_getter: Callable[[], str],
-        blueprint_getter: Callable[[], dict | None],
-    ) -> None:
-        """Emits a reassurance update when the user has not seen progress for a while."""
-        idle_commentary = "Still processing this; I haven't stalled."
-        next_idle_after = _random_progress_delay_seconds()
-        while True:
-            await asyncio.sleep(1.0)
-            if (time.monotonic() - get_last_visible_update()) < next_idle_after:
-                continue
-            lane = lane_getter()
-            blueprint = blueprint_getter()
-            await emit_commentary(idle_commentary)
-            await emit_progress(
-                "progress-idle",
-                stage="thinking" if lane == "slow" else "delegated",
-                summary=idle_commentary,
-                blueprint=blueprint,
-            )
-            next_idle_after = _random_progress_delay_seconds()
 
