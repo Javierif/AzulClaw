@@ -31,7 +31,7 @@ class SemanticJudgeMixin:
 
     def _looks_like_blocking_question(self, text: str) -> bool:
         candidate = (text or "").strip()
-        return "?" in candidate or "Â¿" in candidate
+        return "?" in candidate or "¿" in candidate
 
     def _derive_turn_status_from_text(self, text: str, *, default: str = "final_answer") -> str:
         if self._reply_contains_pending_action_block(text):
