@@ -171,7 +171,7 @@ def should_skip_vectorization(text: str) -> bool:
         or "apikey" in low
         or "token" in low
         or "password" in low
-        or "contraseÃ±a" in low
+        or "contraseña" in low
         or "secret" in low
         or "bearer " in low
         or "authorization:" in low

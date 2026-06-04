@@ -53,13 +53,13 @@ class TitleMixin:
 
         ans = (assistant_reply or "").strip()
         if len(ans) > 1200:
-            ans = ans[:1200] + "â€¦"
+            ans = ans[:1200] + "…"
 
         title_prompt = (
             "You name chat threads for a sidebar list.\n\n"
             f"User asked:\n\"\"\"{user_message[:500]}\"\"\"\n\n"
             f"Assistant answered (excerpt):\n\"\"\"{ans}\"\"\"\n\n"
-            "Write ONE short title (4â€“7 words) summarizing the topic or outcome of this exchange. "
+            "Write ONE short title (4–7 words) summarizing the topic or outcome of this exchange. "
             "Prefer concrete subject matter (e.g. weather in Barcelona, Python error) over generic words. "
             "Do not start with Hello, Hi, or Hey. "
             "Do not use 'Conversation Starter', 'New chat', 'Chat', or 'Main conversation'. "
