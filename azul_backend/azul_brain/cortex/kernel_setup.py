@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import re
-from typing import Any
+from typing import Any, AsyncIterator, Awaitable, Protocol
 from urllib.parse import urlparse
 
 import aiohttp
@@ -126,6 +126,31 @@ class _Result:
         return self.text
 
 
+class InferenceStream(Protocol):
+    """Streaming contract every inference transport returns from stream_messages."""
+
+    def __aiter__(self) -> AsyncIterator[Any]: ...
+
+    async def get_final_response(self) -> Any: ...
+
+
+class InferenceAgent(Protocol):
+    """Unified inference contract implemented by every transport.
+
+    Both the direct AI Foundry client and the Agent Framework adapter satisfy
+    this contract, so the runtime can drive either one without branching on the
+    concrete transport.
+    """
+
+    async def invoke_messages(
+        self, messages: list[Message], response_format: Any = None
+    ) -> _Result: ...
+
+    def stream_messages(
+        self, messages: list[Message]
+    ) -> Awaitable[InferenceStream] | InferenceStream: ...
+
+
 class _FoundryStream:
     """Async iterator that yields text chunks from an AI Foundry SSE stream."""
 
@@ -164,7 +189,7 @@ class _StreamChunk:
         self.text = text
 
 
-class FoundryAgent:
+class FoundryAgent(InferenceAgent):
     """Direct aiohttp agent for AI Foundry /v1/ endpoints."""
 
     def __init__(
@@ -270,7 +295,7 @@ class FoundryAgent:
         return _FoundryStream(resp)
 
 
-class AzulAgent:
+class AzulAgent(InferenceAgent):
     """Adapter that exposes structured inference over Agent Framework."""
 
     def __init__(self, agent: Agent):
@@ -458,7 +483,7 @@ async def create_agent(
     *,
     tools_enabled: bool = True,
     instructions: str | None = None,
-):
+) -> InferenceAgent:
     """Creates the agent with the appropriate client and MCP tools."""
     provider = getattr(model_profile, "provider", "azure")
     deployment_name = (

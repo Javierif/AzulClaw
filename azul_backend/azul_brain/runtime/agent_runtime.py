@@ -20,7 +20,7 @@ from urllib import request as urlrequest
 from agent_framework import Content, Message
 
 from ..azure_auth import describe_azure_openai_auth
-from ..cortex.kernel_setup import create_agent
+from ..cortex.kernel_setup import InferenceAgent, create_agent
 from .process_registry import ProcessRegistry
 from .store import RuntimeModelProfile, RuntimeSettings, RuntimeStore, to_iso_z
 
@@ -936,7 +936,7 @@ class AgentRuntimeManager:
         *,
         tools_enabled: bool = True,
         instructions: str | None = None,
-    ):
+    ) -> InferenceAgent:
         effective_instructions = instructions.strip() if isinstance(instructions, str) else instructions
         if effective_instructions == "":
             effective_instructions = None

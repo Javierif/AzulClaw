@@ -12,8 +12,6 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 from uuid import uuid4
 
-from agent_framework import WorkflowRunState
-
 from .approval_service import ApprovalService, default_approval_lifecycle_path
 from .store import to_iso_z, utc_now
 
@@ -103,11 +101,6 @@ def default_skill_workflow_state_path() -> Path:
 
 def _now() -> str:
     return to_iso_z(utc_now())
-
-
-def _workflow_waiting_status() -> WorkflowRunStatus:
-    # Keep the mapping close to Agent Framework's native paused state.
-    return "waiting_for_human" if WorkflowRunState.IDLE_WITH_PENDING_REQUESTS else "waiting_for_human"
 
 
 class SkillWorkflowStore:
@@ -705,7 +698,7 @@ class SkillWorkflowRuntime:
             updated_at=now,
         )
         self.store.upsert_request(pending)
-        run.status = _workflow_waiting_status()
+        run.status = "waiting_for_human"
         run.pending_request_id = request.request_id
         run.updated_at = now
         self.store.upsert_run(run)

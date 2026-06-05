@@ -6,7 +6,8 @@ import contextlib
 import contextvars
 import json
 import os
-from dataclasses import asdict, dataclass
+import re
+from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
@@ -19,18 +20,10 @@ from .approval_protocol import (
     strip_pending_action_block,
 )
 from .approval_service import ApprovalService, default_approval_lifecycle_path
-from .folder_organizer_legacy_approvals import (
-    FOLDER_ORGANIZER_SKILL_ID,
-    FOLDER_ORGANIZER_TOOL_NAME,
-    derive_folder_organizer_action_from_preview,
-    enrich_folder_organizer_action_with_snapshot,
-    extract_folder_organizer_action,
-    extract_folder_organizer_preview_request,
-    render_folder_organizer_metadata,
-    render_folder_organizer_review_details,
-    validate_folder_organizer_arguments,
-)
-from .store import parse_iso_datetime, to_iso_z, utc_now
+from .json_pending_store import JsonPendingStore
+from .store import to_iso_z, utc_now
+
+FOLDER_ORGANIZER_SKILL_ID = "dev.azulclaw.desktop-organizer"
 
 PENDING_SENSITIVE_ACTION_TTL_SECONDS = 10 * 60
 PENDING_SENSITIVE_ACTION_CARD_ONLY_CONFIRMATION = (
@@ -78,8 +71,92 @@ def _hash_plan_snapshot(snapshot: dict[str, Any]) -> str:
     return sha256(_stable_json(snapshot).encode("utf-8")).hexdigest()
 
 
+def _normalize_override_path(raw: str) -> str:
+    stripped = str(raw or "").strip().replace("\\", "/")
+    if not stripped:
+        raise ValueError("category_overrides keys must be non-empty relative source paths.")
+    parts = [part for part in stripped.split("/") if part]
+    if not parts or any(part in {".", ".."} for part in parts):
+        raise ValueError("category_overrides keys must be relative source paths inside the configured folder.")
+    return "/".join(parts)
+
+
+def _sanitize_override_name(raw: str) -> str:
+    # Collapse whitespace and strip leading/trailing dots (reserved in Windows paths).
+    value = " ".join(str(raw or "").split()).strip(" .")
+    if not value:
+        raise ValueError("category_overrides values must resolve to a non-empty folder name.")
+    # Strip characters that are illegal in Windows/NTFS file and folder names.
+    value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", value).strip(" .")
+    if not value:
+        raise ValueError(
+            "category_overrides value contains only invalid filesystem characters."
+        )
+    return value
+
+
 def _validate_folder_organizer_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
-    return validate_folder_organizer_arguments(arguments)
+    allowed = {
+        "relative_path",
+        "recursive",
+        "max_depth",
+        "plan_token",
+        "dry_run",
+        "batch_index",
+        "include_moves",
+        "category_overrides",
+    }
+    unknown = sorted(key for key in arguments if key not in allowed)
+    if unknown:
+        raise ValueError(f"Unsupported Folder Organizer argument(s): {', '.join(unknown)}")
+
+    normalized: dict[str, Any] = {}
+    if "relative_path" in arguments:
+        relative_path = str(arguments.get("relative_path", "")).strip()
+        if relative_path:
+            normalized["relative_path"] = relative_path
+
+    if "recursive" in arguments:
+        normalized["recursive"] = bool(arguments["recursive"])
+    if "include_moves" in arguments:
+        normalized["include_moves"] = bool(arguments["include_moves"])
+    if "dry_run" in arguments:
+        if bool(arguments["dry_run"]):
+            raise ValueError("Approved Folder Organizer executions cannot use dry_run=true.")
+        normalized["dry_run"] = False
+
+    if "max_depth" in arguments:
+        max_depth = int(arguments["max_depth"])
+        if max_depth < 1 or max_depth > 8:
+            raise ValueError("max_depth must be an integer between 1 and 8.")
+        normalized["max_depth"] = max_depth
+
+    if "batch_index" in arguments:
+        batch_index = int(arguments["batch_index"])
+        if batch_index < 1:
+            raise ValueError("batch_index must be an integer greater than or equal to 1.")
+        normalized["batch_index"] = batch_index
+
+    if "plan_token" in arguments:
+        plan_token = str(arguments.get("plan_token", "")).strip()
+        if not plan_token:
+            raise ValueError("plan_token cannot be empty when provided.")
+        normalized["plan_token"] = plan_token
+
+    if "category_overrides" in arguments:
+        raw_overrides = arguments["category_overrides"]
+        if not isinstance(raw_overrides, dict):
+            raise ValueError("category_overrides must be an object mapping source_relative_path to folder name.")
+        normalized["category_overrides"] = {
+            _normalize_override_path(str(key)): _sanitize_override_name(str(value))
+            for key, value in raw_overrides.items()
+        }
+
+    if normalized.get("batch_index") is not None and not normalized.get("recursive", False):
+        raise ValueError("batch_index requires recursive=true.")
+    if normalized.get("plan_token") and not normalized.get("recursive", False):
+        raise ValueError("plan_token requires recursive=true.")
+    return normalized
 
 
 _TOOL_CAPTURE_CONTEXT: contextvars.ContextVar[tuple[str, str] | None] = contextvars.ContextVar(
@@ -149,7 +226,7 @@ class PendingSensitiveDecision:
     action: PendingSensitiveAction | None = None
 
 
-class PendingSensitiveActionStore:
+class PendingSensitiveActionStore(JsonPendingStore[PendingSensitiveAction]):
     """Small JSON store for chat approval cards tied to sensitive actions."""
 
     def __init__(
@@ -158,9 +235,7 @@ class PendingSensitiveActionStore:
         ttl_seconds: int = PENDING_SENSITIVE_ACTION_TTL_SECONDS,
         approval_service: ApprovalService | None = None,
     ) -> None:
-        self.path = path or _default_pending_actions_path()
-        self.ttl_seconds = ttl_seconds
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        super().__init__(path or _default_pending_actions_path(), ttl_seconds)
         lifecycle_path = (
             self.path.parent / "approval-lifecycle.json"
             if path is not None
@@ -168,58 +243,38 @@ class PendingSensitiveActionStore:
         )
         self.approval_service = approval_service or ApprovalService(lifecycle_path)
 
-    def load(self) -> list[PendingSensitiveAction]:
-        if not self.path.exists():
-            return []
-        try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except Exception:
-            return []
-        if not isinstance(raw, list):
-            return []
-        items: list[PendingSensitiveAction] = []
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            action_id = str(item.get("id", "")).strip()
-            user_id = str(item.get("user_id", "")).strip()
-            title = str(item.get("title", "")).strip()
-            summary = str(item.get("summary", "")).strip()
-            source_user_message = str(item.get("source_user_message", "")).strip()
-            if not action_id or not user_id or not title or not summary:
-                continue
-            items.append(
-                PendingSensitiveAction(
-                    id=action_id,
-                    user_id=user_id,
-                    conversation_id=str(item.get("conversation_id", "")).strip(),
-                    title=title,
-                    summary=summary,
-                    source_user_message=source_user_message,
-                    action_kind=str(item.get("action_kind", "generic")).strip() or "generic",
-                    skill_id=str(item.get("skill_id", "")).strip(),
-                    tool_name=str(item.get("tool_name", "")).strip(),
-                    tool_arguments=item.get("tool_arguments")
-                    if isinstance(item.get("tool_arguments"), dict)
-                    else None,
-                    plan_snapshot=item.get("plan_snapshot")
-                    if isinstance(item.get("plan_snapshot"), dict)
-                    else None,
-                    plan_hash=str(item.get("plan_hash", "")).strip(),
-                    idempotency_key=str(item.get("idempotency_key", "")).strip(),
-                    revision_label=str(item.get("revision_label", "")).strip(),
-                    created_at=str(item.get("created_at", "")).strip(),
-                )
-            )
-        active_items: list[PendingSensitiveAction] = []
-        for item in items:
-            if self._is_expired(item):
-                self.approval_service.mark_expired(item.id)
-                continue
-            active_items.append(item)
-        if len(active_items) != len(items):
-            self._save(active_items)
-        return active_items
+    def _deserialize(self, item: dict[str, Any]) -> PendingSensitiveAction | None:
+        action_id = str(item.get("id", "")).strip()
+        user_id = str(item.get("user_id", "")).strip()
+        title = str(item.get("title", "")).strip()
+        summary = str(item.get("summary", "")).strip()
+        source_user_message = str(item.get("source_user_message", "")).strip()
+        if not action_id or not user_id or not title or not summary:
+            return None
+        return PendingSensitiveAction(
+            id=action_id,
+            user_id=user_id,
+            conversation_id=str(item.get("conversation_id", "")).strip(),
+            title=title,
+            summary=summary,
+            source_user_message=source_user_message,
+            action_kind=str(item.get("action_kind", "generic")).strip() or "generic",
+            skill_id=str(item.get("skill_id", "")).strip(),
+            tool_name=str(item.get("tool_name", "")).strip(),
+            tool_arguments=item.get("tool_arguments")
+            if isinstance(item.get("tool_arguments"), dict)
+            else None,
+            plan_snapshot=item.get("plan_snapshot")
+            if isinstance(item.get("plan_snapshot"), dict)
+            else None,
+            plan_hash=str(item.get("plan_hash", "")).strip(),
+            idempotency_key=str(item.get("idempotency_key", "")).strip(),
+            revision_label=str(item.get("revision_label", "")).strip(),
+            created_at=str(item.get("created_at", "")).strip(),
+        )
+
+    def _on_prune_expired(self, item: PendingSensitiveAction) -> None:
+        self.approval_service.mark_expired(item.id)
 
     def get_for_user(self, user_id: str) -> PendingSensitiveAction | None:
         safe_user_id = str(user_id).strip()
@@ -367,22 +422,8 @@ class PendingSensitiveActionStore:
             self.approval_service.mark_completed(action.id)
         return action
 
-    def _save(self, items: list[PendingSensitiveAction]) -> None:
-        self.path.write_text(
-            json.dumps([asdict(item) for item in items], ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
 
-    def _is_expired(self, item: PendingSensitiveAction) -> bool:
-        if self.ttl_seconds <= 0:
-            return False
-        created_at = parse_iso_datetime(item.created_at)
-        if created_at is None:
-            return False
-        return (utc_now() - created_at).total_seconds() > self.ttl_seconds
-
-
-class FolderOrganizerPreviewStore:
+class FolderOrganizerPreviewStore(JsonPendingStore[FolderOrganizerPreviewRecord]):
     """Persists the latest preview per user and conversation."""
 
     def __init__(
@@ -390,53 +431,33 @@ class FolderOrganizerPreviewStore:
         path: Path | None = None,
         ttl_seconds: int = PENDING_SENSITIVE_ACTION_TTL_SECONDS,
     ) -> None:
-        self.path = path or _default_preview_actions_path()
-        self.ttl_seconds = ttl_seconds
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        super().__init__(path or _default_preview_actions_path(), ttl_seconds)
 
-    def load(self) -> list[FolderOrganizerPreviewRecord]:
-        if not self.path.exists():
-            return []
-        try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except Exception:
-            return []
-        if not isinstance(raw, list):
-            return []
-        items: list[FolderOrganizerPreviewRecord] = []
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            user_id = str(item.get("user_id", "")).strip()
-            conversation_id = str(item.get("conversation_id", "")).strip()
-            if not user_id or not conversation_id:
-                continue
-            overrides = item.get("category_overrides")
-            items.append(
-                FolderOrganizerPreviewRecord(
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                    created_at=str(item.get("created_at", "")).strip(),
-                    relative_path=str(item.get("relative_path", ".")).strip() or ".",
-                    recursive=bool(item.get("recursive", False)),
-                    max_depth=max(1, int(item.get("max_depth", 1) or 1)),
-                    plan_token=str(item.get("plan_token", "")).strip(),
-                    batch_index=(
-                        int(item["batch_index"])
-                        if item.get("batch_index") not in {None, ""}
-                        else None
-                    ),
-                    category_overrides=overrides if isinstance(overrides, dict) else None,
-                    summary=str(item.get("summary", "")).strip(),
-                    preview_payload=item.get("preview_payload")
-                    if isinstance(item.get("preview_payload"), dict)
-                    else None,
-                )
-            )
-        active_items = [item for item in items if not self._is_expired(item)]
-        if len(active_items) != len(items):
-            self._save(active_items)
-        return active_items
+    def _deserialize(self, item: dict[str, Any]) -> FolderOrganizerPreviewRecord | None:
+        user_id = str(item.get("user_id", "")).strip()
+        conversation_id = str(item.get("conversation_id", "")).strip()
+        if not user_id or not conversation_id:
+            return None
+        overrides = item.get("category_overrides")
+        return FolderOrganizerPreviewRecord(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            created_at=str(item.get("created_at", "")).strip(),
+            relative_path=str(item.get("relative_path", ".")).strip() or ".",
+            recursive=bool(item.get("recursive", False)),
+            max_depth=max(1, int(item.get("max_depth", 1) or 1)),
+            plan_token=str(item.get("plan_token", "")).strip(),
+            batch_index=(
+                int(item["batch_index"])
+                if item.get("batch_index") not in {None, ""}
+                else None
+            ),
+            category_overrides=overrides if isinstance(overrides, dict) else None,
+            summary=str(item.get("summary", "")).strip(),
+            preview_payload=item.get("preview_payload")
+            if isinstance(item.get("preview_payload"), dict)
+            else None,
+        )
 
     def save(
         self,
@@ -488,22 +509,8 @@ class FolderOrganizerPreviewStore:
             None,
         )
 
-    def _save(self, items: list[FolderOrganizerPreviewRecord]) -> None:
-        self.path.write_text(
-            json.dumps([asdict(item) for item in items], ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
 
-    def _is_expired(self, item: FolderOrganizerPreviewRecord) -> bool:
-        if self.ttl_seconds <= 0:
-            return False
-        created_at = parse_iso_datetime(item.created_at)
-        if created_at is None:
-            return False
-        return (utc_now() - created_at).total_seconds() > self.ttl_seconds
-
-
-class PendingSensitiveExecutionReceiptStore:
+class PendingSensitiveExecutionReceiptStore(JsonPendingStore[PendingSensitiveExecutionReceipt]):
     """Caches pending-action resolutions to make approvals idempotent."""
 
     def __init__(
@@ -511,44 +518,24 @@ class PendingSensitiveExecutionReceiptStore:
         path: Path | None = None,
         ttl_seconds: int = PENDING_SENSITIVE_ACTION_TTL_SECONDS,
     ) -> None:
-        self.path = path or _default_execution_receipts_path()
-        self.ttl_seconds = ttl_seconds
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        super().__init__(path or _default_execution_receipts_path(), ttl_seconds)
 
-    def load(self) -> list[PendingSensitiveExecutionReceipt]:
-        if not self.path.exists():
-            return []
-        try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except Exception:
-            return []
-        if not isinstance(raw, list):
-            return []
-        items: list[PendingSensitiveExecutionReceipt] = []
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            action_id = str(item.get("action_id", "")).strip()
-            user_id = str(item.get("user_id", "")).strip()
-            decision = str(item.get("decision", "")).strip()
-            if not action_id or not user_id or decision not in {"approve", "reject"}:
-                continue
-            items.append(
-                PendingSensitiveExecutionReceipt(
-                    action_id=action_id,
-                    user_id=user_id,
-                    decision=decision,
-                    created_at=str(item.get("created_at", "")).strip(),
-                    idempotency_key=str(item.get("idempotency_key", "")).strip(),
-                    plan_hash=str(item.get("plan_hash", "")).strip(),
-                    status=str(item.get("status", "completed")).strip() or "completed",
-                    response=str(item.get("response", "")).strip(),
-                )
-            )
-        active_items = [item for item in items if not self._is_expired(item)]
-        if len(active_items) != len(items):
-            self._save(active_items)
-        return active_items
+    def _deserialize(self, item: dict[str, Any]) -> PendingSensitiveExecutionReceipt | None:
+        action_id = str(item.get("action_id", "")).strip()
+        user_id = str(item.get("user_id", "")).strip()
+        decision = str(item.get("decision", "")).strip()
+        if not action_id or not user_id or decision not in {"approve", "reject"}:
+            return None
+        return PendingSensitiveExecutionReceipt(
+            action_id=action_id,
+            user_id=user_id,
+            decision=decision,
+            created_at=str(item.get("created_at", "")).strip(),
+            idempotency_key=str(item.get("idempotency_key", "")).strip(),
+            plan_hash=str(item.get("plan_hash", "")).strip(),
+            status=str(item.get("status", "completed")).strip() or "completed",
+            response=str(item.get("response", "")).strip(),
+        )
 
     def get_by_action_id(
         self,
@@ -605,20 +592,6 @@ class PendingSensitiveExecutionReceiptStore:
         items.insert(0, receipt)
         self._save(items)
         return receipt
-
-    def _save(self, items: list[PendingSensitiveExecutionReceipt]) -> None:
-        self.path.write_text(
-            json.dumps([asdict(item) for item in items], ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-
-    def _is_expired(self, item: PendingSensitiveExecutionReceipt) -> bool:
-        if self.ttl_seconds <= 0:
-            return False
-        created_at = parse_iso_datetime(item.created_at)
-        if created_at is None:
-            return False
-        return (utc_now() - created_at).total_seconds() > self.ttl_seconds
 
 
 @contextlib.contextmanager
@@ -731,12 +704,7 @@ class PendingSensitiveActionService:
         structured = self._extract_structured_action(user_message, assistant_response)
         if structured is None:
             normalized_action_kind = str(semantic_action_kind or "").strip()
-            if normalized_action_kind == "folder_organizer":
-                structured = self._derive_folder_organizer_action_from_preview(
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                )
-            elif normalized_action_kind == "generic":
+            if normalized_action_kind == "generic":
                 structured = {
                     "action_kind": "generic",
                     "title": str(semantic_title or "").strip() or "Sensitive action",
@@ -963,19 +931,7 @@ class PendingSensitiveActionService:
         user_message: str,
         assistant_response: str,
     ) -> dict[str, Any] | None:
-        folder = extract_folder_organizer_action(assistant_response)
-        if folder is not None:
-            return folder
         return None
-
-    def _derive_folder_organizer_action_from_preview(
-        self,
-        *,
-        user_id: str,
-        conversation_id: str | None,
-    ) -> dict[str, Any] | None:
-        preview = self.preview_store.get_for_context(user_id, conversation_id)
-        return derive_folder_organizer_action_from_preview(preview)
 
     def _enrich_action_with_snapshot(
         self,
@@ -984,33 +940,12 @@ class PendingSensitiveActionService:
         conversation_id: str | None,
         action: dict[str, Any],
     ) -> dict[str, Any]:
-        preview = self.preview_store.get_for_context(user_id, conversation_id)
-        return enrich_folder_organizer_action_with_snapshot(
-            action=action,
-            preview=preview,
-            hash_plan_snapshot=_hash_plan_snapshot,
-        )
-
-    def _extract_folder_organizer_action(self, assistant_response: str) -> dict[str, Any] | None:
-        return extract_folder_organizer_action(assistant_response)
-
-    def extract_folder_organizer_preview_request(self, assistant_response: str) -> dict[str, Any] | None:
-        return extract_folder_organizer_preview_request(assistant_response)
-
-    def _render_folder_organizer_metadata(self, action: PendingSensitiveAction) -> list[tuple[str, str]]:
-        return render_folder_organizer_metadata(action)
-
-    def _render_folder_organizer_review_details(self, action: PendingSensitiveAction) -> list[tuple[str, str]]:
-        return render_folder_organizer_review_details(action)
+        return action
 
     def _render_block(self, action: PendingSensitiveAction) -> str:
         extra_fields: dict[str, str] = {}
         if action.revision_label:
             extra_fields["RevisionLabel"] = action.revision_label
-        for label, value in self._render_folder_organizer_metadata(action):
-            extra_fields[label] = value
-        for label, value in self._render_folder_organizer_review_details(action):
-            extra_fields[label] = value
         return render_approval_block(
             action_id=action.id,
             action_kind=action.action_kind or "sensitive_action",
