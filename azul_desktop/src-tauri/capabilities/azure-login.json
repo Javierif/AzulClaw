@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "azure-login-capability",
+  "description": "Allows the Microsoft sign-in callback window to relay its authorization code to the main window and close itself.",
+  "windows": ["azure-login-*"],
+  "webviews": ["azure-login-*"],
+  "permissions": [
+    "core:event:allow-emit-to",
+    "core:window:allow-close"
+  ]
+}

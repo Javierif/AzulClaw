@@ -1,0 +1,18 @@
+{
+  "workflow_name": "dev.azulclaw.desktop-organizer.workflow.v1",
+  "graph_signature_hash": "b5688077834acebaa8d81b1a2952d90dc4b88402b4d1534983520bb08ed7df6e",
+  "checkpoint_id": "28c2267b-23b7-4e0f-9b50-eaea7aefefd5",
+  "previous_checkpoint_id": null,
+  "timestamp": "2026-06-02T17:32:05.471646+00:00",
+  "messages": {},
+  "state": {
+    "_workflow_run_kwargs": {},
+    "_executor_state": {
+      "folder_organizer_flow": {}
+    }
+  },
+  "pending_request_info_events": {},
+  "iteration_count": 1,
+  "metadata": {},
+  "version": "1.0"
+}
