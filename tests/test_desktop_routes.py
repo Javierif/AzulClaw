@@ -4,12 +4,14 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from aiohttp.client_exceptions import ClientConnectionResetError
 
 from azul_backend.azul_brain.api.routes import (
     MAX_ATTACHMENTS_PER_TURN,
+    _reload_skill_runtimes,
     desktop_attachments_post_handler,
     desktop_chat_handler,
     desktop_chat_stream_handler,
@@ -278,7 +280,107 @@ class FakeStreamOrchestrator(FakeOrchestrator):
         return FakeReply()
 
 
+class FakeReloadableMcpClient:
+    def __init__(self) -> None:
+        self.reloads = 0
+
+    async def reload_skill_clients(self) -> None:
+        self.reloads += 1
+
+
+class FakeServiceBusWorker:
+    instances: list["FakeServiceBusWorker"] = []
+
+    def __init__(self, **kwargs) -> None:
+        self.kwargs = kwargs
+        self.started = False
+        self.stopped = False
+        FakeServiceBusWorker.instances.append(self)
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+
 class DesktopChatRouteTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reload_skill_runtimes_rebuilds_servicebus_worker_from_channel_config(self) -> None:
+        FakeServiceBusWorker.instances = []
+        previous_worker = FakeServiceBusWorker()
+        mcp_client = FakeReloadableMcpClient()
+        runtime_config = SimpleNamespace(
+            app_id="app-id",
+            app_password="app-secret",
+            tenant_id="tenant-id",
+            service_bus_connection_string="Endpoint=sb://skill/;",
+            service_bus_inbound_queue="skill-in",
+            service_bus_outbound_queue="skill-out",
+            service_bus_use_sessions="auto",
+            bot_sync_reply_timeout_seconds=8.5,
+            channel_connector_policies={"telegram": {"allowed_user_ids": frozenset({"1"})}},
+            telegram_allowed_user_ids=frozenset({"1"}),
+            telegram_allowed_chat_ids=frozenset({"10"}),
+        )
+        app = {
+            "mcp_client": mcp_client,
+            "runtime_manager": object(),
+            "orchestrator": FakeOrchestrator(),
+            "servicebus_worker": previous_worker,
+        }
+
+        with (
+            patch("azul_backend.azul_brain.api.routes.load_runtime_config", return_value=runtime_config),
+            patch("azul_backend.azul_brain.api.routes.build_adapter", return_value="adapter"),
+            patch("azul_backend.azul_brain.api.routes.ServiceBusWorker", FakeServiceBusWorker),
+        ):
+            await _reload_skill_runtimes(app)
+
+        self.assertEqual(mcp_client.reloads, 1)
+        self.assertTrue(previous_worker.stopped)
+        self.assertEqual(app["adapter"], "adapter")
+        self.assertIs(app["runtime_config"], runtime_config)
+        worker = app["servicebus_worker"]
+        self.assertTrue(worker.started)
+        self.assertEqual(worker.kwargs["connection_str"], "Endpoint=sb://skill/;")
+        self.assertEqual(worker.kwargs["inbound_queue"], "skill-in")
+        self.assertEqual(worker.kwargs["outbound_queue"], "skill-out")
+        self.assertEqual(worker.kwargs["adapter"], "adapter")
+        self.assertEqual(worker.kwargs["telegram_allowed_chat_ids"], frozenset({"10"}))
+
+    async def test_reload_skill_runtimes_stops_servicebus_worker_when_transport_removed(self) -> None:
+        previous_worker = FakeServiceBusWorker()
+        runtime_config = SimpleNamespace(
+            app_id="",
+            app_password="",
+            tenant_id="",
+            service_bus_connection_string="",
+            service_bus_inbound_queue="bot-inbound",
+            service_bus_outbound_queue="bot-outbound",
+            service_bus_use_sessions="auto",
+            bot_sync_reply_timeout_seconds=6.8,
+            channel_connector_policies={},
+            telegram_allowed_user_ids=frozenset(),
+            telegram_allowed_chat_ids=frozenset(),
+        )
+        app = {
+            "mcp_client": FakeReloadableMcpClient(),
+            "runtime_manager": object(),
+            "orchestrator": FakeOrchestrator(),
+            "servicebus_worker": previous_worker,
+        }
+
+        with (
+            patch("azul_backend.azul_brain.api.routes.load_runtime_config", return_value=runtime_config),
+            patch("azul_backend.azul_brain.api.routes.build_adapter", return_value="adapter"),
+            patch("azul_backend.azul_brain.api.routes.ServiceBusWorker", FakeServiceBusWorker),
+        ):
+            await _reload_skill_runtimes(app)
+
+        self.assertTrue(previous_worker.stopped)
+        self.assertNotIn("servicebus_worker", app)
+        self.assertEqual(app["adapter"], "adapter")
+
     async def test_workflow_request_decision_resolves_hitl_approval(self) -> None:
         root = Path("memory") / "test-desktop-routes" / "workflow-decision"
         if root.exists():

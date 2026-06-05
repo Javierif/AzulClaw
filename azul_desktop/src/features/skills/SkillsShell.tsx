@@ -6,7 +6,11 @@ import type { CSSProperties } from "react";
 import { SectionTopbarPortal } from "../../components/SectionTopbarPortal";
 import {
   apiUrl,
+  discoverAzureFunctionApps,
+  discoverAzureSubscriptions,
+  importTelegramFunctionAppSettings,
   installSkill,
+  loadSetupProfile,
   loadInstalledSkills,
   loadSkillMarketplaceSettings,
   loadSkillMarketplace,
@@ -16,7 +20,8 @@ import {
   setSkillEnabled,
   uninstallSkill,
 } from "../../lib/api";
-import type { SkillMarketplaceSettings, SkillRuntimeStatus, SkillSummary } from "../../lib/contracts";
+import { AZURE_ARM_SCOPE, loginWithMicrosoft } from "../../lib/azure-auth";
+import type { AzureFunctionAppOption, AzureSubscriptionOption, SkillMarketplaceSettings, SkillRuntimeStatus, SkillSummary } from "../../lib/contracts";
 
 type SkillTab = "marketplace" | "installed";
 type SkillKindFilter = "all" | SkillSummary["kind"];
@@ -117,6 +122,22 @@ function buildInitialConfig(skill: SkillSummary) {
 
 function isDraftBooleanEnabled(value: string | undefined) {
   return String(value ?? "").trim().toLowerCase() === "true";
+}
+
+function resetTelegramAzureImportState(
+  setTelegramAzureError: (value: string) => void,
+  setTelegramAzureToken: (value: string) => void,
+  setTelegramSubscriptions: (value: AzureSubscriptionOption[]) => void,
+  setTelegramFunctionApps: (value: AzureFunctionAppOption[]) => void,
+  setTelegramSubscriptionId: (value: string) => void,
+  setTelegramFunctionAppId: (value: string) => void,
+) {
+  setTelegramAzureError("");
+  setTelegramAzureToken("");
+  setTelegramSubscriptions([]);
+  setTelegramFunctionApps([]);
+  setTelegramSubscriptionId("");
+  setTelegramFunctionAppId("");
 }
 
 function skillConfigContextNote(skill: SkillSummary, fieldKey: string, draft: Record<string, string>) {
@@ -296,6 +317,13 @@ export function SkillsShell({
   const [configPickerError, setConfigPickerError] = useState("");
   const [pickingConfigFieldKey, setPickingConfigFieldKey] = useState("");
   const [configToastMessage, setConfigToastMessage] = useState("");
+  const [telegramAzureToken, setTelegramAzureToken] = useState("");
+  const [telegramAzureBusy, setTelegramAzureBusy] = useState(false);
+  const [telegramAzureError, setTelegramAzureError] = useState("");
+  const [telegramSubscriptions, setTelegramSubscriptions] = useState<AzureSubscriptionOption[]>([]);
+  const [telegramFunctionApps, setTelegramFunctionApps] = useState<AzureFunctionAppOption[]>([]);
+  const [telegramSubscriptionId, setTelegramSubscriptionId] = useState("");
+  const [telegramFunctionAppId, setTelegramFunctionAppId] = useState("");
   const [tutorialStep, setTutorialStep] = useState(0);
   const [copiedDeploymentPath, setCopiedDeploymentPath] = useState("");
   const [tourGeometry, setTourGeometry] = useState<MarketplaceTourGeometry | null>(null);
@@ -461,6 +489,14 @@ export function SkillsShell({
     setConfigDraft(buildInitialConfig(skill));
     setConfigPickerError("");
     setPickingConfigFieldKey("");
+    resetTelegramAzureImportState(
+      setTelegramAzureError,
+      setTelegramAzureToken,
+      setTelegramSubscriptions,
+      setTelegramFunctionApps,
+      setTelegramSubscriptionId,
+      setTelegramFunctionAppId,
+    );
   }
 
   function closeConfigModal() {
@@ -468,6 +504,14 @@ export function SkillsShell({
     setConfigDraft({});
     setConfigPickerError("");
     setPickingConfigFieldKey("");
+    resetTelegramAzureImportState(
+      setTelegramAzureError,
+      setTelegramAzureToken,
+      setTelegramSubscriptions,
+      setTelegramFunctionApps,
+      setTelegramSubscriptionId,
+      setTelegramFunctionAppId,
+    );
   }
 
   function showConfigToast(message: string) {
@@ -505,6 +549,83 @@ export function SkillsShell({
       setConfigPickerError(`Could not open the native selector. ${detail}`);
     } finally {
       setPickingConfigFieldKey("");
+    }
+  }
+
+  async function handleTelegramAzureDiscover() {
+    setTelegramAzureBusy(true);
+    setTelegramAzureError("");
+    try {
+      const profile = await loadSetupProfile();
+      const azure = profile.skill_configs?.Azure ?? {};
+      const clientId = (azure.clientId ?? "").trim();
+      const tenantId = (azure.tenantId ?? "").trim() || "organizations";
+      if (!clientId) {
+        throw new Error("Configure Azure first in Settings so AzulClaw knows the Azure app registration client ID.");
+      }
+      const login = await loginWithMicrosoft({ tenantId, clientId }, { scope: AZURE_ARM_SCOPE });
+      const subscriptions = await discoverAzureSubscriptions(login.accessToken);
+      const selectedSubscription =
+        (azure.subscriptionId && subscriptions.find((item) => item.id === azure.subscriptionId))
+          ? azure.subscriptionId
+          : subscriptions[0]?.id ?? "";
+      setTelegramAzureToken(login.accessToken);
+      setTelegramSubscriptions(subscriptions);
+      setTelegramSubscriptionId(selectedSubscription);
+      setTelegramFunctionApps([]);
+      setTelegramFunctionAppId("");
+      if (selectedSubscription) {
+        const apps = await discoverAzureFunctionApps(login.accessToken, selectedSubscription);
+        setTelegramFunctionApps(apps);
+        setTelegramFunctionAppId(apps[0]?.id ?? "");
+      }
+    } catch (nextError) {
+      setTelegramAzureError(nextError instanceof Error ? nextError.message : "Could not discover Azure Function Apps.");
+    } finally {
+      setTelegramAzureBusy(false);
+    }
+  }
+
+  async function handleTelegramSubscriptionChange(subscriptionId: string) {
+    setTelegramSubscriptionId(subscriptionId);
+    setTelegramFunctionApps([]);
+    setTelegramFunctionAppId("");
+    setTelegramAzureError("");
+    if (!telegramAzureToken || !subscriptionId) return;
+    setTelegramAzureBusy(true);
+    try {
+      const apps = await discoverAzureFunctionApps(telegramAzureToken, subscriptionId);
+      setTelegramFunctionApps(apps);
+      setTelegramFunctionAppId(apps[0]?.id ?? "");
+    } catch (nextError) {
+      setTelegramAzureError(nextError instanceof Error ? nextError.message : "Could not load Function Apps.");
+    } finally {
+      setTelegramAzureBusy(false);
+    }
+  }
+
+  async function handleTelegramImportFunctionSettings() {
+    const selected = telegramFunctionApps.find((item) => item.id === telegramFunctionAppId);
+    if (!telegramAzureToken || !telegramSubscriptionId || !selected) {
+      setTelegramAzureError("Select an Azure Function App first.");
+      return;
+    }
+    setTelegramAzureBusy(true);
+    setTelegramAzureError("");
+    try {
+      const result = await importTelegramFunctionAppSettings({
+        access_token: telegramAzureToken,
+        subscription_id: telegramSubscriptionId,
+        resource_group: selected.resource_group,
+        function_app_name: selected.name,
+      });
+      setConfigDraft((current) => ({ ...current, ...result.config }));
+      const missing = result.missing.length ? ` Missing: ${result.missing.join(", ")}.` : "";
+      showConfigToast(`Imported ${result.imported.length} Telegram setting(s).${missing}`);
+    } catch (nextError) {
+      setTelegramAzureError(nextError instanceof Error ? nextError.message : "Could not import Function App settings.");
+    } finally {
+      setTelegramAzureBusy(false);
     }
   }
 
@@ -1074,6 +1195,65 @@ export function SkillsShell({
                 <h3 className="hw-modal-title">{configSkill.name}</h3>
               </div>
             </div>
+            {configSkill.id === "dev.azulclaw.telegram" ? (
+              <div className="skill-config-field">
+                <span>Import from existing Azure Function</span>
+                <small className="skill-config-help">
+                  Select the deployed relay Function App and copy its Telegram app settings into this form. Nothing is provisioned in Azure.
+                </small>
+                <div style={{ display: "grid", gap: "10px" }}>
+                  <button
+                    type="button"
+                    className="hw-btn-ghost"
+                    onClick={() => void handleTelegramAzureDiscover()}
+                    disabled={telegramAzureBusy || busySkillId === configSkill.id}
+                  >
+                    {telegramAzureBusy && !telegramAzureToken ? "Discovering..." : "Discover Azure Functions"}
+                  </button>
+                  {telegramSubscriptions.length ? (
+                    <select
+                      className="skill-config-input"
+                      value={telegramSubscriptionId}
+                      onChange={(event) => void handleTelegramSubscriptionChange(event.target.value)}
+                      disabled={telegramAzureBusy}
+                    >
+                      {telegramSubscriptions.map((subscription) => (
+                        <option key={subscription.id} value={subscription.id}>
+                          {subscription.display_name || subscription.id}
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
+                  {telegramFunctionApps.length ? (
+                    <select
+                      className="skill-config-input"
+                      value={telegramFunctionAppId}
+                      onChange={(event) => setTelegramFunctionAppId(event.target.value)}
+                      disabled={telegramAzureBusy}
+                    >
+                      {telegramFunctionApps.map((app) => (
+                        <option key={app.id} value={app.id}>
+                          {app.name} ({app.resource_group})
+                        </option>
+                      ))}
+                    </select>
+                  ) : telegramAzureToken && !telegramAzureBusy ? (
+                    <small className="skill-config-help">No Function Apps were found in this subscription.</small>
+                  ) : null}
+                  {telegramFunctionApps.length ? (
+                    <button
+                      type="button"
+                      className="hw-btn-primary"
+                      onClick={() => void handleTelegramImportFunctionSettings()}
+                      disabled={telegramAzureBusy || !telegramFunctionAppId}
+                    >
+                      {telegramAzureBusy && telegramAzureToken ? "Importing..." : "Import app settings"}
+                    </button>
+                  ) : null}
+                  {telegramAzureError ? <small className="skill-config-help">{telegramAzureError}</small> : null}
+                </div>
+              </div>
+            ) : null}
             <div className="skill-config-fields">
               {[
                 ...Object.entries(configSkill.config_schema?.properties ?? {}).map(([field, schema]) => ({
@@ -1092,6 +1272,7 @@ export function SkillsShell({
                   min: typeof schema.minimum === "number" ? schema.minimum : undefined,
                   max: typeof schema.maximum === "number" ? schema.maximum : undefined,
                   format: schema.format ?? "",
+                  options: Array.isArray(schema.enum) ? schema.enum.filter((item): item is string => typeof item === "string") : [],
                 })),
                 ...(configSkill.secrets ?? [])
                   .filter((secret) => !(configSkill.config_schema?.properties?.[secret.field]))
@@ -1104,11 +1285,22 @@ export function SkillsShell({
                     min: undefined,
                     max: undefined,
                     format: "",
+                    options: [],
                   })),
               ].map((field) => (
                 <label key={field.key} className={`skill-config-field${field.type === "boolean" ? " skill-config-field-boolean" : ""}`}>
                   <span>{field.title}</span>
-                  {field.format === "directory" ? (
+                  {field.options.length ? (
+                    <select
+                      className="skill-config-input"
+                      value={configDraft[field.key] ?? ""}
+                      onChange={(event) => setConfigDraft((current) => ({ ...current, [field.key]: event.target.value }))}
+                    >
+                      {field.options.map((option) => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
+                    </select>
+                  ) : field.format === "directory" ? (
                     <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
                       <input
                         className="skill-config-input"

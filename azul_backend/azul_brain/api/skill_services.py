@@ -1610,7 +1610,17 @@ def list_enabled_channel_connector_runtime_specs() -> list[dict[str, Any]]:
         channels = permissions.get("channels", []) if isinstance(permissions, dict) else []
         activation = ref.manifest.get("activation", {})
         config = installed.get("config", {}) if isinstance(installed, dict) else {}
+        if not isinstance(config, dict):
+            config = {}
+        public_config = {
+            str(key): value
+            for key, value in config.items()
+            if key not in {"_secret_refs", "_secret_values"}
+        }
+        secret_values = _stored_secret_values(config)
+        runtime_env: dict[str, str] = {}
         message_parts: list[str] = []
+        status = "connected"
         if isinstance(activation, dict) and activation.get("requires_azure_relay"):
             relay_path = str(activation.get("relay_function_path", "")).strip()
             if relay_path:
@@ -1618,12 +1628,43 @@ def list_enabled_channel_connector_runtime_specs() -> list[dict[str, Any]]:
             else:
                 message_parts.append("Azure relay deployment required.")
         if skill_id == "dev.azulclaw.telegram":
-            user_count = len(parse_csv_allowlist(str(config.get("allowedUserIds", ""))))
-            chat_count = len(parse_csv_allowlist(str(config.get("allowedChatIds", ""))))
+            user_count = len(parse_csv_allowlist(str(public_config.get("allowedUserIds", ""))))
+            chat_count = len(parse_csv_allowlist(str(public_config.get("allowedChatIds", ""))))
             if user_count or chat_count:
                 message_parts.append(f"Allowlists configured: {user_count} users, {chat_count} chats.")
             else:
                 message_parts.append("No Telegram allowlists configured.")
+            queue_in = str(public_config.get("serviceBusInboundQueue", "")).strip() or "bot-inbound"
+            queue_out = str(public_config.get("serviceBusOutboundQueue", "")).strip() or "bot-outbound"
+            sessions = str(public_config.get("serviceBusUseSessions", "")).strip() or "auto"
+            timeout = str(public_config.get("botSyncReplyTimeoutSeconds", "")).strip() or "6.8"
+            relay_auth = str(public_config.get("botRelayRequireAuth", "")).strip()
+            runtime_env = {
+                "TELEGRAM_ALLOWED_USER_IDS": str(public_config.get("allowedUserIds", "")).strip(),
+                "TELEGRAM_ALLOWED_CHAT_IDS": str(public_config.get("allowedChatIds", "")).strip(),
+                "SERVICE_BUS_CONNECTION_STRING": str(secret_values.get("SERVICE_BUS_CONNECTION_STRING", "")).strip(),
+                "SERVICE_BUS_INBOUND_QUEUE": queue_in,
+                "SERVICE_BUS_OUTBOUND_QUEUE": queue_out,
+                "SERVICE_BUS_USE_SESSIONS": sessions,
+                "BOT_SYNC_REPLY_TIMEOUT_SECONDS": timeout,
+                "MicrosoftAppId": str(public_config.get("microsoftAppId", "")).strip(),
+                "MicrosoftAppPassword": str(secret_values.get("MicrosoftAppPassword", "")).strip(),
+                "MicrosoftAppTenantId": str(public_config.get("microsoftAppTenantId", "")).strip(),
+            }
+            if relay_auth:
+                runtime_env["BOT_RELAY_REQUIRE_AUTH"] = relay_auth
+            configured_transport = bool(runtime_env["SERVICE_BUS_CONNECTION_STRING"])
+            configured_bot = bool(runtime_env["MicrosoftAppId"] and runtime_env["MicrosoftAppPassword"])
+            if configured_transport and configured_bot:
+                message_parts.append(f"Local relay runtime configured for {queue_in} -> {queue_out}.")
+            elif configured_transport:
+                status = "error"
+                message_parts.append("Service Bus is configured; Bot Framework app credentials are incomplete.")
+            else:
+                status = "error"
+                message_parts.append("Service Bus is not configured.")
+            if isinstance(activation, dict) and activation.get("restart_required"):
+                message_parts.append("Restart the backend after enabling or changing this connector.")
         if not message_parts:
             message_parts.append("Channel connector configured and ready.")
         specs.append(
@@ -1631,9 +1672,14 @@ def list_enabled_channel_connector_runtime_specs() -> list[dict[str, Any]]:
                 "skill_id": skill_id,
                 "skill_name": str(ref.manifest.get("name", skill_id)).strip() or skill_id,
                 "channels": channels if isinstance(channels, list) else [],
-                "config": config if isinstance(config, dict) else {},
+                "config": public_config,
+                "runtime_env": {
+                    key: value
+                    for key, value in runtime_env.items()
+                    if str(value).strip()
+                },
                 "activation": activation if isinstance(activation, dict) else {},
-                "status": "connected",
+                "status": status,
                 "message": " ".join(message_parts),
             }
         )

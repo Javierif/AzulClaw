@@ -70,17 +70,23 @@ class SkillMarketplaceTests(unittest.TestCase):
                 installed = skill_services.install_skill("dev.azulclaw.telegram")
                 self.assertTrue(installed["installed"])
                 self.assertFalse(installed["configured"])
-                self.assertEqual(installed["missing_required_fields"], ["botToken"])
+                self.assertEqual(
+                    installed["missing_required_fields"],
+                    ["serviceBusConnectionString", "microsoftAppId", "microsoftAppPassword"],
+                )
 
                 configured = skill_services.configure_skill(
                     "dev.azulclaw.telegram",
                     {
-                        "botToken": "123456:secret",
+                        "serviceBusConnectionString": "Endpoint=sb://example/;SharedAccessKey=secret",
+                        "microsoftAppId": "app-id",
+                        "microsoftAppPassword": "app-secret",
                         "allowedUserIds": "123456789",
                     },
                 )
                 self.assertTrue(configured["configured"])
-                self.assertEqual(configured["config"]["botToken"], skill_services.SECRET_REDACTION)
+                self.assertEqual(configured["config"]["serviceBusConnectionString"], skill_services.SECRET_REDACTION)
+                self.assertEqual(configured["config"]["microsoftAppPassword"], skill_services.SECRET_REDACTION)
                 self.assertEqual(configured["config"]["allowedUserIds"], "123456789")
 
                 enabled = skill_services.update_skill_enabled("dev.azulclaw.telegram", True)
@@ -89,18 +95,28 @@ class SkillMarketplaceTests(unittest.TestCase):
                 reconfigured = skill_services.configure_skill(
                     "dev.azulclaw.telegram",
                     {
-                        "botToken": "",
+                        "serviceBusConnectionString": "",
+                        "microsoftAppId": "app-id",
+                        "microsoftAppPassword": "",
                         "allowedUserIds": "987654321",
                     },
                 )
                 self.assertTrue(reconfigured["configured"])
-                self.assertEqual(reconfigured["config"]["botToken"], skill_services.SECRET_REDACTION)
+                self.assertEqual(reconfigured["config"]["serviceBusConnectionString"], skill_services.SECRET_REDACTION)
+                self.assertEqual(reconfigured["config"]["microsoftAppPassword"], skill_services.SECRET_REDACTION)
                 self.assertEqual(reconfigured["config"]["allowedUserIds"], "987654321")
 
                 state = skill_services.load_installed_skill_state()
                 stored_config = state["skills"]["dev.azulclaw.telegram"]["config"]
-                self.assertNotIn("botToken", stored_config)
-                self.assertEqual(stored_config["_secret_values"], {"TELEGRAM_BOT_TOKEN": "123456:secret"})
+                self.assertNotIn("serviceBusConnectionString", stored_config)
+                self.assertNotIn("microsoftAppPassword", stored_config)
+                self.assertEqual(
+                    stored_config["_secret_values"],
+                    {
+                        "SERVICE_BUS_CONNECTION_STRING": "Endpoint=sb://example/;SharedAccessKey=secret",
+                        "MicrosoftAppPassword": "app-secret",
+                    },
+                )
 
     def test_enable_rejects_missing_required_config(self) -> None:
         with self._runtime_dir("desktop-organizer") as runtime_dir:
@@ -586,7 +602,14 @@ class SkillMarketplaceTests(unittest.TestCase):
                 skill_services.configure_skill(
                     "dev.azulclaw.telegram",
                     {
-                        "botToken": "123456:secret",
+                        "serviceBusConnectionString": "Endpoint=sb://example/;SharedAccessKey=secret",
+                        "serviceBusInboundQueue": "tg-inbound",
+                        "serviceBusOutboundQueue": "tg-outbound",
+                        "serviceBusUseSessions": "auto",
+                        "botSyncReplyTimeoutSeconds": "7.5",
+                        "microsoftAppId": "app-id",
+                        "microsoftAppPassword": "app-secret",
+                        "microsoftAppTenantId": "tenant-id",
                         "allowedUserIds": "1,2",
                         "allowedChatIds": "10",
                     },
@@ -599,6 +622,13 @@ class SkillMarketplaceTests(unittest.TestCase):
         self.assertEqual(specs[0]["skill_id"], "dev.azulclaw.telegram")
         self.assertEqual(specs[0]["channels"], ["telegram"])
         self.assertEqual(specs[0]["config"]["allowedUserIds"], "1,2")
+        self.assertNotIn("_secret_values", specs[0]["config"])
+        self.assertEqual(specs[0]["runtime_env"]["SERVICE_BUS_INBOUND_QUEUE"], "tg-inbound")
+        self.assertEqual(specs[0]["runtime_env"]["SERVICE_BUS_OUTBOUND_QUEUE"], "tg-outbound")
+        self.assertEqual(specs[0]["runtime_env"]["MicrosoftAppId"], "app-id")
+        self.assertEqual(specs[0]["runtime_env"]["MicrosoftAppPassword"], "app-secret")
+        self.assertEqual(specs[0]["runtime_env"]["MicrosoftAppTenantId"], "tenant-id")
+        self.assertEqual(specs[0]["runtime_env"]["BOT_SYNC_REPLY_TIMEOUT_SECONDS"], "7.5")
         self.assertIn("Azure relay required", specs[0]["message"])
         self.assertIn("2 users, 1 chats", specs[0]["message"])
 
@@ -617,7 +647,14 @@ class SkillMarketplaceTests(unittest.TestCase):
                 skill_services.configure_skill(
                     "dev.azulclaw.telegram",
                     {
-                        "botToken": "123456:secret",
+                        "serviceBusConnectionString": "Endpoint=sb://skill/;SharedAccessKey=secret",
+                        "serviceBusInboundQueue": "skill-in",
+                        "serviceBusOutboundQueue": "skill-out",
+                        "serviceBusUseSessions": "false",
+                        "botSyncReplyTimeoutSeconds": "9.25",
+                        "microsoftAppId": "skill-app-id",
+                        "microsoftAppPassword": "skill-app-secret",
+                        "microsoftAppTenantId": "skill-tenant",
                         "allowedUserIds": "skill-user-1, skill-user-2",
                         "allowedChatIds": "skill-chat",
                     },
@@ -634,6 +671,49 @@ class SkillMarketplaceTests(unittest.TestCase):
 
         self.assertEqual(policies["telegram"]["allowed_user_ids"], frozenset({"skill-user-1", "skill-user-2"}))
         self.assertEqual(policies["telegram"]["allowed_chat_ids"], frozenset({"skill-chat"}))
+
+    def test_runtime_config_prefers_enabled_telegram_skill_transport(self) -> None:
+        with self._runtime_dir("telegram-runtime-transport") as runtime_dir:
+            with patch.dict(
+                os.environ,
+                {
+                    "AZUL_RUNTIME_DIR": runtime_dir,
+                    "SERVICE_BUS_CONNECTION_STRING": "Endpoint=sb://legacy/;",
+                    "SERVICE_BUS_INBOUND_QUEUE": "legacy-in",
+                    "SERVICE_BUS_OUTBOUND_QUEUE": "legacy-out",
+                    "SERVICE_BUS_USE_SESSIONS": "true",
+                    "BOT_SYNC_REPLY_TIMEOUT_SECONDS": "3",
+                    "MicrosoftAppId": "legacy-app",
+                    "MicrosoftAppPassword": "legacy-secret",
+                    "MicrosoftAppTenantId": "legacy-tenant",
+                },
+                clear=False,
+            ):
+                skill_services.install_skill("dev.azulclaw.telegram")
+                skill_services.configure_skill(
+                    "dev.azulclaw.telegram",
+                    {
+                        "serviceBusConnectionString": "Endpoint=sb://skill/;SharedAccessKey=secret",
+                        "serviceBusInboundQueue": "skill-in",
+                        "serviceBusOutboundQueue": "skill-out",
+                        "serviceBusUseSessions": "false",
+                        "botSyncReplyTimeoutSeconds": "9.25",
+                        "microsoftAppId": "skill-app-id",
+                        "microsoftAppPassword": "skill-app-secret",
+                        "microsoftAppTenantId": "skill-tenant",
+                    },
+                )
+                skill_services.update_skill_enabled("dev.azulclaw.telegram", True)
+                loaded = runtime_config.load_runtime_config(Path("."))
+
+        self.assertEqual(loaded.service_bus_connection_string, "Endpoint=sb://skill/;SharedAccessKey=secret")
+        self.assertEqual(loaded.service_bus_inbound_queue, "skill-in")
+        self.assertEqual(loaded.service_bus_outbound_queue, "skill-out")
+        self.assertEqual(loaded.service_bus_use_sessions, "false")
+        self.assertEqual(loaded.bot_sync_reply_timeout_seconds, 9.25)
+        self.assertEqual(loaded.app_id, "skill-app-id")
+        self.assertEqual(loaded.app_password, "skill-app-secret")
+        self.assertEqual(loaded.tenant_id, "skill-tenant")
 
     def test_channel_connector_access_evaluates_generic_telegram_policy(self) -> None:
         decision = evaluate_channel_connector_access(

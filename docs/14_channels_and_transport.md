@@ -40,6 +40,19 @@ Channel -> Azure Bot Service -> Azure Function -> Azure Service Bus -> Local Azu
 - Telegram user and chat allowlists in the relay
 - repeated allowlist checks in the local runtime for defense in depth
 
+## Conversation mapping
+
+External channel activities are mapped into AzulClaw's local multi-conversation
+memory before the orchestrator runs. For Telegram, the local user id is derived
+from the Telegram chat id (`telegram:chat:<id>`) and the conversation title is
+created from Bot Framework channel metadata, for example
+`Telegram: Support (123456789)`.
+
+This keeps Telegram chats isolated from each other and lets pending approvals,
+workflow checkpoints, and recent context attach to the same conversation model
+used by desktop chat. If the channel's display title changes, the conversation
+id stays stable and only the local title is refreshed.
+
 ## First-party connector status
 
 | Channel | Repository status |
