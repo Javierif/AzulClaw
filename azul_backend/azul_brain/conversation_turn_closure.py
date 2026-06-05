@@ -37,6 +37,7 @@ class TurnClosureMixin:
         visual_contents: list[Content] | None = None,
         allow_pending_action_staging: bool = True,
         pending_plan_revision: bool = False,
+        folder_organizer_context_hint: bool = False,
     ) -> ConversationReply:
         staged_text = await self._maybe_stage_sensitive_action_card(
             user_id=user_id,
@@ -59,6 +60,7 @@ class TurnClosureMixin:
             conversation_id=conversation_id,
             user_message=user_message,
             candidate_reply=staged_text,
+            context_hint=folder_organizer_context_hint,
         )
         verdict = await self._resolve_turn_closure_verdict(
             user_message=user_message,
@@ -144,6 +146,7 @@ class TurnClosureMixin:
             conversation_id=conversation_id,
             user_message=user_message,
             candidate_reply=rewritten.text,
+            context_hint=folder_organizer_context_hint,
         )
         if rewritten_capability_verdict is not None and rewritten_capability_verdict.decision == "invalid":
             recovered = await self._recover_folder_organizer_reply_from_preview(
@@ -164,6 +167,7 @@ class TurnClosureMixin:
                     conversation_id=conversation_id,
                     user_message=user_message,
                     candidate_reply=recovered.text,
+                    context_hint=folder_organizer_context_hint,
                 )
                 recovered_turn_verdict = await self._resolve_turn_closure_verdict(
                     user_message=user_message,
@@ -213,6 +217,7 @@ class TurnClosureMixin:
                 conversation_id=conversation_id,
                 user_message=user_message,
                 candidate_reply=recovered.text,
+                context_hint=folder_organizer_context_hint,
             )
             recovered_turn_verdict = await self._resolve_turn_closure_verdict(
                 user_message=user_message,

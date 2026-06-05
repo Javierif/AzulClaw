@@ -6,6 +6,7 @@ import contextlib
 import contextvars
 import json
 import os
+import re
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -81,9 +82,16 @@ def _normalize_override_path(raw: str) -> str:
 
 
 def _sanitize_override_name(raw: str) -> str:
+    # Collapse whitespace and strip leading/trailing dots (reserved in Windows paths).
     value = " ".join(str(raw or "").split()).strip(" .")
     if not value:
         raise ValueError("category_overrides values must resolve to a non-empty folder name.")
+    # Strip characters that are illegal in Windows/NTFS file and folder names.
+    value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", value).strip(" .")
+    if not value:
+        raise ValueError(
+            "category_overrides value contains only invalid filesystem characters."
+        )
     return value
 
 

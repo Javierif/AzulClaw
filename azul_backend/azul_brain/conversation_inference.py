@@ -199,15 +199,18 @@ class InferenceMixin:
             return build_commentary(user_message, reason=reason, lane=lane)
 
     def _fallback_for_filtered_prompt(self, user_message: str) -> str | None:
-        """Returns a safe response if Azure filters a simple request."""
-        normalized = (user_message or "").strip().lower()
-        if normalized in {"hola", "buenas", "hey", "hello", "holi"}:
-            return "Hi. I'm active and ready to help."
-        if normalized in {"gracias", "muchas gracias"}:
-            return "You're welcome."
-        if normalized in {"que tal", "como estas", "cÃ³mo estÃ¡s"}:
-            return "I'm operational and ready to work with you."
-        return None
+        """Returns a neutral fallback when Azure filters a prompt.
+
+        Detection is intentionally not keyword-based. Matching greeting word
+        lists only works for the languages hard-coded here and silently breaks
+        for every other language, so we never branch on natural-language
+        literals. Because the model is unavailable on the content-filter path
+        we cannot run a semantic check either, so we fall back to a single
+        neutral, language-independent acknowledgement.
+        """
+        if not (user_message or "").strip():
+            return None
+        return "No he podido procesar tu mensaje en este momento. ¿Puedes reformularlo?"
 
     def build_agent_messages(
         self,
